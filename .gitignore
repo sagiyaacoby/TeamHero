@@ -1,0 +1,29 @@
+# Personal/runtime data
+profile/owner.json
+profile/owner.md
+CLAUDE.md
+config/system.json
+config/credentials.md
+
+# Agent runtime data (auto-generated at startup)
+agents/orchestrator/
+agents/*/short-memory.md
+agents/*/long-memory.md
+
+# Task & media content
+data/tasks/*
+data/round-tables/*
+data/media/*
+!data/tasks/.gitkeep
+!data/round-tables/.gitkeep
+!data/media/.gitkeep
+
+# Claude Code local settings
+.claude/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db

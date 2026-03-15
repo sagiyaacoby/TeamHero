@@ -25,7 +25,7 @@ if not exist "data\round-tables" mkdir data\round-tables
 if not exist "data\media" mkdir data\media
 
 :: -- Check Node.js --
-echo  [1/2] Checking Node.js...
+echo  [1/3] Checking Node.js...
 node --version 1>NUL 2>NUL
 if errorlevel 1 goto NO_NODE
 for /f "tokens=*" %%v in ('node --version') do echo        Node.js %%v - OK
@@ -47,7 +47,7 @@ goto :EOF
 
 :: -- Check Claude CLI --
 :CHECK_CLAUDE
-echo  [2/2] Checking Claude CLI...
+echo  [2/3] Checking Claude CLI...
 where claude 1>NUL 2>NUL
 if errorlevel 1 goto NO_CLAUDE
 
@@ -94,6 +94,11 @@ if errorlevel 1 (
     echo        Claude CLI installed successfully.
 )
 
+:: -- Install dependencies --
+:INSTALL_DEPS
+echo  [3/3] Installing dependencies...
+if not exist "node_modules" (call npm install --production) else (echo        OK)
+
 :: -- Launch --
 :START_APP
 echo.
@@ -104,13 +109,17 @@ echo.
 
 echo  Starting portal server...
 start "AgentPortalServer" /b node server.js
-timeout /t 2 /noq 1>NUL
+timeout /t 3 /noq 1>NUL
+
+:: Read port from config/system.json
+set "PORTAL_PORT=3777"
+for /f "tokens=2 delims=:, " %%a in ('findstr /c:"\"port\"" config\system.json 2^>NUL') do set "PORTAL_PORT=%%a"
 
 echo  Opening portal in browser...
-start "" http://localhost:3777
+start "" http://localhost:%PORTAL_PORT%
 
 echo.
-echo  Portal: http://localhost:3777
+echo  Portal: http://localhost:%PORTAL_PORT%
 echo  Claude is available in the portal's Command Center.
 echo.
 

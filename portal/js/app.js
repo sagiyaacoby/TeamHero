@@ -80,7 +80,7 @@
       document.getElementById('view-chat').classList.add('active');
       var navEl = document.querySelector('[data-view="chat"]');
       if (navEl) navEl.classList.add('active');
-      setTimeout(function() { document.getElementById('chat-input').focus(); }, 100);
+      setTimeout(function() { initTerminal(); }, 100);
     } else {
       var el = document.getElementById('view-' + viewId);
       if (el) el.classList.add('active');
@@ -111,9 +111,13 @@
   // ── Global WebSocket ───────────────────────────────
   var globalWs = null;
   var wsReconnectTimer = null;
-  var chatBusy = false;
-  var currentAssistantEl = null;
-  var assistantRendered = false;
+
+  // ── Terminal State ──────────────────────────────────
+  var terminal = null;
+  var fitAddon = null;
+  var termWs = null;
+  var termSessionId = null;
+  var termInitialized = false;
 
   function connectWebSocket() {
     if (globalWs && globalWs.readyState <= 1) return;
@@ -132,8 +136,6 @@
         var data = JSON.parse(evt.data);
         if (data.type === 'refresh') {
           handleRefresh(data.scope);
-        } else {
-          handleChatMessage(data);
         }
       } catch(e) {
         console.error('WS parse error:', e);
@@ -142,8 +144,6 @@
 
     globalWs.onclose = function(evt) {
       setChatStatus('disconnected');
-      chatBusy = false;
-      updateSendButton();
       wsReconnectTimer = setTimeout(connectWebSocket, 3000);
     };
 
@@ -168,6 +168,9 @@
     }
     if (scope === 'all' || scope === 'rules') {
       if (v === 'rules') loadRulesEditor();
+    }
+    if (scope === 'all' || scope === 'secrets') {
+      if (v === 'settings') loadSecretsStatus();
     }
   }
 
@@ -674,6 +677,7 @@
     } catch(e) { console.error('Failed to load settings:', e); }
     checkClaudeStatus();
     checkForUpdates();
+    loadSecretsStatus();
   }
 
   async function rebuildContext() {
@@ -699,6 +703,170 @@
       toast('All sub-agents deleted. Orchestrator remains.');
       if (state.currentView === 'agent-detail') navigate('dashboard');
     } catch(e) { toast('Failed to reset agents', 'error'); }
+  }
+
+  // ── Secrets Management ──────────────────────────────
+  async function loadSecretsStatus() {
+    var badge = document.getElementById('secrets-status-badge');
+    var unlockForm = document.getElementById('secrets-unlock-form');
+    var setupForm = document.getElementById('secrets-setup-form');
+    var listContainer = document.getElementById('secrets-list-container');
+    var addForm = document.getElementById('secrets-add-form');
+    if (!badge) return;
+
+    // Hide all forms
+    if (unlockForm) unlockForm.classList.add('hidden');
+    if (setupForm) setupForm.classList.add('hidden');
+    if (listContainer) listContainer.classList.add('hidden');
+    if (addForm) addForm.classList.add('hidden');
+
+    try {
+      var status = await api.get('/api/secrets/status');
+      if (!status.exists) {
+        badge.textContent = 'Not configured';
+        badge.className = 'badge badge-inactive';
+        if (setupForm) setupForm.classList.remove('hidden');
+      } else if (status.locked) {
+        badge.textContent = 'Locked';
+        badge.className = 'badge badge-pending';
+        if (unlockForm) unlockForm.classList.remove('hidden');
+      } else {
+        badge.textContent = 'Unlocked (' + status.count + ' secret' + (status.count !== 1 ? 's' : '') + ')';
+        badge.className = 'badge badge-active';
+        if (listContainer) listContainer.classList.remove('hidden');
+        loadSecretsList();
+      }
+    } catch(e) {
+      badge.textContent = 'Error';
+      badge.className = 'badge badge-inactive';
+    }
+  }
+
+  async function loadSecretsList() {
+    var listEl = document.getElementById('secrets-list');
+    if (!listEl) return;
+    try {
+      var data = await api.get('/api/secrets');
+      if (!data.secrets || data.secrets.length === 0) {
+        listEl.innerHTML = '<div class="empty-state">No secrets stored</div>';
+        return;
+      }
+      listEl.innerHTML = data.secrets.map(function(s) {
+        return '<div class="secret-item">' +
+          '<span class="secret-name">' + escHtml(s.name) + '</span>' +
+          '<span class="secret-value">' + escHtml(s.maskedValue) + '</span>' +
+          '<span class="secret-actions">' +
+            '<button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="App.editSecret(' + q + s.name + q + ')">Edit</button>' +
+            '<button class="btn btn-cancel" style="font-size:11px;padding:3px 8px" onclick="App.deleteSecret(' + q + s.name + q + ')">Delete</button>' +
+          '</span>' +
+        '</div>';
+      }).join('');
+    } catch(e) {
+      listEl.innerHTML = '<div class="empty-state">Failed to load secrets</div>';
+    }
+  }
+
+  async function unlockSecrets() {
+    var pw = document.getElementById('secrets-master-password');
+    if (!pw || !pw.value) { toast('Enter the master password', 'error'); return; }
+    try {
+      await api.post('/api/secrets/unlock', { password: pw.value });
+      pw.value = '';
+      toast('Secrets unlocked');
+      loadSecretsStatus();
+    } catch(e) {
+      toast('Invalid master password', 'error');
+    }
+  }
+
+  async function lockSecrets() {
+    try {
+      await api.post('/api/secrets/lock', {});
+      toast('Secrets locked');
+      loadSecretsStatus();
+    } catch(e) { toast('Failed to lock secrets', 'error'); }
+  }
+
+  async function initializeSecrets() {
+    var pw = document.getElementById('secrets-new-master-password');
+    var confirm = document.getElementById('secrets-confirm-master-password');
+    if (!pw || !pw.value) { toast('Enter a master password', 'error'); return; }
+    if (pw.value !== confirm.value) { toast('Passwords do not match', 'error'); return; }
+    if (pw.value.length < 4) { toast('Password must be at least 4 characters', 'error'); return; }
+    // Create vault with a placeholder, then show add form
+    try {
+      secretsInitPassword = pw.value;
+      pw.value = ''; confirm.value = '';
+      toast('Vault created! Add your first secret.');
+      document.getElementById('secrets-setup-form').classList.add('hidden');
+      document.getElementById('secrets-add-form').classList.remove('hidden');
+    } catch(e) { toast('Failed to create vault', 'error'); }
+  }
+
+  var secretsInitPassword = null;
+
+  function showAddSecret() {
+    var addForm = document.getElementById('secrets-add-form');
+    if (addForm) addForm.classList.remove('hidden');
+    document.getElementById('secret-add-name').value = '';
+    document.getElementById('secret-add-value').value = '';
+  }
+
+  function cancelAddSecret() {
+    document.getElementById('secrets-add-form').classList.add('hidden');
+    secretsInitPassword = null;
+  }
+
+  async function saveSecret() {
+    var nameEl = document.getElementById('secret-add-name');
+    var valueEl = document.getElementById('secret-add-value');
+    var name = nameEl.value.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+    var value = valueEl.value;
+    if (!name || !value) { toast('Name and value are required', 'error'); return; }
+
+    var body = { name: name, value: value };
+    if (secretsInitPassword) {
+      body.password = secretsInitPassword;
+      secretsInitPassword = null;
+    }
+
+    try {
+      await api.post('/api/secrets', body);
+      toast('Secret saved');
+      document.getElementById('secrets-add-form').classList.add('hidden');
+      loadSecretsStatus();
+    } catch(e) { toast('Failed to save secret', 'error'); }
+  }
+
+  async function editSecret(name) {
+    var nameEl = document.getElementById('secret-add-name');
+    var valueEl = document.getElementById('secret-add-value');
+    nameEl.value = name;
+    valueEl.value = '';
+    valueEl.placeholder = 'Enter new value';
+    document.getElementById('secrets-add-form').classList.remove('hidden');
+  }
+
+  async function deleteSecret(name) {
+    if (!confirm('Delete secret "' + name + '"? This cannot be undone.')) return;
+    try {
+      await api.del('/api/secrets/' + encodeURIComponent(name));
+      toast('Secret deleted');
+      loadSecretsStatus();
+    } catch(e) { toast('Failed to delete secret', 'error'); }
+  }
+
+  async function changeSecretsPassword() {
+    var current = prompt('Enter current master password:');
+    if (!current) return;
+    var newPw = prompt('Enter new master password:');
+    if (!newPw) return;
+    var confirmPw = prompt('Confirm new password:');
+    if (newPw !== confirmPw) { toast('Passwords do not match', 'error'); return; }
+    try {
+      await api.post('/api/secrets/change-password', { currentPassword: current, newPassword: newPw });
+      toast('Master password changed');
+    } catch(e) { toast('Failed to change password. Check current password.', 'error'); }
   }
 
   // ── Software Updates ─────────────────────────────────
@@ -780,7 +948,6 @@
     }
   }
 
-  // Silent update check (no toast on "up to date")
   async function silentUpdateCheck() {
     try {
       var result = await api.get('/api/updates/check');
@@ -854,7 +1021,7 @@
     }
   }
 
-  // ── Chat / Command Center ──────────────────────────
+  // ── Terminal / Command Center ──────────────────────
   function setChatStatus(status) {
     var el = document.getElementById('chat-status');
     if (!el) return;
@@ -862,211 +1029,158 @@
     el.textContent = status === 'connected' ? 'Connected' : 'Disconnected';
   }
 
-  function sendChat() {
-    var input = document.getElementById('chat-input');
-    var text = input.value.trim();
-    if (!text || chatBusy) return;
-    if (!globalWs || globalWs.readyState !== 1) {
-      toast('Not connected. Reconnecting...', 'error');
-      connectWebSocket();
+  function initTerminal() {
+    if (termInitialized && terminal) {
+      // Already initialized, just re-fit
+      if (fitAddon) setTimeout(function() { try { fitAddon.fit(); } catch(e) {} }, 50);
       return;
     }
 
-    appendChatMsg('user', text);
-    input.value = '';
-    autoResizeInput();
+    var container = document.getElementById('terminal-container');
+    if (!container) return;
 
-    globalWs.send(JSON.stringify({ type: 'chat', content: text }));
-    chatBusy = true;
-    currentAssistantEl = null;
-    assistantRendered = false;
-    updateSendButton();
-    showTypingIndicator();
+    // Check if xterm.js loaded
+    if (typeof Terminal === 'undefined') {
+      container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Terminal library failed to load. Check your internet connection and reload.</div>';
+      return;
+    }
+
+    terminal = new Terminal({
+      cursorBlink: true,
+      fontSize: 14,
+      fontFamily: "'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace",
+      theme: {
+        background: '#0d1117',
+        foreground: '#e6edf3',
+        cursor: '#58a6ff',
+        selectionBackground: 'rgba(88,166,255,0.3)',
+        black: '#0d1117',
+        red: '#f85149',
+        green: '#3fb950',
+        yellow: '#d29922',
+        blue: '#58a6ff',
+        magenta: '#bc8cff',
+        cyan: '#76e3ea',
+        white: '#e6edf3',
+        brightBlack: '#8b949e',
+        brightRed: '#f85149',
+        brightGreen: '#3fb950',
+        brightYellow: '#d29922',
+        brightBlue: '#58a6ff',
+        brightMagenta: '#bc8cff',
+        brightCyan: '#76e3ea',
+        brightWhite: '#ffffff',
+      },
+      allowProposedApi: true,
+    });
+
+    fitAddon = new FitAddon.FitAddon();
+    terminal.loadAddon(fitAddon);
+
+    if (typeof WebLinksAddon !== 'undefined') {
+      terminal.loadAddon(new WebLinksAddon.WebLinksAddon());
+    }
+
+    terminal.open(container);
+    fitAddon.fit();
+
+    // Handle user input -> send to server
+    terminal.onData(function(data) {
+      if (termWs && termWs.readyState === 1) {
+        termWs.send(JSON.stringify({ type: 'input', data: data }));
+      }
+    });
+
+    // Handle resize
+    terminal.onResize(function(size) {
+      if (termWs && termWs.readyState === 1) {
+        termWs.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
+      }
+    });
+
+    // Re-fit on window resize
+    window.addEventListener('resize', function() {
+      if (fitAddon && state.currentView === 'chat') {
+        try { fitAddon.fit(); } catch(e) {}
+      }
+    });
+
+    termInitialized = true;
+    connectTerminalWs();
   }
 
-  function handleChatMessage(data) {
-    if (data.type === 'claude-event') {
-      hideTypingIndicator();
-      var evt = data.event;
+  function connectTerminalWs() {
+    // Reuse session ID from sessionStorage for tab persistence
+    termSessionId = sessionStorage.getItem('termSessionId') || '';
 
-      if (evt.type === 'assistant') {
-        var text = '';
-        if (evt.message && evt.message.content) {
-          evt.message.content.forEach(function(block) {
-            if (block.type === 'text') text += block.text;
-          });
-        }
-        if (text) {
-          appendChatMsg('assistant', text);
-          assistantRendered = true;
-        }
-      } else if (evt.type === 'result') {
-        // Skip result rendering if already rendered via assistant or streaming
-        if (!assistantRendered) {
-          var text = '';
-          if (evt.result) text = evt.result;
-          if (evt.content) text = evt.content;
-          if (typeof text === 'string' && text) {
-            appendChatMsg('assistant', text);
-          } else if (Array.isArray(text)) {
-            text.forEach(function(block) {
-              if (block.type === 'text' && block.text) appendChatMsg('assistant', block.text);
-            });
+    var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var wsUrl = protocol + '//' + location.host + '/ws/terminal';
+    if (termSessionId) wsUrl += '?session=' + encodeURIComponent(termSessionId);
+
+    if (termWs) {
+      try { termWs.close(); } catch(e) {}
+    }
+
+    termWs = new WebSocket(wsUrl);
+
+    termWs.onopen = function() {
+      setChatStatus('connected');
+    };
+
+    termWs.onmessage = function(evt) {
+      try {
+        var data = JSON.parse(evt.data);
+        if (data.type === 'terminal-output' && terminal) {
+          terminal.write(data.data);
+        } else if (data.type === 'terminal-ready') {
+          termSessionId = data.session;
+          sessionStorage.setItem('termSessionId', termSessionId);
+          if (data.reattached) {
+            // Buffer already replayed by server
+          }
+        } else if (data.type === 'terminal-exit') {
+          if (terminal) {
+            terminal.write('\r\n\x1b[33m[Session ended. Click Restart to start a new session.]\x1b[0m\r\n');
+          }
+        } else if (data.type === 'terminal-error') {
+          if (terminal) {
+            terminal.write('\r\n\x1b[31m' + data.error + '\x1b[0m\r\n');
           }
         }
-      } else if (evt.type === 'content_block_delta' || evt.type === 'content_block_start') {
-        var delta = '';
-        if (evt.delta && evt.delta.text) delta = evt.delta.text;
-        if (evt.content_block && evt.content_block.text) delta = evt.content_block.text;
-        if (delta) {
-          appendStreamDelta(delta);
-          assistantRendered = true;
-        }
-      } else if (evt.type === 'tool_use' || (evt.type === 'assistant' && evt.message && evt.message.content && evt.message.content.some(function(b) { return b.type === 'tool_use'; }))) {
-        var tools = [];
-        if (evt.type === 'tool_use') {
-          tools.push(evt);
-        } else if (evt.message && evt.message.content) {
-          tools = evt.message.content.filter(function(b) { return b.type === 'tool_use'; });
-        }
-        tools.forEach(function(tool) {
-          appendToolUse(tool.name || 'tool', JSON.stringify(tool.input || {}, null, 2));
-        });
-      } else if (evt.type === 'raw' && evt.text) {
-        appendChatMsg('assistant', evt.text);
-        assistantRendered = true;
+      } catch(e) {
+        console.error('Terminal WS parse error:', e);
       }
-    } else if (data.type === 'claude-error') {
-      hideTypingIndicator();
-      appendChatMsg('error', data.error);
-    } else if (data.type === 'claude-done') {
-      hideTypingIndicator();
-      chatBusy = false;
-      currentAssistantEl = null;
-      assistantRendered = false;
-      updateSendButton();
-    }
+    };
+
+    termWs.onclose = function() {
+      setChatStatus('disconnected');
+    };
+
+    termWs.onerror = function() {
+      setChatStatus('disconnected');
+    };
+
+    // Send initial resize after connection
+    termWs.addEventListener('open', function() {
+      if (terminal && fitAddon) {
+        try { fitAddon.fit(); } catch(e) {}
+        termWs.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+      }
+    });
   }
 
-  function appendChatMsg(role, text) {
-    var container = document.getElementById('chat-messages');
-    var welcome = container.querySelector('.chat-welcome');
-    if (welcome) welcome.remove();
-
-    var div = document.createElement('div');
-    div.className = 'chat-msg chat-msg-' + role;
-
-    var label = document.createElement('div');
-    label.className = 'chat-msg-role';
-    label.textContent = role === 'user' ? 'You' : role === 'error' ? 'Error' : 'Orchestrator';
-    div.appendChild(label);
-
-    var content = document.createElement('div');
-    content.className = 'chat-msg-content';
-    content.textContent = text;
-    div.appendChild(content);
-
-    container.appendChild(div);
-    container.scrollTop = container.scrollHeight;
-  }
-
-  function appendStreamDelta(text) {
-    if (!currentAssistantEl) {
-      var container = document.getElementById('chat-messages');
-      var welcome = container.querySelector('.chat-welcome');
-      if (welcome) welcome.remove();
-
-      var div = document.createElement('div');
-      div.className = 'chat-msg chat-msg-assistant';
-
-      var label = document.createElement('div');
-      label.className = 'chat-msg-role';
-      label.textContent = 'Orchestrator';
-      div.appendChild(label);
-
-      var content = document.createElement('div');
-      content.className = 'chat-msg-content';
-      div.appendChild(content);
-
-      container.appendChild(div);
-      currentAssistantEl = content;
-    }
-    currentAssistantEl.textContent += text;
-    var container = document.getElementById('chat-messages');
-    container.scrollTop = container.scrollHeight;
-  }
-
-  function appendToolUse(name, input) {
-    var container = document.getElementById('chat-messages');
-    var details = document.createElement('details');
-    details.className = 'chat-tool-use';
-    var summary = document.createElement('summary');
-    summary.textContent = 'Tool: ' + name;
-    details.appendChild(summary);
-    var pre = document.createElement('pre');
-    pre.textContent = input;
-    details.appendChild(pre);
-    container.appendChild(details);
-    container.scrollTop = container.scrollHeight;
-  }
-
-  function showTypingIndicator() {
-    var container = document.getElementById('chat-messages');
-    if (container.querySelector('.chat-typing')) return;
-    var div = document.createElement('div');
-    div.className = 'chat-typing';
-    div.innerHTML = '<span></span><span></span><span></span>';
-    container.appendChild(div);
-    container.scrollTop = container.scrollHeight;
-  }
-
-  function hideTypingIndicator() {
-    var el = document.querySelector('.chat-typing');
-    if (el) el.remove();
-  }
-
-  function updateSendButton() {
-    var btn = document.getElementById('chat-send-btn');
-    if (!btn) return;
-    btn.disabled = chatBusy;
-    btn.textContent = chatBusy ? 'Stop' : 'Send';
-    if (chatBusy) {
-      btn.onclick = function() {
-        if (globalWs && globalWs.readyState === 1) {
-          globalWs.send(JSON.stringify({ type: 'stop' }));
-        }
-        chatBusy = false;
-        hideTypingIndicator();
-        updateSendButton();
-      };
+  function restartTerminal() {
+    if (termWs && termWs.readyState === 1) {
+      termWs.send(JSON.stringify({ type: 'restart' }));
+      if (terminal) terminal.clear();
     } else {
-      btn.onclick = sendChat;
+      // Reconnect fresh
+      sessionStorage.removeItem('termSessionId');
+      termSessionId = '';
+      if (terminal) terminal.clear();
+      connectTerminalWs();
     }
   }
-
-  function clearChat() {
-    var container = document.getElementById('chat-messages');
-    container.innerHTML = '<div class="chat-welcome"><div class="chat-welcome-icon">&#9733;</div><h3>Command Center</h3><p>Chat with your orchestrator. Messages are processed by Claude CLI with full access to your team context.</p></div>';
-    currentAssistantEl = null;
-  }
-
-  function chatKeydown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (chatBusy) return;
-      sendChat();
-    }
-  }
-
-  function autoResizeInput() {
-    var el = document.getElementById('chat-input');
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 150) + 'px';
-  }
-
-  document.addEventListener('input', function(e) {
-    if (e.target.id === 'chat-input') autoResizeInput();
-  });
 
   // ── Wizard (5 steps) ──────────────────────────────
   function wizardNext() {
@@ -1153,10 +1267,11 @@
   function runRoundTable() {
     navigate('chat');
     setTimeout(function() {
-      var input = document.getElementById('chat-input');
-      input.value = 'Run a round table';
-      sendChat();
-    }, 500);
+      if (termWs && termWs.readyState === 1) {
+        var text = 'Run a round table\n';
+        termWs.send(JSON.stringify({ type: 'input', data: text }));
+      }
+    }, 1000);
   }
 
   // ── Helpers ────────────────────────────────────────
@@ -1213,12 +1328,19 @@
     resetSystem: resetSystem,
     resetAgents: resetAgents,
     runRoundTable: runRoundTable,
-    sendChat: sendChat,
-    clearChat: clearChat,
-    chatKeydown: chatKeydown,
-    checkClaudeStatus: checkClaudeStatus,
+    restartTerminal: restartTerminal,
+    unlockSecrets: unlockSecrets,
+    lockSecrets: lockSecrets,
+    initializeSecrets: initializeSecrets,
+    showAddSecret: showAddSecret,
+    cancelAddSecret: cancelAddSecret,
+    saveSecret: saveSecret,
+    editSecret: editSecret,
+    deleteSecret: deleteSecret,
+    changeSecretsPassword: changeSecretsPassword,
     checkForUpdates: checkForUpdates,
     performUpgrade: performUpgrade,
+    checkClaudeStatus: checkClaudeStatus,
   };
 
   init();

@@ -4,6 +4,7 @@ profile/owner.md
 CLAUDE.md
 config/system.json
 config/credentials.md
+config/secrets.enc
 
 # Agent runtime data (auto-generated at startup)
 agents/orchestrator/

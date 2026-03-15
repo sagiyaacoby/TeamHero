@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Agent Team Portal</title>
   <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
 </head>
 <body>
 
@@ -163,26 +168,16 @@
       <div class="panel"><h3>Last Round Table</h3><div id="last-round-table" class="round-table-summary"><div class="empty-state">No round tables yet</div></div></div>
     </section>
 
-    <!-- Chat / Command Center -->
+    <!-- Command Center (Terminal) -->
     <section id="view-chat" class="view view-chat-fullscreen">
       <header class="view-header">
         <h2>Command Center</h2>
         <div class="header-actions">
           <span id="chat-status" class="chat-status disconnected">Disconnected</span>
-          <button class="btn btn-secondary" onclick="App.clearChat()">Clear</button>
+          <button class="btn btn-secondary" onclick="App.restartTerminal()">Restart</button>
         </div>
       </header>
-      <div id="chat-messages" class="chat-messages">
-        <div class="chat-welcome">
-          <div class="chat-welcome-icon">&#9733;</div>
-          <h3>Command Center</h3>
-          <p>Chat with your orchestrator. Messages are processed by Claude CLI with full access to your team context.</p>
-        </div>
-      </div>
-      <div class="chat-input-area">
-        <textarea id="chat-input" class="chat-input" rows="1" placeholder="Send a message to the orchestrator..." onkeydown="App.chatKeydown(event)"></textarea>
-        <button id="chat-send-btn" class="btn btn-primary chat-send-btn" onclick="App.sendChat()">Send</button>
-      </div>
+      <div id="terminal-container" class="terminal-container"></div>
     </section>
 
     <!-- Agent Detail (tabbed) -->
@@ -383,6 +378,63 @@
             <div style="display:flex;gap:8px;align-items:center;">
               <button class="btn btn-secondary" onclick="App.checkClaudeStatus()" style="font-size:12px;padding:4px 12px;">Check Status</button>
             </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel" id="secrets-panel">
+        <h3>Secrets & API Keys</h3>
+        <p class="form-hint">Encrypted secrets injected as environment variables into Claude sessions. AES-256-GCM encrypted at rest.</p>
+        <div class="settings-group" id="secrets-status-group">
+          <div class="setting-item">
+            <span class="setting-label">Status</span>
+            <span id="secrets-status-badge" class="badge badge-inactive">Checking...</span>
+          </div>
+        </div>
+        <div id="secrets-unlock-form" class="hidden" style="margin-top:12px">
+          <div class="form-grid">
+            <div class="form-group full-width">
+              <label>Master Password</label>
+              <input type="password" id="secrets-master-password" placeholder="Enter master password" onkeydown="if(event.key==='Enter')App.unlockSecrets()">
+            </div>
+          </div>
+          <div class="form-actions"><button class="btn btn-primary" onclick="App.unlockSecrets()">Unlock</button></div>
+        </div>
+        <div id="secrets-setup-form" class="hidden" style="margin-top:12px">
+          <p class="form-hint">Create a master password to encrypt your secrets vault. You'll need this password each time the server starts.</p>
+          <div class="form-grid">
+            <div class="form-group full-width">
+              <label>Create Master Password</label>
+              <input type="password" id="secrets-new-master-password" placeholder="Choose a master password">
+            </div>
+            <div class="form-group full-width">
+              <label>Confirm Password</label>
+              <input type="password" id="secrets-confirm-master-password" placeholder="Confirm password">
+            </div>
+          </div>
+          <div class="form-actions"><button class="btn btn-primary" onclick="App.initializeSecrets()">Create Vault</button></div>
+        </div>
+        <div id="secrets-list-container" class="hidden" style="margin-top:12px">
+          <div class="settings-group" id="secrets-list"></div>
+          <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-secondary" onclick="App.showAddSecret()">+ Add Secret</button>
+            <button class="btn btn-secondary" onclick="App.changeSecretsPassword()">Change Password</button>
+            <button class="btn btn-cancel" onclick="App.lockSecrets()" style="margin-left:auto">Lock</button>
+          </div>
+        </div>
+        <div id="secrets-add-form" class="hidden" style="margin-top:12px">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Name (ENV_VAR format)</label>
+              <input type="text" id="secret-add-name" placeholder="e.g. OPENAI_API_KEY" style="text-transform:uppercase">
+            </div>
+            <div class="form-group">
+              <label>Value</label>
+              <input type="password" id="secret-add-value" placeholder="Secret value">
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-secondary" onclick="App.cancelAddSecret()">Cancel</button>
+            <button class="btn btn-primary" onclick="App.saveSecret()">Save Secret</button>
           </div>
         </div>
       </div>

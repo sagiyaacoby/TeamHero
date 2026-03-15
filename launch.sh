@@ -15,7 +15,7 @@ ask_yn() {
 }
 
 # ── Step 1: Check Node.js ──
-echo "  [1/3] Checking Node.js..."
+echo "  [1/4] Checking Node.js..."
 if ! command -v node &>/dev/null; then
     echo "        Node.js is NOT installed."
     echo ""
@@ -52,7 +52,7 @@ else
 fi
 
 # ── Step 2: Check npm ──
-echo "  [2/3] Checking npm..."
+echo "  [2/4] Checking npm..."
 if ! command -v npm &>/dev/null; then
     echo "        npm not found. It should come with Node.js."
     echo "        Please reinstall Node.js from https://nodejs.org"
@@ -63,7 +63,7 @@ fi
 
 # ── Step 3: Check Claude CLI ──
 SKIP_CLAUDE=0
-echo "  [3/3] Checking Claude CLI..."
+echo "  [3/4] Checking Claude CLI..."
 if ! command -v claude &>/dev/null; then
     echo "        Claude CLI is NOT installed."
     echo ""
@@ -102,6 +102,10 @@ else
     fi
 fi
 
+# ── Step 4: Install dependencies ──
+echo "  [4/4] Installing dependencies..."
+[ ! -d "node_modules" ] && npm install --production || echo "        OK"
+
 echo ""
 echo "  ───────────────────────────────────"
 echo "    All checks passed!"
@@ -114,19 +118,22 @@ node server.js &
 SERVER_PID=$!
 trap "kill $SERVER_PID 2>/dev/null" EXIT
 
-sleep 2
+sleep 3
+
+# Read port from config/system.json
+PORTAL_PORT=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('config/system.json','utf8')).port||3777)}catch(e){console.log(3777)}" 2>/dev/null)
 
 echo "  Opening dashboard in browser..."
 if command -v xdg-open &>/dev/null; then
-    xdg-open http://localhost:3777 &>/dev/null
+    xdg-open "http://localhost:${PORTAL_PORT}" &>/dev/null
 elif command -v open &>/dev/null; then
-    open http://localhost:3777
+    open "http://localhost:${PORTAL_PORT}"
 else
-    echo "  Open http://localhost:3777 in your browser."
+    echo "  Open http://localhost:${PORTAL_PORT} in your browser."
 fi
 
 echo ""
-echo "  Portal: http://localhost:3777"
+echo "  Portal: http://localhost:${PORTAL_PORT}"
 echo "  Claude is available in the portal's Command Center."
 echo ""
 

@@ -6,5 +6,8 @@
   "scripts": {
     "start": "node server.js"
   },
-  "private": true
+  "private": true,
+  "dependencies": {
+    "node-pty": "^1.0.0"
+  }
 }

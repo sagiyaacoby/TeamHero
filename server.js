@@ -4,6 +4,10 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 
+var pty;
+try { pty = require('node-pty'); }
+catch(e) { try { pty = require('node-pty-prebuilt-multiarch'); } catch(e2) { pty = null; } }
+
 const net = require('net');
 
 const BASE = path.join(__dirname, 'portal');
@@ -80,6 +84,70 @@ function parseBody(req) {
 function J(res, data, s) { s=s||200; res.writeHead(s, {'Content-Type':'application/json'}); res.end(JSON.stringify(data)); }
 function E(res, msg, s) { J(res, {error:msg}, s||400); }
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+
+// ── Encrypted Secrets Manager ────────────────────────────
+var secretsCache = null;   // decrypted { name: value } map, null when locked
+var masterKeyCache = null; // derived key buffer
+var secretsSalt = null;    // salt used for PBKDF2
+
+function getSecretsFilePath() { return path.join(ROOT, 'config/secrets.enc'); }
+
+function deriveKey(password, salt) {
+  return crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha512');
+}
+
+function encryptSecrets(secretsObj, derivedKey, salt) {
+  var plaintext = Buffer.from(JSON.stringify(secretsObj), 'utf8');
+  var iv = crypto.randomBytes(12);
+  var cipher = crypto.createCipheriv('aes-256-gcm', derivedKey, iv);
+  var encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  var authTag = cipher.getAuthTag();
+  return Buffer.concat([salt, iv, authTag, encrypted]);
+}
+
+function decryptSecrets(fileBuffer, password) {
+  var salt = fileBuffer.slice(0, 32);
+  var iv = fileBuffer.slice(32, 44);
+  var authTag = fileBuffer.slice(44, 60);
+  var ciphertext = fileBuffer.slice(60);
+  var key = deriveKey(password, salt);
+  var decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(authTag);
+  var decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  return { secrets: JSON.parse(decrypted.toString('utf8')), key: key, salt: salt };
+}
+
+function saveSecretsFile() {
+  if (!secretsCache || !masterKeyCache || !secretsSalt) return;
+  var data = encryptSecrets(secretsCache, masterKeyCache, secretsSalt);
+  fs.mkdirSync(path.dirname(getSecretsFilePath()), { recursive: true });
+  fs.writeFileSync(getSecretsFilePath(), data);
+}
+
+function scrubSecrets(text) {
+  if (!secretsCache) return text;
+  var result = text;
+  var keys = Object.keys(secretsCache);
+  for (var i = 0; i < keys.length; i++) {
+    var val = secretsCache[keys[i]];
+    if (val && val.length >= 4) {
+      var escaped = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      result = result.replace(new RegExp(escaped, 'g'), '[REDACTED]');
+    }
+  }
+  return result;
+}
+
+function maskValue(val) {
+  if (!val) return '****';
+  if (val.length <= 4) return '****';
+  return '****' + val.slice(-4);
+}
+
+function getSecretNames() {
+  if (secretsCache) return Object.keys(secretsCache);
+  return [];
+}
 
 // ── WebSocket Client Tracking + Broadcast ────────────────
 var wsClients = new Set();
@@ -236,7 +304,15 @@ function rebuildClaudeMd() {
     '- `agents/{id}/` \u2014 Individual agent folders\n' +
     '- `data/tasks/` \u2014 All tasks\n' +
     '- `data/round-tables/` \u2014 Round table summaries\n' +
-    '- `data/media/` \u2014 Shared media library\n';
+    '- `data/media/` \u2014 Shared media library\n\n' +
+    '## Available Secrets\n\n' +
+    'These environment variables are injected into your session when secrets are unlocked:\n\n' +
+    (function() {
+      var names = getSecretNames();
+      if (names.length === 0) return '_No secrets configured. Add them via dashboard Settings > Secrets & API Keys._\n';
+      return names.map(function(n) { return '- `$' + n + '`'; }).join('\n') + '\n\n' +
+        'Use these as environment variables in commands (e.g. `$OPENAI_API_KEY`). Never echo or output their values.\n';
+    })();
 
   writeText(path.join(ROOT, 'CLAUDE.md'), md);
   return md;
@@ -335,65 +411,168 @@ function wsSend(socket, obj) {
   try { socket.write(buildWsFrame(JSON.stringify(obj))); } catch(e) {}
 }
 
-// ── Claude CLI Spawner ───────────────────────────────────
-var activeProcesses = new Map();
+// ── Upgrade / Update Mechanism ───────────────────────────
+var PLATFORM_FILES = ['server.js', 'portal/', 'launch.sh', 'launch.bat', 'config/agent-templates/', '.gitignore', 'package.json'];
 
-function spawnClaude(message, socket) {
-  var existing = activeProcesses.get(socket);
-  if (existing) { try { existing.kill(); } catch(e) {} }
+function execGit(args) {
+  return new Promise(function(resolve) {
+    var proc = spawn('git', args, { cwd: ROOT, shell: true, timeout: 30000 });
+    var stdout = '', stderr = '';
+    proc.stdout.on('data', function(ch) { stdout += ch; });
+    proc.stderr.on('data', function(ch) { stderr += ch; });
+    proc.on('close', function(code) { resolve({ code: code, stdout: stdout.trim(), stderr: stderr.trim() }); });
+    proc.on('error', function(err) { resolve({ code: -1, stdout: '', stderr: err.message }); });
+  });
+}
 
-  var args = ['-p', message, '--output-format', 'stream-json', '--verbose'];
-  var proc = spawn('claude', args, {
+async function checkForUpdates() {
+  var remote = await execGit(['remote', 'get-url', 'origin']);
+  if (remote.code !== 0) return { updateAvailable: false, error: 'No git remote configured. Add one with: git remote add origin <repo-url>' };
+
+  var fetch = await execGit(['fetch', 'origin', '--quiet']);
+  if (fetch.code !== 0) return { updateAvailable: false, error: 'Failed to fetch from remote: ' + fetch.stderr };
+
+  var branchResult = await execGit(['symbolic-ref', 'refs/remotes/origin/HEAD', '--short']);
+  var remoteBranch = branchResult.code === 0 ? branchResult.stdout : 'origin/main';
+
+  var logArgs = ['log', 'HEAD..' + remoteBranch, '--oneline', '--'];
+  logArgs = logArgs.concat(PLATFORM_FILES);
+  var log = await execGit(logArgs);
+  var commits = log.stdout ? log.stdout.split('\n').filter(Boolean) : [];
+
+  var remoteVersionResult = await execGit(['show', remoteBranch + ':package.json']);
+  var remoteVersion = null;
+  if (remoteVersionResult.code === 0) {
+    try { remoteVersion = JSON.parse(remoteVersionResult.stdout).version; } catch(e) {}
+  }
+
+  var localPkg = readJSON(path.join(ROOT, 'package.json'));
+  var localVersion = localPkg ? localPkg.version : '1.0.0';
+
+  return {
+    updateAvailable: commits.length > 0,
+    currentVersion: localVersion,
+    latestVersion: remoteVersion || localVersion,
+    changes: commits.slice(0, 20),
+    remoteBranch: remoteBranch,
+    remoteUrl: remote.stdout,
+  };
+}
+
+async function performUpgrade() {
+  var check = await checkForUpdates();
+  if (!check.updateAvailable) return { success: false, message: 'Already up to date' };
+
+  var remoteBranch = check.remoteBranch || 'origin/main';
+
+  var checkoutArgs = ['checkout', remoteBranch, '--'].concat(PLATFORM_FILES);
+  var result = await execGit(checkoutArgs);
+
+  if (result.code !== 0) return { success: false, message: 'Upgrade failed: ' + result.stderr };
+
+  var remotePkg = await execGit(['show', remoteBranch + ':package.json']);
+  if (remotePkg.code === 0) {
+    try { fs.writeFileSync(path.join(ROOT, 'package.json'), remotePkg.stdout); } catch(e) {}
+  }
+
+  return {
+    success: true,
+    message: 'Platform updated to ' + (check.latestVersion || 'latest') + '. Restart the server to apply changes.',
+    updatedFiles: PLATFORM_FILES,
+    restartRequired: true,
+  };
+}
+
+// ── PTY Terminal Session Manager ─────────────────────────
+var termSessions = new Map();
+var MAX_BUFFER = 50 * 1024; // 50KB rolling buffer for reconnect replay
+
+function createTermSession(sessionId, socket) {
+  if (!pty) {
+    wsSend(socket, { type: 'terminal-error', error: 'Terminal not available. Run `npm install` in the project directory.' });
+    return null;
+  }
+
+  var isWindows = process.platform === 'win32';
+  var shell = isWindows ? 'cmd.exe' : 'bash';
+  var claudeCmd = 'claude --dangerously-skip-permissions';
+  var shellArgs = isWindows ? ['/c', claudeCmd] : ['-c', claudeCmd];
+
+  var envVars = Object.assign({}, process.env, {
+    FORCE_COLOR: '1',
+    TERM: 'xterm-256color',
+  });
+  // Inject decrypted secrets as environment variables
+  if (secretsCache) {
+    var skeys = Object.keys(secretsCache);
+    for (var si = 0; si < skeys.length; si++) { envVars[skeys[si]] = secretsCache[skeys[si]]; }
+  }
+
+  var term = pty.spawn(shell, shellArgs, {
+    name: 'xterm-256color',
+    cols: 120,
+    rows: 30,
     cwd: ROOT,
-    shell: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: Object.assign({}, process.env, { FORCE_COLOR: '0' })
+    env: envVars,
   });
 
-  activeProcesses.set(socket, proc);
+  var session = {
+    pty: term,
+    outputBuffer: '',
+    socket: socket,
+    timeout: null,
+  };
 
-  var lineBuf = '';
-  proc.stdout.on('data', function(chunk) {
-    lineBuf += chunk.toString();
-    var lines = lineBuf.split('\n');
-    lineBuf = lines.pop();
-    lines.forEach(function(line) {
-      line = line.trim();
-      if (!line) return;
-      try {
-        var evt = JSON.parse(line);
-        wsSend(socket, { type: 'claude-event', event: evt });
-      } catch(e) {
-        wsSend(socket, { type: 'claude-event', event: { type: 'raw', text: line } });
-      }
-    });
-  });
-
-  proc.stderr.on('data', function(chunk) {
-    var text = chunk.toString().trim();
-    if (text) wsSend(socket, { type: 'claude-error', error: text });
-  });
-
-  proc.on('close', function(code) {
-    if (lineBuf.trim()) {
-      try {
-        var evt = JSON.parse(lineBuf.trim());
-        wsSend(socket, { type: 'claude-event', event: evt });
-      } catch(e) {
-        wsSend(socket, { type: 'claude-event', event: { type: 'raw', text: lineBuf.trim() } });
-      }
+  term.onData(function(data) {
+    // Append to rolling buffer
+    session.outputBuffer += data;
+    if (session.outputBuffer.length > MAX_BUFFER) {
+      session.outputBuffer = session.outputBuffer.slice(-MAX_BUFFER);
     }
-    activeProcesses.delete(socket);
-    wsSend(socket, { type: 'claude-done', code: code });
-    // Claude may have modified files via API — broadcast refresh for all scopes
+    // Send to connected client (scrub secrets from output)
+    if (session.socket) {
+      wsSend(session.socket, { type: 'terminal-output', data: scrubSecrets(data) });
+    }
+  });
+
+  term.onExit(function(ev) {
+    if (session.socket) {
+      wsSend(session.socket, { type: 'terminal-exit', code: ev.exitCode });
+    }
+    termSessions.delete(sessionId);
+    // Claude may have modified files via API — broadcast refresh
     broadcast('all');
   });
 
-  proc.on('error', function(err) {
-    activeProcesses.delete(socket);
-    wsSend(socket, { type: 'claude-error', error: 'Failed to start Claude CLI: ' + err.message });
-    wsSend(socket, { type: 'claude-done', code: -1 });
-  });
+  termSessions.set(sessionId, session);
+  return session;
+}
+
+function detachTermSession(sessionId) {
+  var session = termSessions.get(sessionId);
+  if (!session) return;
+  session.socket = null;
+  // Start 5-min timeout to kill orphaned PTY
+  session.timeout = setTimeout(function() {
+    var s = termSessions.get(sessionId);
+    if (s && !s.socket) {
+      try { s.pty.kill(); } catch(e) {}
+      termSessions.delete(sessionId);
+    }
+  }, 5 * 60 * 1000);
+}
+
+function reattachTermSession(sessionId, socket) {
+  var session = termSessions.get(sessionId);
+  if (!session) return null;
+  // Clear orphan timeout
+  if (session.timeout) { clearTimeout(session.timeout); session.timeout = null; }
+  session.socket = socket;
+  // Replay buffer (scrub secrets)
+  if (session.outputBuffer) {
+    wsSend(socket, { type: 'terminal-output', data: scrubSecrets(session.outputBuffer) });
+  }
+  return session;
 }
 
 // ── Request Handler ──────────────────────────────────────
@@ -619,6 +798,108 @@ async function handle(pn, m, req, res) {
     return J(res, { ok: true });
   }
 
+  // SECRETS
+  if (pn === '/api/secrets/status' && m === 'GET') {
+    var exists = fs.existsSync(getSecretsFilePath());
+    return J(res, { locked: secretsCache === null, count: secretsCache ? Object.keys(secretsCache).length : 0, exists: exists });
+  }
+  if (pn === '/api/secrets/unlock' && m === 'POST') {
+    var b = await parseBody(req);
+    if (!b.password) return E(res, 'Password required');
+    try {
+      var fileData = fs.readFileSync(getSecretsFilePath());
+      var result = decryptSecrets(fileData, b.password);
+      secretsCache = result.secrets;
+      masterKeyCache = result.key;
+      secretsSalt = result.salt;
+      rebuildClaudeMd();
+      return J(res, { ok: true, count: Object.keys(secretsCache).length });
+    } catch(e) {
+      return E(res, 'Invalid master password', 403);
+    }
+  }
+  if (pn === '/api/secrets/lock' && m === 'POST') {
+    secretsCache = null;
+    masterKeyCache = null;
+    secretsSalt = null;
+    rebuildClaudeMd();
+    broadcast('secrets');
+    return J(res, { ok: true });
+  }
+  if (pn === '/api/secrets/change-password' && m === 'POST') {
+    var b = await parseBody(req);
+    if (!b.currentPassword || !b.newPassword) return E(res, 'Both passwords required');
+    try {
+      var fileData = fs.readFileSync(getSecretsFilePath());
+      decryptSecrets(fileData, b.currentPassword); // verify current
+    } catch(e) { return E(res, 'Current password is incorrect', 403); }
+    secretsSalt = crypto.randomBytes(32);
+    masterKeyCache = deriveKey(b.newPassword, secretsSalt);
+    saveSecretsFile();
+    return J(res, { ok: true });
+  }
+
+  var sm = pn.match(/^\/api\/secrets\/([^\/]+)$/);
+
+  if (pn === '/api/secrets' && m === 'GET') {
+    if (!secretsCache) return E(res, 'Secrets are locked', 403);
+    var list = Object.keys(secretsCache).map(function(name) { return { name: name, maskedValue: maskValue(secretsCache[name]) }; });
+    return J(res, { secrets: list });
+  }
+  if (pn === '/api/secrets' && m === 'POST') {
+    var b = await parseBody(req);
+    if (!b.name || !b.value) return E(res, 'Name and value required');
+    var nameUpper = b.name.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(nameUpper)) return E(res, 'Invalid name format. Use UPPER_SNAKE_CASE.');
+    // First-time setup: create vault
+    if (!secretsCache) {
+      if (!b.password) return E(res, 'Master password required to create vault');
+      secretsSalt = crypto.randomBytes(32);
+      masterKeyCache = deriveKey(b.password, secretsSalt);
+      secretsCache = {};
+    }
+    secretsCache[nameUpper] = b.value;
+    saveSecretsFile();
+    rebuildClaudeMd();
+    broadcast('secrets');
+    return J(res, { ok: true });
+  }
+  if (sm && m === 'PUT' && !['status','unlock','lock','change-password'].includes(sm[1])) {
+    if (!secretsCache) return E(res, 'Secrets are locked', 403);
+    var name = sm[1];
+    if (!secretsCache[name]) return E(res, 'Secret not found', 404);
+    var b = await parseBody(req);
+    if (!b.value) return E(res, 'Value required');
+    secretsCache[name] = b.value;
+    saveSecretsFile();
+    broadcast('secrets');
+    return J(res, { ok: true });
+  }
+  if (sm && m === 'DELETE' && !['status','unlock','lock','change-password'].includes(sm[1])) {
+    if (!secretsCache) return E(res, 'Secrets are locked', 403);
+    var name = sm[1];
+    delete secretsCache[name];
+    saveSecretsFile();
+    if (Object.keys(secretsCache).length === 0) {
+      try { fs.unlinkSync(getSecretsFilePath()); } catch(e) {}
+      secretsCache = null; masterKeyCache = null; secretsSalt = null;
+    }
+    rebuildClaudeMd();
+    broadcast('secrets');
+    return J(res, { ok: true });
+  }
+
+  // UPDATES
+  if (pn === '/api/updates/check' && m === 'GET') {
+    var result = await checkForUpdates();
+    return J(res, result);
+  }
+  if (pn === '/api/updates/upgrade' && m === 'POST') {
+    var result = await performUpgrade();
+    broadcast('all');
+    return J(res, result, result.success ? 200 : 400);
+  }
+
   // CLAUDE CLI STATUS
   if (pn === "/api/claude/status" && m === "GET") {
     return new Promise(function(resolve) {
@@ -674,83 +955,138 @@ const server = http.createServer(function(req, res) {
 });
 
 // ── WebSocket Upgrade Handler ────────────────────────────
-server.on('upgrade', function(req, socket, head) {
-  if (req.url !== '/ws') { socket.destroy(); return; }
-
+function doWsHandshake(req, socket) {
   var key = req.headers['sec-websocket-key'];
-  if (!key) { socket.destroy(); return; }
-
+  if (!key) { socket.destroy(); return false; }
   var accept = crypto.createHash('sha1')
     .update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
     .digest('base64');
-
   socket.write(
     'HTTP/1.1 101 Switching Protocols\r\n' +
     'Upgrade: websocket\r\n' +
     'Connection: Upgrade\r\n' +
     'Sec-WebSocket-Accept: ' + accept + '\r\n\r\n'
   );
+  return true;
+}
 
-  wsClients.add(socket);
+server.on('upgrade', function(req, socket, head) {
+  var urlObj = new URL(req.url, 'http://localhost');
+  var pathname = urlObj.pathname;
 
-  var buf = Buffer.alloc(0);
+  if (pathname === '/ws/terminal') {
+    // ── Terminal WebSocket ──
+    if (!doWsHandshake(req, socket)) return;
 
-  socket.on('data', function(data) {
-    buf = Buffer.concat([buf, data]);
+    var sessionId = urlObj.searchParams.get('session') || genId();
+    var termSessionId = sessionId; // capture for closures
+    var buf = Buffer.alloc(0);
 
-    while (buf.length > 0) {
-      var frame = parseWsFrame(buf);
-      if (!frame) break;
-      buf = buf.slice(frame.totalLen);
-
-      if (frame.opcode === 0x8) {
-        var proc = activeProcesses.get(socket);
-        if (proc) { try { proc.kill(); } catch(e) {} activeProcesses.delete(socket); }
-        wsClients.delete(socket);
-        try {
-          var closeFrame = Buffer.alloc(2);
-          closeFrame[0] = 0x88;
-          closeFrame[1] = 0;
-          socket.write(closeFrame);
-        } catch(e) {}
-        socket.destroy();
-        return;
-      }
-
-      if (frame.opcode === 0x9) {
-        var pong = Buffer.alloc(2);
-        pong[0] = 0x8a; pong[1] = 0;
-        try { socket.write(pong); } catch(e) {}
-        continue;
-      }
-
-      if (frame.opcode === 0x1) {
-        try {
-          var msg = JSON.parse(frame.payload.toString('utf8'));
-          if (msg.type === 'chat' && msg.content) {
-            spawnClaude(msg.content, socket);
-          } else if (msg.type === 'stop') {
-            var proc = activeProcesses.get(socket);
-            if (proc) { try { proc.kill(); } catch(e) {} activeProcesses.delete(socket); }
-          }
-        } catch(e) {
-          wsSend(socket, { type: 'claude-error', error: 'Invalid message format' });
-        }
+    // Try to reattach or create new
+    var session = termSessions.get(sessionId);
+    if (session) {
+      reattachTermSession(sessionId, socket);
+      wsSend(socket, { type: 'terminal-ready', session: sessionId, reattached: true });
+    } else {
+      session = createTermSession(sessionId, socket);
+      if (session) {
+        wsSend(socket, { type: 'terminal-ready', session: sessionId, reattached: false });
       }
     }
-  });
 
-  socket.on('close', function() {
-    wsClients.delete(socket);
-    var proc = activeProcesses.get(socket);
-    if (proc) { try { proc.kill(); } catch(e) {} activeProcesses.delete(socket); }
-  });
+    socket.on('data', function(data) {
+      buf = Buffer.concat([buf, data]);
+      while (buf.length > 0) {
+        var frame = parseWsFrame(buf);
+        if (!frame) break;
+        buf = buf.slice(frame.totalLen);
 
-  socket.on('error', function() {
-    wsClients.delete(socket);
-    var proc = activeProcesses.get(socket);
-    if (proc) { try { proc.kill(); } catch(e) {} activeProcesses.delete(socket); }
-  });
+        if (frame.opcode === 0x8) {
+          // Detach session on close (keep PTY alive)
+          detachTermSession(termSessionId);
+          try {
+            var closeFrame = Buffer.alloc(2);
+            closeFrame[0] = 0x88; closeFrame[1] = 0;
+            socket.write(closeFrame);
+          } catch(e) {}
+          socket.destroy();
+          return;
+        }
+
+        if (frame.opcode === 0x9) {
+          var pong = Buffer.alloc(2);
+          pong[0] = 0x8a; pong[1] = 0;
+          try { socket.write(pong); } catch(e) {}
+          continue;
+        }
+
+        if (frame.opcode === 0x1) {
+          try {
+            var msg = JSON.parse(frame.payload.toString('utf8'));
+            var s = termSessions.get(termSessionId);
+            if (msg.type === 'input' && s && s.pty) {
+              s.pty.write(msg.data);
+            } else if (msg.type === 'resize' && s && s.pty) {
+              try { s.pty.resize(msg.cols || 120, msg.rows || 30); } catch(e) {}
+            } else if (msg.type === 'restart') {
+              // Kill existing, create new
+              if (s) { try { s.pty.kill(); } catch(e) {} termSessions.delete(termSessionId); }
+              termSessionId = genId();
+              var newSession = createTermSession(termSessionId, socket);
+              if (newSession) {
+                wsSend(socket, { type: 'terminal-ready', session: termSessionId, reattached: false });
+              }
+            }
+          } catch(e) {}
+        }
+      }
+    });
+
+    socket.on('close', function() { detachTermSession(termSessionId); });
+    socket.on('error', function() { detachTermSession(termSessionId); });
+    return;
+  }
+
+  if (pathname === '/ws') {
+    // ── Dashboard refresh WebSocket (unchanged) ──
+    if (!doWsHandshake(req, socket)) return;
+
+    wsClients.add(socket);
+    var buf = Buffer.alloc(0);
+
+    socket.on('data', function(data) {
+      buf = Buffer.concat([buf, data]);
+      while (buf.length > 0) {
+        var frame = parseWsFrame(buf);
+        if (!frame) break;
+        buf = buf.slice(frame.totalLen);
+
+        if (frame.opcode === 0x8) {
+          wsClients.delete(socket);
+          try {
+            var closeFrame = Buffer.alloc(2);
+            closeFrame[0] = 0x88; closeFrame[1] = 0;
+            socket.write(closeFrame);
+          } catch(e) {}
+          socket.destroy();
+          return;
+        }
+
+        if (frame.opcode === 0x9) {
+          var pong = Buffer.alloc(2);
+          pong[0] = 0x8a; pong[1] = 0;
+          try { socket.write(pong); } catch(e) {}
+          continue;
+        }
+      }
+    });
+
+    socket.on('close', function() { wsClients.delete(socket); });
+    socket.on('error', function() { wsClients.delete(socket); });
+    return;
+  }
+
+  socket.destroy();
 });
 
 // ── Startup ──────────────────────────────────────────────

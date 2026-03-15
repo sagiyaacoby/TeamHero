@@ -676,6 +676,7 @@
       document.getElementById('settings-agent-count').textContent = (agents.agents || []).length;
     } catch(e) { console.error('Failed to load settings:', e); }
     checkClaudeStatus();
+    loadPermissionMode();
     checkForUpdates();
     loadSecretsStatus();
   }
@@ -703,6 +704,38 @@
       toast('All sub-agents deleted. Orchestrator remains.');
       if (state.currentView === 'agent-detail') navigate('dashboard');
     } catch(e) { toast('Failed to reset agents', 'error'); }
+  }
+
+  // ── Permission Mode ─────────────────────────────────
+  var permModeDescs = {
+    autonomous: 'Claude works independently with full tool access. Best for unattended work. Safety boundaries in CLAUDE.md still apply.',
+    supervised: 'Claude asks for permission before using each tool. Best when you want manual control over every action.',
+  };
+
+  async function loadPermissionMode() {
+    var select = document.getElementById('permission-mode-select');
+    var desc = document.getElementById('permission-mode-desc');
+    if (!select) return;
+    try {
+      var result = await api.get('/api/settings/permission-mode');
+      select.value = result.mode || 'autonomous';
+      if (desc) desc.textContent = permModeDescs[select.value] || '';
+    } catch(e) {
+      select.value = 'autonomous';
+      if (desc) desc.textContent = permModeDescs.autonomous;
+    }
+  }
+
+  async function savePermissionMode() {
+    var select = document.getElementById('permission-mode-select');
+    var desc = document.getElementById('permission-mode-desc');
+    if (!select) return;
+    var mode = select.value;
+    if (desc) desc.textContent = permModeDescs[mode] || '';
+    try {
+      await api.put('/api/settings/permission-mode', { mode: mode });
+      toast('Permission mode set to ' + mode + '. Restart terminal sessions to apply.');
+    } catch(e) { toast('Failed to save permission mode', 'error'); }
   }
 
   // ── Secrets Management ──────────────────────────────
@@ -1330,6 +1363,7 @@
     resetAgents: resetAgents,
     runRoundTable: runRoundTable,
     restartTerminal: restartTerminal,
+    savePermissionMode: savePermissionMode,
     unlockSecrets: unlockSecrets,
     lockSecrets: lockSecrets,
     initializeSecrets: initializeSecrets,

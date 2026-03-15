@@ -284,6 +284,13 @@ function rebuildClaudeMd() {
     '- After creating agents, briefly summarize the team to the owner\n\n' +
     '## Team Rules\n\n' + teamR + '\n\n' +
     '## Security Rules\n\n' + secR + '\n\n' +
+    '## Safety Boundaries\n\n' +
+    'CRITICAL: These rules are enforced at all times regardless of permission mode.\n\n' +
+    '- **Project folder only:** ALL file operations (read, write, delete) must stay within `' + ROOT.replace(/\\/g, '/') + '/`. Never access files outside this directory.\n' +
+    '- **Never modify platform files:** Do not edit `server.js`, `portal/`, `launch.bat`, `launch.sh`, or `package.json`. These are managed by the upgrade system.\n' +
+    '- **Never expose secrets:** Environment variables containing API keys or tokens must never be echoed, logged, written to files, or included in any output. Use them only as pass-through in commands.\n' +
+    '- **No destructive system commands:** Do not run commands that affect the OS, other processes, or network infrastructure (e.g. `rm -rf /`, `shutdown`, `format`, `kill`, `netsh`).\n' +
+    '- **No external communications without approval:** Do not send emails, post to APIs, push to git, or make any external network calls unless the owner explicitly requests it.\n\n' +
     '## Round Table Protocol\n\n' +
     'A "round table" is a structured review session. When asked to run one:\n' +
     '1. Scan all tasks in `data/tasks/` \u2014 review each task\'s status\n' +
@@ -570,7 +577,9 @@ function createTermSession(sessionId, socket) {
 
   var isWindows = process.platform === 'win32';
   var shell = isWindows ? 'cmd.exe' : 'bash';
-  var claudeCmd = 'claude --dangerously-skip-permissions';
+  var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
+  var permMode = sys.claudePermissionMode || 'autonomous';
+  var claudeCmd = permMode === 'supervised' ? 'claude' : 'claude --dangerously-skip-permissions';
   var shellArgs = isWindows ? ['/c', claudeCmd] : ['-c', claudeCmd];
 
   var envVars = Object.assign({}, process.env, {
@@ -871,6 +880,22 @@ async function handle(pn, m, req, res) {
     writeText(r, b.content);
     broadcast('all');
     return J(res, { ok: true });
+  }
+
+  // CLAUDE PERMISSION MODE
+  if (pn === '/api/settings/permission-mode' && m === 'GET') {
+    var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
+    return J(res, { mode: sys.claudePermissionMode || 'autonomous' });
+  }
+  if (pn === '/api/settings/permission-mode' && m === 'PUT') {
+    var b = await parseBody(req);
+    var mode = b.mode;
+    if (mode !== 'autonomous' && mode !== 'supervised') return E(res, 'Invalid mode. Use "autonomous" or "supervised".');
+    var sp = path.join(ROOT, 'config/system.json');
+    var sys = readJSON(sp) || {};
+    sys.claudePermissionMode = mode;
+    writeJSON(sp, sys);
+    return J(res, { ok: true, mode: mode, note: 'New sessions will use this mode. Restart existing sessions to apply.' });
   }
 
   // SECRETS

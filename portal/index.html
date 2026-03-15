@@ -381,6 +381,22 @@
           </div>
         </div>
       </div>
+      <div class="panel">
+        <h3>Claude Permission Mode</h3>
+        <p class="form-hint">Controls how Claude operates in the Command Center.</p>
+        <div class="settings-group">
+          <div class="setting-item">
+            <span class="setting-label">Mode</span>
+            <select id="permission-mode-select" onchange="App.savePermissionMode()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:var(--text);font-size:13px;">
+              <option value="autonomous">Autonomous</option>
+              <option value="supervised">Supervised</option>
+            </select>
+          </div>
+          <div class="setting-item" style="flex-direction:column;align-items:flex-start;gap:6px">
+            <span id="permission-mode-desc" class="form-hint" style="margin:0"></span>
+          </div>
+        </div>
+      </div>
       <div class="panel" id="secrets-panel">
         <h3>Secrets & API Keys</h3>
         <p class="form-hint">Encrypted secrets injected as environment variables into Claude sessions. AES-256-GCM encrypted at rest.</p>

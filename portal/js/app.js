@@ -874,32 +874,27 @@
     var statusEl = document.getElementById('update-status');
     var currentEl = document.getElementById('update-current-version');
     var latestEl = document.getElementById('update-latest-version');
-    var changesEl = document.getElementById('update-changes');
+    var releaseInfo = document.getElementById('update-release-info');
+    var releaseNameEl = document.getElementById('update-release-name');
+    var releaseNotesEl = document.getElementById('update-release-notes');
+    var releaseUrlEl = document.getElementById('update-release-url');
     var upgradeBtn = document.getElementById('update-upgrade-btn');
     var banner = document.getElementById('update-banner');
-    var repoEl = document.getElementById('update-repo-url');
 
     if (statusEl) { statusEl.textContent = 'Checking...'; statusEl.className = 'badge badge-inactive'; }
+    if (releaseInfo) releaseInfo.classList.add('hidden');
 
     try {
       var result = await api.get('/api/updates/check');
 
       if (currentEl) currentEl.textContent = result.currentVersion || '-';
       if (latestEl) latestEl.textContent = result.latestVersion || '-';
-      if (repoEl && result.remoteUrl) {
-        var displayUrl = result.remoteUrl.replace(/\.git$/, '');
-        repoEl.href = displayUrl;
-        repoEl.textContent = displayUrl.replace(/^https?:\/\//, '');
-      } else if (repoEl && result.error) {
-        repoEl.href = '#';
-        repoEl.textContent = 'Not configured';
-      }
 
       if (result.error) {
-        if (statusEl) { statusEl.textContent = 'No remote'; statusEl.className = 'badge badge-inactive'; }
-        if (changesEl) { changesEl.textContent = result.error; changesEl.classList.remove('hidden'); }
+        if (statusEl) { statusEl.textContent = 'Check failed'; statusEl.className = 'badge badge-inactive'; }
         if (upgradeBtn) upgradeBtn.classList.add('hidden');
         if (banner) banner.classList.add('hidden');
+        toast(result.error, 'error');
         return;
       }
 
@@ -907,17 +902,19 @@
         if (statusEl) { statusEl.textContent = 'Update available'; statusEl.className = 'badge badge-pending'; }
         if (upgradeBtn) upgradeBtn.classList.remove('hidden');
         if (banner) banner.classList.remove('hidden');
-        if (changesEl && result.changes && result.changes.length > 0) {
-          changesEl.innerHTML = '<strong style="color:var(--text)">Changes:</strong><br>' +
-            result.changes.map(function(c) { return escHtml(c); }).join('<br>');
-          changesEl.classList.remove('hidden');
+        if (releaseInfo) {
+          releaseInfo.classList.remove('hidden');
+          if (releaseNameEl) releaseNameEl.textContent = result.releaseName || ('v' + result.latestVersion);
+          if (releaseNotesEl) {
+            releaseNotesEl.innerHTML = result.releaseNotes ? (typeof marked !== 'undefined' ? marked.parse(result.releaseNotes) : escHtml(result.releaseNotes)) : '';
+          }
+          if (releaseUrlEl && result.releaseUrl) { releaseUrlEl.href = result.releaseUrl; }
         }
-        toast('Update available!');
+        toast('Update available: v' + result.latestVersion);
       } else {
         if (statusEl) { statusEl.textContent = 'Up to date'; statusEl.className = 'badge badge-active'; }
         if (upgradeBtn) upgradeBtn.classList.add('hidden');
         if (banner) banner.classList.add('hidden');
-        if (changesEl) changesEl.classList.add('hidden');
         toast('You are up to date');
       }
     } catch(e) {
@@ -927,7 +924,10 @@
   }
 
   async function performUpgrade() {
-    if (!confirm('Upgrade the platform? This will update server and dashboard files only — your agents, tasks, and project data will NOT be changed. The server will need a restart after upgrading.')) return;
+    if (!confirm('Upgrade the platform? This will download and replace platform files only — your agents, tasks, secrets, and project data will NOT be changed. The server will need a restart after upgrading.')) return;
+
+    var upgradeBtn = document.getElementById('update-upgrade-btn');
+    if (upgradeBtn) { upgradeBtn.disabled = true; upgradeBtn.textContent = 'Downloading...'; }
 
     try {
       var result = await api.post('/api/updates/upgrade', {});
@@ -935,15 +935,16 @@
         toast('Upgrade complete! Restart the server to apply.');
         var statusEl = document.getElementById('update-status');
         if (statusEl) { statusEl.textContent = 'Restart required'; statusEl.className = 'badge badge-pending'; }
-        var upgradeBtn = document.getElementById('update-upgrade-btn');
         if (upgradeBtn) upgradeBtn.classList.add('hidden');
         var banner = document.getElementById('update-banner');
         if (banner) banner.classList.add('hidden');
       } else {
         toast(result.message || 'Upgrade failed', 'error');
+        if (upgradeBtn) { upgradeBtn.disabled = false; upgradeBtn.textContent = 'Upgrade Now'; }
       }
     } catch(e) {
       toast('Upgrade failed', 'error');
+      if (upgradeBtn) { upgradeBtn.disabled = false; upgradeBtn.textContent = 'Upgrade Now'; }
       console.error('Upgrade error:', e);
     }
   }

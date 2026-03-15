@@ -411,76 +411,151 @@ function wsSend(socket, obj) {
   try { socket.write(buildWsFrame(JSON.stringify(obj))); } catch(e) {}
 }
 
-// ── Upgrade / Update Mechanism ───────────────────────────
-var PLATFORM_FILES = ['server.js', 'portal/', 'launch.sh', 'launch.bat', 'config/agent-templates/', '.gitignore', 'package.json'];
+// ── Upgrade / Update Mechanism (GitHub Releases) ─────────
+var GITHUB_REPO = 'sagiyaacoby/TeamHero';
+var PLATFORM_FILES = ['server.js', 'portal/', 'launch.sh', 'launch.bat', 'config/agent-templates/', '.gitignore', 'package.json', 'package-lock.json'];
 
-function execGit(args) {
-  return new Promise(function(resolve) {
-    var proc = spawn('git', args, { cwd: ROOT, shell: true, timeout: 30000 });
-    var stdout = '', stderr = '';
-    proc.stdout.on('data', function(ch) { stdout += ch; });
-    proc.stderr.on('data', function(ch) { stderr += ch; });
-    proc.on('close', function(code) { resolve({ code: code, stdout: stdout.trim(), stderr: stderr.trim() }); });
-    proc.on('error', function(err) { resolve({ code: -1, stdout: '', stderr: err.message }); });
+function httpsGet(url) {
+  var https = require('https');
+  return new Promise(function(resolve, reject) {
+    var opts = { headers: { 'User-Agent': 'TeamHero-Updater', 'Accept': 'application/vnd.github.v3+json' } };
+    var parsed = new URL(url);
+    opts.hostname = parsed.hostname;
+    opts.path = parsed.pathname + parsed.search;
+    https.get(opts, function(res) {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return httpsGet(res.headers.location).then(resolve, reject);
+      }
+      var data = [];
+      res.on('data', function(ch) { data.push(ch); });
+      res.on('end', function() {
+        var buf = Buffer.concat(data);
+        resolve({ statusCode: res.statusCode, body: buf });
+      });
+    }).on('error', reject);
   });
 }
 
-async function checkForUpdates() {
-  var remote = await execGit(['remote', 'get-url', 'origin']);
-  if (remote.code !== 0) return { updateAvailable: false, error: 'No git remote configured. Add one with: git remote add origin <repo-url>' };
-
-  var fetch = await execGit(['fetch', 'origin', '--quiet']);
-  if (fetch.code !== 0) return { updateAvailable: false, error: 'Failed to fetch from remote: ' + fetch.stderr };
-
-  var branchResult = await execGit(['symbolic-ref', 'refs/remotes/origin/HEAD', '--short']);
-  var remoteBranch = branchResult.code === 0 ? branchResult.stdout : 'origin/main';
-
-  var logArgs = ['log', 'HEAD..' + remoteBranch, '--oneline', '--'];
-  logArgs = logArgs.concat(PLATFORM_FILES);
-  var log = await execGit(logArgs);
-  var commits = log.stdout ? log.stdout.split('\n').filter(Boolean) : [];
-
-  var remoteVersionResult = await execGit(['show', remoteBranch + ':package.json']);
-  var remoteVersion = null;
-  if (remoteVersionResult.code === 0) {
-    try { remoteVersion = JSON.parse(remoteVersionResult.stdout).version; } catch(e) {}
+function compareVersions(a, b) {
+  // Returns >0 if b is newer than a
+  var pa = (a || '0.0.0').split('.').map(Number);
+  var pb = (b || '0.0.0').split('.').map(Number);
+  for (var i = 0; i < 3; i++) {
+    if ((pb[i] || 0) > (pa[i] || 0)) return 1;
+    if ((pb[i] || 0) < (pa[i] || 0)) return -1;
   }
+  return 0;
+}
 
+async function checkForUpdates() {
   var localPkg = readJSON(path.join(ROOT, 'package.json'));
   var localVersion = localPkg ? localPkg.version : '1.0.0';
 
-  return {
-    updateAvailable: commits.length > 0,
-    currentVersion: localVersion,
-    latestVersion: remoteVersion || localVersion,
-    changes: commits.slice(0, 20),
-    remoteBranch: remoteBranch,
-    remoteUrl: remote.stdout,
-  };
+  try {
+    var res = await httpsGet('https://api.github.com/repos/' + GITHUB_REPO + '/releases/latest');
+    if (res.statusCode === 404) {
+      return { updateAvailable: false, currentVersion: localVersion, latestVersion: localVersion, error: 'No releases published yet.' };
+    }
+    if (res.statusCode !== 200) {
+      return { updateAvailable: false, currentVersion: localVersion, error: 'GitHub API error: HTTP ' + res.statusCode };
+    }
+    var release = JSON.parse(res.body.toString());
+    var latestVersion = (release.tag_name || '').replace(/^v/, '');
+    var updateAvailable = compareVersions(localVersion, latestVersion) > 0;
+    var releaseNotes = release.body || '';
+    // Truncate long notes
+    if (releaseNotes.length > 1000) releaseNotes = releaseNotes.slice(0, 1000) + '...';
+
+    return {
+      updateAvailable: updateAvailable,
+      currentVersion: localVersion,
+      latestVersion: latestVersion,
+      releaseNotes: releaseNotes,
+      releaseName: release.name || release.tag_name || '',
+      releaseUrl: release.html_url || '',
+      tarballUrl: release.tarball_url || '',
+      publishedAt: release.published_at || '',
+      repoUrl: 'https://github.com/' + GITHUB_REPO,
+    };
+  } catch(e) {
+    return { updateAvailable: false, currentVersion: localVersion, error: 'Failed to check for updates: ' + e.message };
+  }
 }
 
 async function performUpgrade() {
   var check = await checkForUpdates();
-  if (!check.updateAvailable) return { success: false, message: 'Already up to date' };
+  if (!check.updateAvailable) return { success: false, message: 'Already up to date.' };
+  if (!check.tarballUrl) return { success: false, message: 'No download URL available.' };
 
-  var remoteBranch = check.remoteBranch || 'origin/main';
+  try {
+    // Download the release tarball
+    var tarRes = await httpsGet(check.tarballUrl);
+    if (tarRes.statusCode !== 200) return { success: false, message: 'Download failed: HTTP ' + tarRes.statusCode };
 
-  var checkoutArgs = ['checkout', remoteBranch, '--'].concat(PLATFORM_FILES);
-  var result = await execGit(checkoutArgs);
+    var zlib = require('zlib');
+    var tarData = zlib.gunzipSync(tarRes.body);
 
-  if (result.code !== 0) return { success: false, message: 'Upgrade failed: ' + result.stderr };
+    // Parse tar and extract platform files
+    var extracted = 0;
+    var offset = 0;
+    var stripPrefix = ''; // GitHub tarballs have a top-level dir like "user-repo-hash/"
 
-  var remotePkg = await execGit(['show', remoteBranch + ':package.json']);
-  if (remotePkg.code === 0) {
-    try { fs.writeFileSync(path.join(ROOT, 'package.json'), remotePkg.stdout); } catch(e) {}
+    while (offset < tarData.length) {
+      // Tar header is 512 bytes
+      var header = tarData.slice(offset, offset + 512);
+      if (header.length < 512 || header[0] === 0) break;
+
+      var fileName = header.slice(0, 100).toString('utf8').replace(/\0/g, '');
+      // Handle long names via prefix field (bytes 345-500)
+      var prefix = header.slice(345, 500).toString('utf8').replace(/\0/g, '');
+      if (prefix) fileName = prefix + '/' + fileName;
+
+      var sizeOctal = header.slice(124, 136).toString('utf8').replace(/\0/g, '').trim();
+      var fileSize = parseInt(sizeOctal, 8) || 0;
+      var typeFlag = header[156];
+
+      offset += 512; // past header
+
+      // Detect strip prefix from first entry
+      if (!stripPrefix && fileName.indexOf('/') > 0) {
+        stripPrefix = fileName.slice(0, fileName.indexOf('/') + 1);
+      }
+
+      // Strip the top-level directory
+      var relPath = fileName;
+      if (stripPrefix && relPath.startsWith(stripPrefix)) {
+        relPath = relPath.slice(stripPrefix.length);
+      }
+
+      if (relPath && fileSize > 0 && typeFlag === 48) { // typeFlag 48 = '0' = regular file
+        // Check if this is a platform file we should update
+        var isPlatform = PLATFORM_FILES.some(function(pf) {
+          if (pf.endsWith('/')) return relPath.startsWith(pf);
+          return relPath === pf;
+        });
+
+        if (isPlatform) {
+          var fileData = tarData.slice(offset, offset + fileSize);
+          var destPath = path.join(ROOT, relPath);
+          fs.mkdirSync(path.dirname(destPath), { recursive: true });
+          fs.writeFileSync(destPath, fileData);
+          extracted++;
+        }
+      }
+
+      // Advance past file data (padded to 512-byte boundary)
+      offset += Math.ceil(fileSize / 512) * 512;
+    }
+
+    return {
+      success: true,
+      message: 'Updated to v' + check.latestVersion + '. ' + extracted + ' files updated. Restart the server to apply.',
+      extractedFiles: extracted,
+      restartRequired: true,
+    };
+  } catch(e) {
+    return { success: false, message: 'Upgrade failed: ' + e.message };
   }
-
-  return {
-    success: true,
-    message: 'Platform updated to ' + (check.latestVersion || 'latest') + '. Restart the server to apply changes.',
-    updatedFiles: PLATFORM_FILES,
-    restartRequired: true,
-  };
 }
 
 // ── PTY Terminal Session Manager ─────────────────────────

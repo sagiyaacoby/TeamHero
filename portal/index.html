@@ -141,6 +141,9 @@
       <li><a href="#" data-view="rules" class="nav-link"><span class="icon">&#9997;</span> Team Rules</a></li>
       <li><a href="#" data-view="settings" class="nav-link"><span class="icon">&#9881;</span> Settings</a></li>
     </ul>
+    <div id="update-banner" class="update-banner hidden" onclick="App.navigate('settings')">
+      <span class="update-dot"></span> Update Available
+    </div>
     <div class="sidebar-footer"><span class="status-dot online"></span> System Active</div>
   </nav>
 
@@ -379,6 +382,35 @@
             <span class="setting-label">Connection</span>
             <div style="display:flex;gap:8px;align-items:center;">
               <button class="btn btn-secondary" onclick="App.checkClaudeStatus()" style="font-size:12px;padding:4px 12px;">Check Status</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel" id="update-panel">
+        <h3>Software Updates</h3>
+        <p class="form-hint">Check for platform updates from the remote repository. Updates only affect the platform — your agents, tasks, and project data are never changed.</p>
+        <div class="settings-group">
+          <div class="setting-item">
+            <span class="setting-label">Repository</span>
+            <a id="update-repo-url" href="#" target="_blank" style="color:var(--accent);text-decoration:none;">-</a>
+          </div>
+          <div class="setting-item">
+            <span class="setting-label">Current Version</span>
+            <span id="update-current-version">-</span>
+          </div>
+          <div class="setting-item">
+            <span class="setting-label">Latest Version</span>
+            <span id="update-latest-version">-</span>
+          </div>
+          <div class="setting-item">
+            <span class="setting-label">Status</span>
+            <span id="update-status" class="badge badge-active">Up to date</span>
+          </div>
+          <div id="update-changes" class="update-changes hidden"></div>
+          <div class="setting-item">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button class="btn btn-secondary" onclick="App.checkForUpdates()">Check for Updates</button>
+              <button class="btn btn-primary hidden" id="update-upgrade-btn" onclick="App.performUpgrade()">Upgrade Now</button>
             </div>
           </div>
         </div>

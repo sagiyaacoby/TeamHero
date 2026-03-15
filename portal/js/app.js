@@ -673,6 +673,7 @@
       document.getElementById('settings-agent-count').textContent = (agents.agents || []).length;
     } catch(e) { console.error('Failed to load settings:', e); }
     checkClaudeStatus();
+    checkForUpdates();
   }
 
   async function rebuildContext() {
@@ -698,6 +699,96 @@
       toast('All sub-agents deleted. Orchestrator remains.');
       if (state.currentView === 'agent-detail') navigate('dashboard');
     } catch(e) { toast('Failed to reset agents', 'error'); }
+  }
+
+  // ── Software Updates ─────────────────────────────────
+  async function checkForUpdates() {
+    var statusEl = document.getElementById('update-status');
+    var currentEl = document.getElementById('update-current-version');
+    var latestEl = document.getElementById('update-latest-version');
+    var changesEl = document.getElementById('update-changes');
+    var upgradeBtn = document.getElementById('update-upgrade-btn');
+    var banner = document.getElementById('update-banner');
+    var repoEl = document.getElementById('update-repo-url');
+
+    if (statusEl) { statusEl.textContent = 'Checking...'; statusEl.className = 'badge badge-inactive'; }
+
+    try {
+      var result = await api.get('/api/updates/check');
+
+      if (currentEl) currentEl.textContent = result.currentVersion || '-';
+      if (latestEl) latestEl.textContent = result.latestVersion || '-';
+      if (repoEl && result.remoteUrl) {
+        var displayUrl = result.remoteUrl.replace(/\.git$/, '');
+        repoEl.href = displayUrl;
+        repoEl.textContent = displayUrl.replace(/^https?:\/\//, '');
+      } else if (repoEl && result.error) {
+        repoEl.href = '#';
+        repoEl.textContent = 'Not configured';
+      }
+
+      if (result.error) {
+        if (statusEl) { statusEl.textContent = 'No remote'; statusEl.className = 'badge badge-inactive'; }
+        if (changesEl) { changesEl.textContent = result.error; changesEl.classList.remove('hidden'); }
+        if (upgradeBtn) upgradeBtn.classList.add('hidden');
+        if (banner) banner.classList.add('hidden');
+        return;
+      }
+
+      if (result.updateAvailable) {
+        if (statusEl) { statusEl.textContent = 'Update available'; statusEl.className = 'badge badge-pending'; }
+        if (upgradeBtn) upgradeBtn.classList.remove('hidden');
+        if (banner) banner.classList.remove('hidden');
+        if (changesEl && result.changes && result.changes.length > 0) {
+          changesEl.innerHTML = '<strong style="color:var(--text)">Changes:</strong><br>' +
+            result.changes.map(function(c) { return escHtml(c); }).join('<br>');
+          changesEl.classList.remove('hidden');
+        }
+        toast('Update available!');
+      } else {
+        if (statusEl) { statusEl.textContent = 'Up to date'; statusEl.className = 'badge badge-active'; }
+        if (upgradeBtn) upgradeBtn.classList.add('hidden');
+        if (banner) banner.classList.add('hidden');
+        if (changesEl) changesEl.classList.add('hidden');
+        toast('You are up to date');
+      }
+    } catch(e) {
+      if (statusEl) { statusEl.textContent = 'Error'; statusEl.className = 'badge badge-inactive'; }
+      console.error('Update check failed:', e);
+    }
+  }
+
+  async function performUpgrade() {
+    if (!confirm('Upgrade the platform? This will update server and dashboard files only — your agents, tasks, and project data will NOT be changed. The server will need a restart after upgrading.')) return;
+
+    try {
+      var result = await api.post('/api/updates/upgrade', {});
+      if (result.success) {
+        toast('Upgrade complete! Restart the server to apply.');
+        var statusEl = document.getElementById('update-status');
+        if (statusEl) { statusEl.textContent = 'Restart required'; statusEl.className = 'badge badge-pending'; }
+        var upgradeBtn = document.getElementById('update-upgrade-btn');
+        if (upgradeBtn) upgradeBtn.classList.add('hidden');
+        var banner = document.getElementById('update-banner');
+        if (banner) banner.classList.add('hidden');
+      } else {
+        toast(result.message || 'Upgrade failed', 'error');
+      }
+    } catch(e) {
+      toast('Upgrade failed', 'error');
+      console.error('Upgrade error:', e);
+    }
+  }
+
+  // Silent update check (no toast on "up to date")
+  async function silentUpdateCheck() {
+    try {
+      var result = await api.get('/api/updates/check');
+      var banner = document.getElementById('update-banner');
+      if (result.updateAvailable && banner) {
+        banner.classList.remove('hidden');
+      }
+    } catch(e) {}
   }
 
   // ── Claude Account Status ─────────────────────────
@@ -1087,6 +1178,10 @@
         updateSidebarHeader(sys.teamName);
         await loadSidebarAgents();
         navigate('dashboard');
+        // Check for updates silently on startup
+        silentUpdateCheck();
+        // Re-check every 30 minutes
+        setInterval(silentUpdateCheck, 30 * 60 * 1000);
       }
     } catch(e) {
       document.getElementById('wizard-overlay').classList.remove('hidden');
@@ -1122,6 +1217,8 @@
     clearChat: clearChat,
     chatKeydown: chatKeydown,
     checkClaudeStatus: checkClaudeStatus,
+    checkForUpdates: checkForUpdates,
+    performUpgrade: performUpgrade,
   };
 
   init();

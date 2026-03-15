@@ -1,1 +1,11 @@
-{ "agents": [] }
+{
+  "agents": [
+    {
+      "id": "orchestrator",
+      "name": "Hero",
+      "role": "Team Orchestrator",
+      "status": "active",
+      "isOrchestrator": true
+    }
+  ]
+}

@@ -65,6 +65,35 @@ body {
 .nav-chat:hover { background: rgba(240,192,64,0.08) !important; }
 .nav-chat.active { color: var(--gold) !important; background: rgba(240,192,64,0.12) !important; border-right-color: var(--gold) !important; }
 
+/* ── Update Banner ─────────────────────────────────── */
+.update-banner {
+  padding: 10px 20px; cursor: pointer;
+  background: rgba(240,192,64,0.1); border-top: 1px solid var(--gold);
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600; color: var(--gold);
+  transition: background 0.15s;
+  animation: updatePulse 2s ease-in-out infinite;
+}
+.update-banner:hover { background: rgba(240,192,64,0.18); }
+.update-banner.hidden { display: none; }
+.update-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--gold); box-shadow: 0 0 8px var(--gold);
+  display: inline-block;
+}
+@keyframes updatePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.update-changes {
+  padding: 12px 16px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; font-size: 12px; font-family: 'SFMono-Regular', Consolas, monospace;
+  color: var(--text-muted); max-height: 150px; overflow-y: auto;
+  margin: 8px 0; line-height: 1.6;
+}
+.update-changes.hidden { display: none; }
+
 .sidebar-footer {
   padding: 16px 20px; border-top: 1px solid var(--border);
   font-size: 12px; color: var(--text-muted);

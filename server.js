@@ -4,9 +4,45 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 
-const PORT = process.env.PORT || 3777;
+const net = require('net');
+
 const BASE = path.join(__dirname, 'portal');
 const ROOT = __dirname;
+
+function getConfiguredPort() {
+  try {
+    var sys = JSON.parse(fs.readFileSync(path.join(ROOT, 'config/system.json'), 'utf8'));
+    if (sys.port) return sys.port;
+  } catch(e) {}
+  return null;
+}
+
+function savePort(port) {
+  var sp = path.join(ROOT, 'config/system.json');
+  var sys = {};
+  try { sys = JSON.parse(fs.readFileSync(sp, 'utf8')); } catch(e) {}
+  sys.port = port;
+  fs.mkdirSync(path.dirname(sp), { recursive: true });
+  fs.writeFileSync(sp, JSON.stringify(sys, null, 2) + '\n');
+}
+
+function isPortFree(port) {
+  return new Promise(function(resolve) {
+    var srv = net.createServer();
+    srv.once('error', function() { resolve(false); });
+    srv.once('listening', function() { srv.close(function() { resolve(true); }); });
+    srv.listen(port);
+  });
+}
+
+async function findFreePort(start) {
+  for (var p = start; p < start + 100; p++) {
+    if (await isPortFree(p)) return p;
+  }
+  throw new Error('No free port found in range ' + start + '-' + (start + 99));
+}
+
+var PORT; // assigned during startup
 
 const MIME = {
   '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript',
@@ -360,88 +396,6 @@ function spawnClaude(message, socket) {
   });
 }
 
-// ── Update System ────────────────────────────────────────
-// Platform files safe to update — NEVER touch project data (agents, tasks, profile, rules, config/system.json)
-var PLATFORM_FILES = ['server.js', 'portal/', 'launch.sh', 'launch.bat', 'config/agent-templates/', '.gitignore'];
-
-function execGit(args) {
-  return new Promise(function(resolve) {
-    var proc = spawn('git', args, { cwd: ROOT, shell: true, timeout: 30000 });
-    var stdout = '', stderr = '';
-    proc.stdout.on('data', function(ch) { stdout += ch; });
-    proc.stderr.on('data', function(ch) { stderr += ch; });
-    proc.on('close', function(code) { resolve({ code: code, stdout: stdout.trim(), stderr: stderr.trim() }); });
-    proc.on('error', function(err) { resolve({ code: -1, stdout: '', stderr: err.message }); });
-  });
-}
-
-async function checkForUpdates() {
-  // Check if git remote exists
-  var remote = await execGit(['remote', 'get-url', 'origin']);
-  if (remote.code !== 0) return { updateAvailable: false, error: 'No git remote configured. Add one with: git remote add origin <repo-url>' };
-
-  // Fetch latest from remote
-  var fetch = await execGit(['fetch', 'origin', '--quiet']);
-  if (fetch.code !== 0) return { updateAvailable: false, error: 'Failed to fetch from remote: ' + fetch.stderr };
-
-  // Detect default remote branch
-  var branchResult = await execGit(['symbolic-ref', 'refs/remotes/origin/HEAD', '--short']);
-  var remoteBranch = branchResult.code === 0 ? branchResult.stdout : 'origin/main';
-
-  // Check for new commits on platform files only
-  var logArgs = ['log', 'HEAD..' + remoteBranch, '--oneline', '--'];
-  logArgs = logArgs.concat(PLATFORM_FILES);
-  var log = await execGit(logArgs);
-  var commits = log.stdout ? log.stdout.split('\n').filter(Boolean) : [];
-
-  // Get remote version from package.json if it exists
-  var remoteVersionResult = await execGit(['show', remoteBranch + ':package.json']);
-  var remoteVersion = null;
-  if (remoteVersionResult.code === 0) {
-    try { remoteVersion = JSON.parse(remoteVersionResult.stdout).version; } catch(e) {}
-  }
-
-  var localPkg = readJSON(path.join(ROOT, 'package.json'));
-  var localVersion = localPkg ? localPkg.version : '1.0.0';
-
-  return {
-    updateAvailable: commits.length > 0,
-    currentVersion: localVersion,
-    latestVersion: remoteVersion || localVersion,
-    changes: commits.slice(0, 20),
-    remoteBranch: remoteBranch,
-    remoteUrl: remote.stdout,
-  };
-}
-
-async function performUpgrade() {
-  var check = await checkForUpdates();
-  if (!check.updateAvailable) return { success: false, message: 'Already up to date' };
-
-  var remoteBranch = check.remoteBranch || 'origin/main';
-
-  // Checkout ONLY platform files from remote — never touch project data
-  var checkoutArgs = ['checkout', remoteBranch, '--'].concat(PLATFORM_FILES);
-  var result = await execGit(checkoutArgs);
-
-  if (result.code !== 0) return { success: false, message: 'Upgrade failed: ' + result.stderr };
-
-  // Update local version tracking
-  var remotePkg = await execGit(['show', remoteBranch + ':package.json']);
-  if (remotePkg.code === 0) {
-    try {
-      fs.writeFileSync(path.join(ROOT, 'package.json'), remotePkg.stdout);
-    } catch(e) {}
-  }
-
-  return {
-    success: true,
-    message: 'Platform updated to ' + (check.latestVersion || 'latest') + '. Restart the server to apply changes.',
-    updatedFiles: PLATFORM_FILES,
-    restartRequired: true,
-  };
-}
-
 // ── Request Handler ──────────────────────────────────────
 async function handle(pn, m, req, res) {
   // SYSTEM
@@ -665,17 +619,6 @@ async function handle(pn, m, req, res) {
     return J(res, { ok: true });
   }
 
-  // UPDATES
-  if (pn === '/api/updates/check' && m === 'GET') {
-    var result = await checkForUpdates();
-    return J(res, result);
-  }
-  if (pn === '/api/updates/upgrade' && m === 'POST') {
-    var result = await performUpgrade();
-    broadcast('all');
-    return J(res, result, result.success ? 200 : 400);
-  }
-
   // CLAUDE CLI STATUS
   if (pn === "/api/claude/status" && m === "GET") {
     return new Promise(function(resolve) {
@@ -813,4 +756,21 @@ server.on('upgrade', function(req, socket, head) {
 // ── Startup ──────────────────────────────────────────────
 ensureOrchestrator();
 
-server.listen(PORT, function() { console.log('\n  Agent Team Portal running at http://localhost:' + PORT + '\n'); });
+(async function() {
+  var envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : null;
+  var configPort = getConfiguredPort();
+  var requestedPort = envPort || configPort || 3777;
+
+  // If the requested port is busy, find the next free one
+  if (await isPortFree(requestedPort)) {
+    PORT = requestedPort;
+  } else {
+    PORT = await findFreePort(requestedPort + 1);
+    console.log('  Port ' + requestedPort + ' is busy, using ' + PORT + ' instead.');
+  }
+
+  // Save the port so this instance reuses it on restart
+  if (!envPort) savePort(PORT);
+
+  server.listen(PORT, function() { console.log('\n  Agent Team Portal running at http://localhost:' + PORT + '\n'); });
+})();

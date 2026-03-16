@@ -278,7 +278,26 @@ body {
 .secret-actions { display: flex; gap: 6px; align-items: center; }
 
 /* ── Media grid ──────────────────────────────────── */
-.media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+
+/* ── Media Thumbnails ────────────────────────────── */
+.media-thumb {
+  width: 100%; height: 180px; border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden; cursor: pointer; background: var(--bg-card);
+  display: flex; flex-direction: column; transition: border-color 0.15s;
+}
+.media-thumb:hover { border-color: var(--accent); }
+.media-thumb img {
+  width: 100%; height: 140px; object-fit: cover; display: block;
+}
+.media-thumb-info {
+  padding: 6px 8px; font-size: 11px; color: var(--text-muted);
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.media-thumb-icon {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  font-size: 48px; background: var(--bg-surface);
+}
 
 /* ── Command Center (Terminal) ───────────────────── */
 .view-chat-fullscreen {

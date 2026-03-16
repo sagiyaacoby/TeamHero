@@ -219,8 +219,12 @@
   // ── Sidebar Agents ─────────────────────────────────
   async function loadSidebarAgents() {
     try {
-      const data = await api.get('/api/agents');
-      state.agents = data.agents || [];
+      const [agentsData, tasksData] = await Promise.all([
+        api.get('/api/agents'),
+        api.get('/api/tasks'),
+      ]);
+      state.agents = agentsData.agents || [];
+      state.tasks = tasksData.tasks || [];
       renderSidebarAgents();
     } catch(e) { console.error('Failed to load agents:', e); }
   }
@@ -1547,17 +1551,23 @@
   }
 
   // ── Media ──────────────────────────────────────────
+  var IMAGE_EXTS = ['png','jpg','jpeg','gif','svg','webp'];
+  var VIDEO_EXTS = ['mp4','webm','mov','avi'];
+  var DOC_EXTS = ['pdf','doc','docx','txt','md','csv','xls','xlsx'];
+
+  function mediaTypeIcon(ext) {
+    if (VIDEO_EXTS.indexOf(ext) >= 0) return '\uD83C\uDFAC';
+    if (DOC_EXTS.indexOf(ext) >= 0) return '\uD83D\uDCC4';
+    return '\uD83D\uDCC1';
+  }
+
   async function loadMedia() {
     try {
       var files = await api.get('/api/ls/data/media');
       var el = document.getElementById('media-grid');
       var mediaFiles = files.filter(function(f) { return !f.isDir; });
       if (state.mediaFilter && state.mediaFilter !== 'all') {
-        var extMap = {
-          image: ['png','jpg','jpeg','gif','svg','webp'],
-          video: ['mp4','webm','mov','avi'],
-          document: ['pdf','doc','docx','txt','md','csv','xls','xlsx']
-        };
+        var extMap = { image: IMAGE_EXTS, video: VIDEO_EXTS, document: DOC_EXTS };
         var allowedExts = extMap[state.mediaFilter] || [];
         mediaFiles = mediaFiles.filter(function(f) {
           var ext = f.name.split('.').pop().toLowerCase();
@@ -1571,14 +1581,51 @@
       }
       el.innerHTML = mediaFiles.map(function(f) {
         var ext = f.name.split('.').pop().toLowerCase();
-        var isImage = ['png','jpg','jpeg','gif','svg','webp'].indexOf(ext) >= 0;
+        var isImage = IMAGE_EXTS.indexOf(ext) >= 0;
+        var typeStr = isImage ? 'image' : (VIDEO_EXTS.indexOf(ext) >= 0 ? 'video' : 'document');
+        var truncName = f.name.length > 20 ? f.name.slice(0, 17) + '...' : f.name;
         if (isImage) {
-          return '<div class="media-item"><img src="/api/file/data/media/' + encodeURIComponent(f.name) + '" alt="' + escHtml(f.name) + '" style="width:100%;border-radius:6px"><p style="font-size:12px;color:var(--text-muted);margin-top:4px">' + escHtml(f.name) + '</p></div>';
+          return '<div class="media-thumb" onclick="App.openMediaPreview(\'' + escHtml(f.name.replace(/'/g, "\\'")) + '\',\'' + typeStr + '\')">' +
+            '<img src="/api/media/files/' + encodeURIComponent(f.name) + '" alt="' + escHtml(f.name) + '">' +
+            '<div class="media-thumb-info"><span class="media-thumb-name" title="' + escHtml(f.name) + '">' + escHtml(truncName) + '</span></div></div>';
         }
-        return '<div class="media-item" style="padding:20px;text-align:center;background:var(--bg-surface);border-radius:6px"><p>' + escHtml(f.name) + '</p></div>';
+        return '<div class="media-thumb" onclick="App.openMediaPreview(\'' + escHtml(f.name.replace(/'/g, "\\'")) + '\',\'' + typeStr + '\')">' +
+          '<div class="media-thumb-icon">' + mediaTypeIcon(ext) + '</div>' +
+          '<div class="media-thumb-info"><span class="media-thumb-name" title="' + escHtml(f.name) + '">' + escHtml(truncName) + '</span></div></div>';
       }).join('');
     } catch(e) {
       document.getElementById('media-grid').innerHTML = '<div class="empty-state">No media files yet</div>';
+    }
+  }
+
+  function openMediaPreview(filename, type) {
+    state.currentMediaFile = filename;
+    var content = document.getElementById('media-preview-content');
+    if (type === 'image') {
+      content.innerHTML = '<img src="/api/media/files/' + encodeURIComponent(filename) + '" alt="' + escHtml(filename) + '" style="max-width:100%;max-height:70vh;display:block;margin:0 auto 12px;border-radius:6px">' +
+        '<p style="text-align:center;color:var(--text-muted);font-size:13px">' + escHtml(filename) + '</p>';
+    } else {
+      var ext = filename.split('.').pop().toLowerCase();
+      var icon = mediaTypeIcon(ext);
+      content.innerHTML = '<div style="text-align:center;padding:32px">' +
+        '<div style="font-size:64px;margin-bottom:16px">' + icon + '</div>' +
+        '<p style="font-size:16px;font-weight:500;margin-bottom:8px">' + escHtml(filename) + '</p>' +
+        '<p style="color:var(--text-muted);font-size:13px">Type: ' + escHtml(ext.toUpperCase()) + '</p></div>';
+    }
+    document.getElementById('media-preview-modal').classList.remove('hidden');
+  }
+
+  function closeMediaPreview() {
+    document.getElementById('media-preview-modal').classList.add('hidden');
+    state.currentMediaFile = null;
+  }
+
+  async function openMediaFolder() {
+    if (!state.currentMediaFile) return;
+    try {
+      await api.post('/api/media/open-folder', { filename: state.currentMediaFile });
+    } catch(e) {
+      showToast('Could not open folder', 'error');
     }
   }
 
@@ -2050,6 +2097,9 @@
     submitAddTask: submitAddTask,
     state: state,
     filterMedia: filterMedia,
+    openMediaPreview: openMediaPreview,
+    closeMediaPreview: closeMediaPreview,
+    openMediaFolder: openMediaFolder,
     saveProfile: saveProfile,
     saveRules: saveRules,
     rebuildContext: rebuildContext,

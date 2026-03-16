@@ -623,6 +623,17 @@
     </div>
   </div>
 
+  <!-- Media Preview Modal -->
+  <div id="media-preview-modal" class="modal-overlay hidden" onclick="if(event.target===this)App.closeMediaPreview()">
+    <div class="modal-box" style="max-width:800px">
+      <div id="media-preview-content"></div>
+      <div class="form-actions">
+        <button class="btn btn-secondary" onclick="App.openMediaFolder()">Open in Folder</button>
+        <button class="btn btn-secondary" onclick="App.closeMediaPreview()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 

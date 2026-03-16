@@ -110,6 +110,11 @@ const MIME = {
   '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon', '.mp4': 'video/mp4', '.webm': 'video/webm', '.md': 'text/plain',
+  '.webp': 'image/webp', '.pdf': 'application/pdf', '.mov': 'video/quicktime',
+  '.avi': 'video/x-msvideo', '.txt': 'text/plain', '.csv': 'text/csv',
+  '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.zip': 'application/zip', '.mp3': 'audio/mpeg', '.wav': 'audio/wav',
 };
 
 function safePath(rel) {
@@ -1693,6 +1698,50 @@ async function handle(pn, m, req, res) {
       });
       proc1.on("error", function() { J(res, result); resolve(); });
     });
+  }
+
+  // MEDIA FILE SERVING
+  if (pn.startsWith('/api/media/files/') && m === 'GET') {
+    const filename = decodeURIComponent(pn.slice('/api/media/files/'.length));
+    if (filename.indexOf('..') >= 0 || filename.indexOf('/') >= 0 || filename.indexOf('\\') >= 0) {
+      res.writeHead(403); return res.end('Forbidden');
+    }
+    const filePath = path.join(ROOT, 'data', 'media', filename);
+    if (!filePath.startsWith(path.join(ROOT, 'data', 'media'))) {
+      res.writeHead(403); return res.end('Forbidden');
+    }
+    try {
+      const data = fs.readFileSync(filePath);
+      const ext = path.extname(filename).toLowerCase();
+      res.writeHead(200, {
+        'Content-Type': MIME[ext] || 'application/octet-stream',
+        'Cache-Control': 'no-cache'
+      });
+      return res.end(data);
+    } catch(e) { res.writeHead(404); return res.end('Not found'); }
+  }
+
+  // OPEN MEDIA FOLDER
+  if (pn === '/api/media/open-folder' && m === 'POST') {
+    const b = await parseBody(req);
+    if (!b.filename) return E(res, 'filename required');
+    const filename = b.filename;
+    if (filename.indexOf('..') >= 0 || filename.indexOf('/') >= 0 || filename.indexOf('\\') >= 0) {
+      return E(res, 'Invalid filename', 403);
+    }
+    const filePath = path.join(ROOT, 'data', 'media', filename);
+    if (!fs.existsSync(filePath)) return E(res, 'File not found', 404);
+    try {
+      const plat = process.platform;
+      if (plat === 'win32') {
+        execSync('explorer /select,"' + filePath.replace(/\//g, '\\') + '"');
+      } else if (plat === 'darwin') {
+        execSync('open -R "' + filePath + '"');
+      } else {
+        execSync('xdg-open "' + path.dirname(filePath) + '"');
+      }
+    } catch(e) { /* explorer returns non-zero sometimes, ignore */ }
+    return J(res, { ok: true });
   }
 
   // LEGACY FILE READ

@@ -1,0 +1,10 @@
+- Research and identify the highest-impact communities for each piece of content
+- Create promotion plans with specific platforms, timing, and target audiences
+- Monitor Reddit, HN, Twitter, LinkedIn, Dev.to, and Discord for mentions and feedback
+- Collect and categorize all user feedback: feature requests, bugs, praise, criticism
+- Report community sentiment and trending requests back to the team
+- Track star growth and correlate with promotion activities
+- Never spam communities � provide genuine value in every post
+- Respect each community culture and rules (e.g., HN hates self-promotion, Reddit hates link dumps)
+- All promotion actions require owner approval before execution
+- Prioritize channels by ROI: effort vs star/adoption impact

@@ -4,7 +4,9 @@
 - The orchestrator MUST delegate work to agents via tasks — never do the actual work itself
 - All work must be tracked as tasks in the dashboard so the owner has full visibility
 - Create tasks via `POST /api/tasks` with the appropriate agent assigned
-- Tasks flow through the lifecycle: draft → in_progress → pending_approval → approved → done
+- Task status lifecycle (main flow): `draft` → `pending_approval` → `approved` → `in_progress` → `done`
+- Side statuses: `revision_needed` (agent must revise based on owner feedback), `hold`, `cancelled`
+- The owner can freely change status via the dashboard — these are lightweight changes with no timeline entry
 - The orchestrator's role is: plan, delegate, coordinate, track, and present results to the owner
 
 ## Agent Autonomy
@@ -12,6 +14,7 @@
 - Agents update task status as they progress
 - Agents write deliverables into task version folders (data/tasks/{id}/v1/, v2/, etc.)
 - When work is complete, agents set status to `pending_approval` for owner review
+- When status is `revision_needed`, the agent MUST read the owner's feedback comments and submit a new revision
 
 ## Knowledge Pipeline
 - When completing research tasks, promote deliverables to Knowledge Base via `POST /api/tasks/{id}/promote`
@@ -23,10 +26,19 @@
 - Progress entries help the owner track work between round tables
 - Log meaningful milestones, not every minor step
 
-## Task Approval & Execution
-- When the owner approves a task, the orchestrator MUST ensure the assigned agent begins executing it
-- After approval, set the task to `in_progress` and confirm the agent is actively working on it
-- Tasks on "hold" remain visible on the dashboard but should not be actively worked on until the owner releases them
+## Task Status Meanings & Rules
+- **draft**: Task created, not yet ready for work
+- **pending_approval**: Agent submitted work, waiting for owner review
+- **approved**: Owner approved — orchestrator MUST launch the assigned agent to begin execution
+- **revision_needed**: Owner sent feedback — agent must revise and resubmit. Orchestrator should launch the agent with the feedback
+- **in_progress**: Agent is actively working on the task
+- **done**: Task complete, no further action needed
+- **hold**: Paused — do not work on until the owner releases it
+- **cancelled**: Abandoned — no further action
+
+When the owner sets a task to `approved`, the orchestrator MUST ensure the assigned agent begins executing it.
+When the owner sets a task to `revision_needed` (via Improve + feedback), the orchestrator MUST launch the agent with the feedback to revise.
+Tasks on "hold" remain visible but should not be actively worked on until the owner releases them.
 
 ## Round Table Reviews
 - Round tables must check that work is properly delegated, not silently done by the orchestrator

@@ -1,0 +1,15 @@
+{
+  "documents": [
+    {
+      "id": "mmtqqq1z1vxhxf",
+      "title": "Research: Licensing, Terms of Use & Monetization Strategy for TeamHero",
+      "category": "reference",
+      "tags": [],
+      "summary": "Research and recommend:\n1. Best open-source license for a CLI/dashboard platform like TeamHero (consider MIT, Apache 2.0, BSL, AGPL, dual-licensing)\n2. Terms of Use template and what it should cover\n3. Monetization strategies for AI agent orchestration platforms (freemium, open-core, SaaS, marketplace, etc.)\n4. Competitive landscape - how similar tools monetize\n5. Recommended strategy with pros/cons\n\nDeliver structured findings with clear recommendations.",
+      "sourceTaskId": "mmt1udfb6wy13k",
+      "authorAgentId": "mmsgzss0845l7c",
+      "createdAt": "2026-03-16T22:14:17.447Z",
+      "updatedAt": "2026-03-16T22:14:17.447Z"
+    }
+  ]
+}

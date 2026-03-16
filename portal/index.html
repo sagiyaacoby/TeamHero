@@ -514,6 +514,44 @@
         </div>
       </div>
       <div class="panel">
+        <div class="settings-section-header">
+          <h3>Autopilot</h3>
+          <button class="btn btn-secondary" onclick="App.openAutopilotForm()">+ Add Schedule</button>
+        </div>
+        <div id="autopilot-list"></div>
+        <div id="autopilot-form" class="hidden">
+          <div class="form-grid" style="margin-top:12px">
+            <div class="form-group full-width">
+              <label>Name</label>
+              <input type="text" id="ap-name" placeholder="e.g. Daily standup">
+            </div>
+            <div class="form-group full-width">
+              <label>Prompt</label>
+              <textarea id="ap-prompt" rows="3" placeholder="The prompt to send to the terminal..."></textarea>
+            </div>
+            <div class="form-group">
+              <label>Agent</label>
+              <select id="ap-agent"></select>
+            </div>
+            <div class="form-group">
+              <label>Interval</label>
+              <div style="display:flex;gap:8px">
+                <input type="number" id="ap-interval" min="1" value="60" style="width:80px">
+                <select id="ap-interval-unit">
+                  <option value="minutes">Minutes</option>
+                  <option value="hours">Hours</option>
+                  <option value="days">Days</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-secondary" onclick="App.cancelAutopilotForm()">Cancel</button>
+            <button class="btn btn-primary" onclick="App.saveAutopilot()">Save</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
         <h3>Actions</h3>
         <div class="settings-group">
           <div class="setting-item">

@@ -269,6 +269,9 @@
     if (scope === 'all' || scope === 'knowledge') {
       if (v === 'knowledge') loadKnowledge();
     }
+    if (scope === 'all' || scope === 'autopilot') {
+      if (v === 'settings') loadAutopilot();
+    }
   }
 
   // ── Sidebar Agents ─────────────────────────────────
@@ -390,7 +393,7 @@
         return;
       }
       const data = await api.get('/api/file/data/round-tables/' + encodeURIComponent(mdFiles[0].name));
-      el.innerHTML = '<pre class="memory-content">' + escHtml(data.content || 'Empty') + '</pre>';
+      el.innerHTML = '<div class="round-table-content">' + renderMarkdown(data.content || 'Empty') + '</div>';
     } catch(e) {
       document.getElementById('last-round-table').innerHTML = '<div class="empty-state">No round tables yet</div>';
     }
@@ -538,7 +541,7 @@
       // Update panel title
       var titleEl = document.getElementById('dashboard-tasks-title');
       if (titleEl) {
-        var labels = { all: 'All Tasks', pending_approval: 'Pending Approval', approved: 'Approved', in_progress: 'In Progress', done: 'Done' };
+        var labels = { all: 'All Tasks', pending_approval: 'Pending Approval', approved: 'Approved', revision_needed: 'Improve', in_progress: 'In Progress', done: 'Done' };
         titleEl.textContent = labels[filter] || filter.replace(/_/g, ' ');
       }
     } else {
@@ -627,7 +630,11 @@
       document.getElementById('task-detail-title').textContent = task.title || 'Untitled';
 
       var statusEl = document.getElementById('task-detail-status');
-      statusEl.textContent = (task.status || 'draft').replace(/_/g, ' ');
+      if (task.status === 'approved') {
+        statusEl.innerHTML = 'Executing <span class="agent-working-dot"></span>';
+      } else {
+        statusEl.textContent = (task.status || 'draft').replace(/_/g, ' ');
+      }
       statusEl.className = 'badge badge-' + (task.status || 'draft');
 
       var priorityEl = document.getElementById('task-detail-priority');
@@ -693,9 +700,9 @@
     var container = document.getElementById('task-session');
     var html = '';
 
-    // ── Brief ──
-    html += '<div class="session-brief">';
-    html += '<div class="session-section-label">Brief</div>';
+    // ── Owner Instructions ──
+    html += '<div class="session-instructions">';
+    html += '<div class="session-section-label">Owner Instructions</div>';
     if (task.description) {
       html += '<div class="session-brief-content">' + renderMarkdown(task.description) + '</div>';
     }
@@ -756,11 +763,19 @@
             }).join('') + '</div>';
         }
 
-        // Owner feedback (shown after version if improve/comments were given)
-        if (v.comments) {
-          html += '<div class="session-feedback">';
-          html += '<div class="session-feedback-label">Owner Feedback</div>';
-          html += '<div class="session-feedback-text">' + escHtml(v.comments).replace(/\n/g, '<br>') + '</div>';
+        // Owner feedback (shown after version if decision/comments were given)
+        if (v.decision || v.comments) {
+          var fbClass = v.decision === 'improve' ? 'session-feedback-improve' : v.decision === 'approved' ? 'session-feedback-approved' : v.decision === 'done' ? 'session-feedback-done' : '';
+          html += '<div class="session-feedback ' + fbClass + '">';
+          html += '<div class="session-feedback-label">Owner Feedback';
+          if (v.decision) {
+            var decisionLabels = { approved: 'Approve & Execute', improve: 'Improve', done: 'Done', hold: 'Hold', cancelled: 'Cancelled' };
+            html += ' <span class="badge badge-' + (v.decision) + '">' + (decisionLabels[v.decision] || v.decision) + '</span>';
+          }
+          html += '</div>';
+          if (v.comments) {
+            html += '<div class="session-feedback-text">' + escHtml(v.comments).replace(/\n/g, '<br>') + '</div>';
+          }
           html += '</div>';
         }
 
@@ -768,76 +783,128 @@
       });
     }
 
-    // ── Bottom section: review actions, outcome, or status bar ──
-    var isDone = task.status === 'done' || task.status === 'approved';
-    var isHold = task.status === 'hold';
-    var isCancelled = task.status === 'cancelled';
-
-    if (isDone) {
-      // Outcome
-      html += '<div class="session-outcome">';
-      html += '<span class="session-outcome-icon">&#10003;</span>';
-      html += '<span>Task completed and approved.</span>';
-      if (task.result) {
-        html += '<div class="session-outcome-result">' + linkifyText(escHtml(task.result)).replace(/\n/g, '<br>') + '</div>';
-      }
-      html += '</div>';
-      // Revision toggle
-      html += '<div class="session-revision-toggle">';
-      html += '<button class="btn btn-secondary btn-sm" onclick="App.toggleRevisionMode()">Request Revision</button>';
-      html += '</div>';
-      html += '<div id="session-review-inline" class="session-review hidden">';
-      html += '<textarea id="task-review-comments" placeholder="What needs to be changed?"></textarea>';
-      html += '<div class="review-actions">';
-      html += '<button class="btn btn-primary" onclick="App.reviewTask(\'improve\')">Send for Revision</button>';
-      html += '<button class="btn btn-secondary" onclick="App.toggleRevisionMode()">Cancel</button>';
-      html += '</div></div>';
-    } else if (isHold) {
-      html += '<div class="session-outcome session-outcome-hold">';
-      html += '<span class="session-outcome-icon">&#9208;</span>';
-      html += '<span>Task is on hold.</span>';
-      html += '</div>';
-      html += buildReviewBar();
-    } else if (isCancelled) {
-      html += '<div class="session-outcome session-outcome-cancelled">';
-      html += '<span class="session-outcome-icon">&#10007;</span>';
-      html += '<span>Task has been cancelled.</span>';
-      html += '</div>';
-    } else {
-      // Active — show inline review bar
-      html += buildReviewBar();
-    }
+    // ── Bottom section: status pipeline + feedback ──
+    html += buildStatusPipeline(task);
 
     container.innerHTML = html;
   }
 
-  function buildReviewBar() {
-    return '<div class="session-review">' +
-      '<textarea id="task-review-comments" placeholder="Add feedback or comments for the agent..."></textarea>' +
-      '<div class="review-actions">' +
-      '<button class="btn btn-run-now" onclick="App.runTaskNow()">&#9654; Run Now</button>' +
-      '<button class="btn btn-approve" onclick="App.reviewTask(\'approve\')">Approve</button>' +
-      '<button class="btn btn-primary" onclick="App.reviewTask(\'improve\')">Improve</button>' +
-      '<button class="btn btn-hold" onclick="App.reviewTask(\'hold\')">Hold</button>' +
-      '<button class="btn btn-cancel" onclick="App.reviewTask(\'cancel\')">Cancel</button>' +
-      '</div></div>';
+  function buildStatusPipeline(task) {
+    var current = task.status || 'draft';
+    var steps = [
+      { key: 'draft',            label: 'Draft',     icon: '&#9998;'  },
+      { key: 'pending_approval', label: 'Pending',   icon: '&#9679;'  },
+      { key: 'approved',         label: 'Approved',  icon: '&#9654;'  },
+      { key: 'revision_needed',  label: 'Improve',   icon: '&#9999;', needsFeedback: true },
+      { key: 'in_progress',      label: 'Working',   icon: '&#9881;'  },
+      { key: 'done',             label: 'Done',      icon: '&#10003;' }
+    ];
+    var sideStates = [
+      { key: 'hold',      label: 'Hold',   icon: '&#9208;' },
+      { key: 'cancelled', label: 'Cancel', icon: '&#10007;' }
+    ];
+
+    var html = '<div class="status-pipeline">';
+
+    // Main flow
+    html += '<div class="status-pipeline-row">';
+    for (var i = 0; i < steps.length; i++) {
+      var s = steps[i];
+      var isActive = s.key === current;
+      var isPast = getStepIndex(current, steps) > i;
+      var cls = 'status-step';
+      if (isActive) cls += ' status-step-active';
+      else if (isPast) cls += ' status-step-past';
+      var onclick = s.needsFeedback ? 'App.toggleFeedback()' : 'App.changeTaskStatus(\'' + s.key + '\')';
+      html += '<button class="' + cls + '" onclick="' + onclick + '" title="' + (s.needsFeedback ? 'Send feedback for revision' : 'Set to ' + s.label) + '">';
+      html += '<span class="status-step-icon">' + s.icon + '</span>';
+      html += '<span class="status-step-label">' + s.label + '</span>';
+      html += '</button>';
+      if (i < steps.length - 1) html += '<span class="status-step-arrow' + (isPast ? ' status-step-arrow-past' : '') + '">&#8250;</span>';
+    }
+    html += '</div>';
+
+    // Side states (hold, cancel) + improve
+    html += '<div class="status-pipeline-side">';
+    for (var j = 0; j < sideStates.length; j++) {
+      var ss = sideStates[j];
+      var isActiveSide = ss.key === current;
+      html += '<button class="status-step status-step-side' + (isActiveSide ? ' status-step-active' : '') + '" onclick="App.changeTaskStatus(\'' + ss.key + '\')" title="Set to ' + ss.label + '">';
+      html += '<span class="status-step-icon">' + ss.icon + '</span>';
+      html += '<span class="status-step-label">' + ss.label + '</span>';
+      html += '</button>';
+    }
+    html += '</div>';
+
+    html += '</div>';
+
+    // Feedback area (hidden by default)
+    html += '<div id="task-feedback-area" class="task-feedback-area hidden">';
+    html += '<textarea id="task-review-comments" placeholder="Write feedback for the agent..."></textarea>';
+    html += '<div class="task-feedback-actions">';
+    html += '<button class="btn btn-primary" onclick="App.reviewTask(\'improve\')">Send Feedback</button>';
+    html += '<button class="btn btn-secondary" onclick="App.toggleFeedback()">Cancel</button>';
+    html += '</div></div>';
+
+    // Result display
+    if (task.result && (current === 'done' || current === 'approved')) {
+      html += '<div class="session-outcome' + (current === 'approved' ? ' session-outcome-executing' : '') + '">';
+      if (current === 'approved') {
+        html += '<span class="session-outcome-icon">&#9654;</span><span>Executing</span><span class="agent-working-dot"></span>';
+      }
+      html += '<div class="session-outcome-result">' + linkifyText(escHtml(task.result)).replace(/\n/g, '<br>') + '</div>';
+      html += '</div>';
+    }
+
+    return html;
   }
 
-  function toggleRevisionMode() {
-    var bar = document.getElementById('session-review-inline');
-    if (bar) bar.classList.toggle('hidden');
+  function getStepIndex(status, steps) {
+    for (var i = 0; i < steps.length; i++) {
+      if (steps[i].key === status) return i;
+    }
+    return -1;
   }
+
+  function toggleFeedback() {
+    var area = document.getElementById('task-feedback-area');
+    if (area) area.classList.toggle('hidden');
+  }
+
+  async function changeTaskStatus(newStatus) {
+    var id = state.currentTaskId;
+    if (!id) return;
+    // All pipeline clicks are lightweight — just update status, no timeline entry.
+    // Only Feedback (improve via reviewTask) writes to the version timeline.
+    try {
+      await api.put('/api/tasks/' + id, { status: newStatus });
+      var labels = {
+        draft: 'Set to draft', pending_approval: 'Pending approval',
+        approved: 'Approved for execution', revision_needed: 'Revision requested',
+        in_progress: 'In progress', done: 'Task completed',
+        hold: 'Task on hold', cancelled: 'Task cancelled'
+      };
+      toast(labels[newStatus] || 'Status updated');
+      await openTask(id);
+    } catch(e) {
+      toast('Failed: ' + e.message, 'error');
+    }
+  }
+
 
   async function reviewTask(action) {
     var id = state.currentTaskId;
     if (!id) return;
     var commentsEl = document.getElementById('task-review-comments');
     var comments = commentsEl ? commentsEl.value.trim() : '';
+    if (!comments) {
+      toast('Please add feedback for the agent', 'error');
+      if (commentsEl) commentsEl.focus();
+      return;
+    }
     try {
-      await api.put('/api/tasks/' + id, { action: action, comments: comments });
-      var msgs = { approve: 'Task approved', improve: 'Revision requested', hold: 'Task on hold', cancel: 'Task cancelled' };
-      toast(msgs[action] || 'Done');
-      // Re-render entire task
+      await api.put('/api/tasks/' + id, { action: 'improve', comments: comments });
+      toast('Feedback sent — revision requested');
       await openTask(id);
     } catch(e) {
       toast('Failed: ' + e.message, 'error');
@@ -1274,6 +1341,7 @@
     checkForUpdates();
     loadSecretsStatus();
     loadTempStatus();
+    loadAutopilot();
   }
 
   async function loadTempStatus() {
@@ -2004,25 +2072,12 @@
     navigate('chat');
     setTimeout(function() {
       if (termWs && termWs.readyState === 1) {
-        var text = 'Run a round table\n';
+        var text = 'Run a round table\r';
         termWs.send(JSON.stringify({ type: 'input', data: text }));
       }
     }, 1000);
   }
 
-  function runTaskNow() {
-    var id = state.currentTaskId;
-    if (!id) return;
-    var titleEl = document.getElementById('task-detail-title');
-    var title = titleEl ? titleEl.textContent : 'task ' + id;
-    navigate('chat');
-    setTimeout(function() {
-      if (termWs && termWs.readyState === 1) {
-        var text = 'Execute task "' + title + '" (ID: ' + id + ') now. Read the task details, work as the assigned agent, and deliver results.\n';
-        termWs.send(JSON.stringify({ type: 'input', data: text }));
-      }
-    }, 1000);
-  }
 
   // ── Helpers ────────────────────────────────────────
   function escHtml(str) {
@@ -2171,6 +2226,164 @@
     }
   }
 
+  // ── Autopilot ────────────────────────────────────────
+  var autopilotEditId = null;
+
+  async function loadAutopilot() {
+    try {
+      var schedules = await api.get('/api/autopilot');
+      var agentsData = await api.get('/api/agents');
+      var agentMap = {};
+      (agentsData.agents || []).forEach(function(a) { agentMap[a.id] = a.name; });
+      agentMap['orchestrator'] = agentMap['orchestrator'] || 'Orchestrator';
+
+      var container = document.getElementById('autopilot-list');
+      if (!container) return;
+      if (!schedules || schedules.length === 0) {
+        container.innerHTML = '<div class="empty-state" style="padding:16px 0;font-size:13px">No autopilot schedules yet</div>';
+        return;
+      }
+
+      var html = '<table class="autopilot-table"><thead><tr><th>Name</th><th>Agent</th><th>Interval</th><th>Last Run</th><th>Next Run</th><th>Controls</th></tr></thead><tbody>';
+      schedules.forEach(function(s) {
+        var agentName = agentMap[s.agentId] || s.agentId;
+        var interval = formatInterval(s.intervalMinutes);
+        var lastRun = s.lastRun ? new Date(s.lastRun).toLocaleString() : 'Never';
+        var nextRun = s.enabled && s.nextRun ? new Date(s.nextRun).toLocaleString() : '-';
+        var toggleIcon = s.enabled ? '\u23F8' : '\u25B6';
+        var toggleTitle = s.enabled ? 'Pause' : 'Resume';
+        var rowClass = s.enabled ? '' : ' class="ap-disabled"';
+        html += '<tr' + rowClass + '>' +
+          '<td>' + escHtml(s.name) + '</td>' +
+          '<td>' + escHtml(agentName) + '</td>' +
+          '<td>' + interval + '</td>' +
+          '<td>' + lastRun + '</td>' +
+          '<td>' + nextRun + '</td>' +
+          '<td class="ap-controls">' +
+            '<button class="btn-icon" title="' + toggleTitle + '" onclick="App.toggleAutopilot(\'' + s.id + '\',' + !s.enabled + ')">' + toggleIcon + '</button>' +
+            '<button class="btn-icon" title="Edit" onclick="App.editAutopilot(\'' + s.id + '\')">&#9998;</button>' +
+            '<button class="btn-icon" title="Delete" onclick="App.deleteAutopilot(\'' + s.id + '\')">&#10005;</button>' +
+          '</td></tr>';
+      });
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    } catch(e) { console.error('Failed to load autopilot:', e); }
+  }
+
+  function escHtml(s) {
+    var div = document.createElement('div');
+    div.textContent = s || '';
+    return div.innerHTML;
+  }
+
+  function formatInterval(mins) {
+    if (mins >= 1440 && mins % 1440 === 0) return (mins / 1440) + 'd';
+    if (mins >= 60 && mins % 60 === 0) return (mins / 60) + 'h';
+    return mins + 'm';
+  }
+
+  async function openAutopilotForm() {
+    autopilotEditId = null;
+    document.getElementById('ap-name').value = '';
+    document.getElementById('ap-prompt').value = '';
+    document.getElementById('ap-interval').value = '60';
+    document.getElementById('ap-interval-unit').value = 'minutes';
+    await populateAutopilotAgents();
+    document.getElementById('autopilot-form').classList.remove('hidden');
+  }
+
+  function cancelAutopilotForm() {
+    autopilotEditId = null;
+    document.getElementById('autopilot-form').classList.add('hidden');
+  }
+
+  async function populateAutopilotAgents() {
+    var sel = document.getElementById('ap-agent');
+    sel.innerHTML = '';
+    try {
+      var data = await api.get('/api/agents');
+      (data.agents || []).forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a.id;
+        opt.textContent = a.name + (a.isOrchestrator ? ' (Orchestrator)' : '');
+        sel.appendChild(opt);
+      });
+    } catch(e) {}
+  }
+
+  async function saveAutopilot() {
+    var name = document.getElementById('ap-name').value.trim();
+    var prompt = document.getElementById('ap-prompt').value.trim();
+    var agentId = document.getElementById('ap-agent').value;
+    var intervalNum = parseInt(document.getElementById('ap-interval').value) || 1;
+    var unit = document.getElementById('ap-interval-unit').value;
+
+    if (!name || !prompt) { toast('Name and prompt are required', 'error'); return; }
+
+    var intervalMinutes = intervalNum;
+    if (unit === 'hours') intervalMinutes = intervalNum * 60;
+    else if (unit === 'days') intervalMinutes = intervalNum * 1440;
+
+    try {
+      if (autopilotEditId) {
+        await api.put('/api/autopilot/' + autopilotEditId, { name: name, prompt: prompt, agentId: agentId, intervalMinutes: intervalMinutes });
+        toast('Schedule updated');
+      } else {
+        await api.post('/api/autopilot', { name: name, prompt: prompt, agentId: agentId, intervalMinutes: intervalMinutes });
+        toast('Schedule created');
+      }
+      cancelAutopilotForm();
+      loadAutopilot();
+    } catch(e) { toast('Failed to save schedule', 'error'); }
+  }
+
+  async function toggleAutopilot(id, enabled) {
+    try {
+      await api.put('/api/autopilot/' + id, { enabled: enabled });
+      loadAutopilot();
+    } catch(e) { toast('Failed to update schedule', 'error'); }
+  }
+
+  async function editAutopilot(id) {
+    try {
+      var schedules = await api.get('/api/autopilot');
+      var sched = schedules.find(function(s) { return s.id === id; });
+      if (!sched) return;
+      autopilotEditId = id;
+      await populateAutopilotAgents();
+      document.getElementById('ap-name').value = sched.name || '';
+      document.getElementById('ap-prompt').value = sched.prompt || '';
+      document.getElementById('ap-agent').value = sched.agentId || '';
+      // Decompose intervalMinutes into value + unit
+      var mins = sched.intervalMinutes;
+      if (mins >= 1440 && mins % 1440 === 0) {
+        document.getElementById('ap-interval').value = mins / 1440;
+        document.getElementById('ap-interval-unit').value = 'days';
+      } else if (mins >= 60 && mins % 60 === 0) {
+        document.getElementById('ap-interval').value = mins / 60;
+        document.getElementById('ap-interval-unit').value = 'hours';
+      } else {
+        document.getElementById('ap-interval').value = mins;
+        document.getElementById('ap-interval-unit').value = 'minutes';
+      }
+      document.getElementById('autopilot-form').classList.remove('hidden');
+    } catch(e) { toast('Failed to load schedule', 'error'); }
+  }
+
+  async function deleteAutopilot(id) {
+    var ok = await confirmAction({
+      title: 'Delete Schedule',
+      message: 'Are you sure you want to delete this autopilot schedule?',
+      confirmLabel: 'Delete'
+    });
+    if (!ok) return;
+    try {
+      await api.del('/api/autopilot/' + id);
+      toast('Schedule deleted');
+      loadAutopilot();
+    } catch(e) { toast('Failed to delete schedule', 'error'); }
+  }
+
   window.App = {
     navigate: navigate,
     wizardNext: wizardNext,
@@ -2202,7 +2415,6 @@
     resetSystem: resetSystem,
     resetAgents: resetAgents,
     runRoundTable: runRoundTable,
-    runTaskNow: runTaskNow,
     restartTerminal: restartTerminal,
     savePermissionMode: savePermissionMode,
     unlockSecrets: unlockSecrets,
@@ -2221,13 +2433,20 @@
     saveSkillSettings: saveSkillSettings,
     viewVersionFile: viewVersionFile,
     viewFile: viewFile,
-    toggleRevisionMode: toggleRevisionMode,
+    changeTaskStatus: changeTaskStatus,
+    toggleFeedback: toggleFeedback,
     promoteToKnowledge: promoteToKnowledge,
     filterKnowledge: filterKnowledge,
     openKnowledgeDoc: openKnowledgeDoc,
     deleteKnowledgeDoc: deleteKnowledgeDoc,
     cleanupTemp: cleanupTemp,
     loadTempStatus: loadTempStatus,
+    openAutopilotForm: openAutopilotForm,
+    cancelAutopilotForm: cancelAutopilotForm,
+    saveAutopilot: saveAutopilot,
+    toggleAutopilot: toggleAutopilot,
+    editAutopilot: editAutopilot,
+    deleteAutopilot: deleteAutopilot,
   };
 
   init();

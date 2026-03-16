@@ -1092,8 +1092,8 @@ async function handle(pn, m, req, res) {
     const b = await parseBody(req);
     const now = new Date().toISOString();
 
-    // Handle review actions: approve, improve, cancel
-    if (b.action === 'approve' || b.action === 'improve' || b.action === 'cancel' || b.action === 'hold') {
+    // Handle review actions: done, approve, improve, cancel, hold
+    if (b.action === 'done' || b.action === 'approve' || b.action === 'improve' || b.action === 'cancel' || b.action === 'hold') {
       // Find the latest version
       var taskDir = path.join(ROOT, 'data/tasks', id);
       var latestV = ex.version || 1;
@@ -1114,7 +1114,11 @@ async function handle(pn, m, req, res) {
       vData.comments = b.comments || '';
       vData.decidedAt = now;
 
-      if (b.action === 'approve') {
+      if (b.action === 'done') {
+        vData.decision = 'done';
+        writeJSON(vPath, vData);
+        actionResult = Object.assign({}, ex, { status: 'done', updatedAt: now });
+      } else if (b.action === 'approve') {
         vData.decision = 'approved';
         writeJSON(vPath, vData);
         actionResult = Object.assign({}, ex, { status: 'approved', updatedAt: now });
@@ -1407,6 +1411,59 @@ async function handle(pn, m, req, res) {
     }
     rebuildClaudeMd();
     broadcast('secrets');
+    return J(res, { ok: true });
+  }
+
+  // AUTOPILOT
+  if (pn === '/api/autopilot' && m === 'GET') {
+    var schedules = readJSON(path.join(ROOT, 'config/autopilot.json')) || [];
+    return J(res, schedules);
+  }
+  if (pn === '/api/autopilot' && m === 'POST') {
+    var b = await parseBody(req);
+    if (!b.name || !b.prompt || !b.agentId || !b.intervalMinutes) return E(res, 'name, prompt, agentId, and intervalMinutes required');
+    var now = new Date();
+    var schedule = {
+      id: genId(),
+      name: b.name,
+      prompt: b.prompt,
+      agentId: b.agentId,
+      intervalMinutes: b.intervalMinutes,
+      enabled: true,
+      lastRun: null,
+      nextRun: new Date(now.getTime() + b.intervalMinutes * 60000).toISOString(),
+      createdAt: now.toISOString()
+    };
+    var schedules = readJSON(path.join(ROOT, 'config/autopilot.json')) || [];
+    schedules.push(schedule);
+    writeJSON(path.join(ROOT, 'config/autopilot.json'), schedules);
+    broadcast('autopilot');
+    return J(res, schedule, 201);
+  }
+
+  var apMatch = pn.match(/^\/api\/autopilot\/([^\/]+)$/);
+  if (apMatch && m === 'PUT') {
+    var apId = apMatch[1];
+    var schedules = readJSON(path.join(ROOT, 'config/autopilot.json')) || [];
+    var idx = schedules.findIndex(function(s) { return s.id === apId; });
+    if (idx < 0) return E(res, 'Not found', 404);
+    var b = await parseBody(req);
+    var merged = Object.assign({}, schedules[idx], b, { id: apId });
+    // If intervalMinutes changed and enabled, recompute nextRun
+    if (b.intervalMinutes !== undefined && merged.enabled) {
+      merged.nextRun = new Date(Date.now() + merged.intervalMinutes * 60000).toISOString();
+    }
+    schedules[idx] = merged;
+    writeJSON(path.join(ROOT, 'config/autopilot.json'), schedules);
+    broadcast('autopilot');
+    return J(res, merged);
+  }
+  if (apMatch && m === 'DELETE') {
+    var apId = apMatch[1];
+    var schedules = readJSON(path.join(ROOT, 'config/autopilot.json')) || [];
+    schedules = schedules.filter(function(s) { return s.id !== apId; });
+    writeJSON(path.join(ROOT, 'config/autopilot.json'), schedules);
+    broadcast('autopilot');
     return J(res, { ok: true });
   }
 
@@ -1915,6 +1972,45 @@ server.on('upgrade', function(req, socket, head) {
 
   socket.destroy();
 });
+
+// ── Autopilot Scheduler Engine ───────────────────────────
+setInterval(function() {
+  var schedules = readJSON(path.join(ROOT, 'config/autopilot.json'));
+  if (!schedules || !schedules.length) return;
+  var now = new Date();
+  var changed = false;
+  schedules.forEach(function(sched) {
+    if (!sched.enabled || !sched.nextRun) return;
+    if (new Date(sched.nextRun) > now) return;
+
+    // Find an active terminal PTY session to write to
+    var sentTo = null;
+    termSessions.forEach(function(session, sid) {
+      if (sentTo) return;
+      if (session.pty) {
+        var prompt = sched.prompt;
+        if (sched.agentId !== 'orchestrator') {
+          // Resolve agent name from registry
+          var reg = readJSON(path.join(ROOT, 'agents/_registry.json')) || { agents: [] };
+          var agent = reg.agents.find(function(a) { return a.id === sched.agentId; });
+          var agentName = agent ? agent.name : sched.agentId;
+          prompt = 'Work as agent ' + agentName + ' (ID: ' + sched.agentId + '): ' + prompt;
+        }
+        session.pty.write(prompt + '\r');
+        sentTo = sid;
+      }
+    });
+
+    // Update timing regardless of whether a terminal was found
+    sched.lastRun = now.toISOString();
+    sched.nextRun = new Date(now.getTime() + sched.intervalMinutes * 60000).toISOString();
+    changed = true;
+  });
+  if (changed) {
+    writeJSON(path.join(ROOT, 'config/autopilot.json'), schedules);
+    broadcast('autopilot');
+  }
+}, 60000);
 
 // ── Startup ──────────────────────────────────────────────
 fs.mkdirSync(path.join(ROOT, 'data/knowledge'), { recursive: true });

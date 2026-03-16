@@ -24,6 +24,18 @@
       "name": "Shipper",
       "role": "Release & GitHub Manager",
       "status": "active"
+    },
+    {
+      "id": "mmtq328qparoui",
+      "name": "Pen",
+      "role": "Content Writer & Storyteller",
+      "status": "active"
+    },
+    {
+      "id": "mmtq3e094tcbzk",
+      "name": "Buzz",
+      "role": "Growth & Community Manager",
+      "status": "active"
     }
   ]
 }

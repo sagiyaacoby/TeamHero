@@ -634,6 +634,23 @@
     </div>
   </div>
 
+  <!-- Confirmation Modal -->
+  <div id="confirm-modal" class="confirm-overlay hidden">
+    <div class="confirm-box">
+      <div class="confirm-icon" id="confirm-icon">&#9888;</div>
+      <h3 id="confirm-title">Are you sure?</h3>
+      <p id="confirm-message"></p>
+      <div id="confirm-input-wrap" class="hidden">
+        <input type="text" id="confirm-input" class="input" placeholder="" autocomplete="off">
+        <p class="confirm-hint" id="confirm-hint"></p>
+      </div>
+      <div class="confirm-actions">
+        <button class="btn btn-secondary" id="confirm-cancel-btn">Cancel</button>
+        <button class="btn btn-cancel" id="confirm-ok-btn" disabled>Delete</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 

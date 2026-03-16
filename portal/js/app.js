@@ -62,6 +62,61 @@
     el._timer = setTimeout(function() { el.className = 'toast hidden'; }, 3000);
   }
 
+  // ── Confirmation Modal ─────────────────────────────
+  function confirmAction(opts) {
+    // opts: { title, message, confirmLabel, requireText, onConfirm }
+    return new Promise(function(resolve) {
+      var overlay = document.getElementById('confirm-modal');
+      var titleEl = document.getElementById('confirm-title');
+      var msgEl = document.getElementById('confirm-message');
+      var inputWrap = document.getElementById('confirm-input-wrap');
+      var inputEl = document.getElementById('confirm-input');
+      var hintEl = document.getElementById('confirm-hint');
+      var okBtn = document.getElementById('confirm-ok-btn');
+      var cancelBtn = document.getElementById('confirm-cancel-btn');
+
+      titleEl.textContent = opts.title || 'Are you sure?';
+      msgEl.textContent = opts.message || '';
+      okBtn.textContent = opts.confirmLabel || 'Delete';
+
+      if (opts.requireText) {
+        inputWrap.classList.remove('hidden');
+        inputEl.value = '';
+        hintEl.textContent = 'Type "' + opts.requireText + '" to confirm';
+        okBtn.disabled = true;
+      } else {
+        inputWrap.classList.add('hidden');
+        inputEl.value = '';
+        okBtn.disabled = false;
+      }
+
+      overlay.classList.remove('hidden');
+      if (opts.requireText) inputEl.focus();
+
+      function onInput() {
+        okBtn.disabled = inputEl.value.trim().toLowerCase() !== opts.requireText.toLowerCase();
+      }
+      function cleanup() {
+        overlay.classList.add('hidden');
+        inputEl.removeEventListener('input', onInput);
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        document.removeEventListener('keydown', onKey);
+      }
+      function onOk() { cleanup(); resolve(true); }
+      function onCancel() { cleanup(); resolve(false); }
+      function onKey(e) {
+        if (e.key === 'Escape') onCancel();
+        if (e.key === 'Enter' && !okBtn.disabled) onOk();
+      }
+
+      if (opts.requireText) inputEl.addEventListener('input', onInput);
+      okBtn.addEventListener('click', onOk);
+      cancelBtn.addEventListener('click', onCancel);
+      document.addEventListener('keydown', onKey);
+    });
+  }
+
   // ── Navigation ─────────────────────────────────────
   function navigate(viewId, agentId) {
     state.currentView = viewId;
@@ -91,7 +146,7 @@
       document.getElementById('view-chat').classList.add('active');
       var navEl = document.querySelector('[data-view="chat"]');
       if (navEl) navEl.classList.add('active');
-      setTimeout(function() { initTerminal(); }, 100);
+      setTimeout(function() { initTerminal(); if (terminal) terminal.focus(); }, 100);
     } else {
       var el = document.getElementById('view-' + viewId);
       if (el) el.classList.add('active');
@@ -941,7 +996,12 @@
 
   async function deleteKnowledgeDoc() {
     if (!state._currentKnowledgeId) return;
-    if (!confirm('Delete this knowledge document?')) return;
+    var ok = await confirmAction({
+      title: 'Delete Document',
+      message: 'This will permanently delete this knowledge document. This cannot be undone.',
+      confirmLabel: 'Delete'
+    });
+    if (!ok) return;
     try {
       await api.del('/api/knowledge/' + state._currentKnowledgeId);
       toast('Document deleted');
@@ -1041,7 +1101,12 @@
 
   async function deleteAgent() {
     if (!state.currentAgentId) return;
-    if (!confirm('Delete this agent? This cannot be undone.')) return;
+    var ok = await confirmAction({
+      title: 'Delete Agent',
+      message: 'This will permanently delete this agent and all their data. This cannot be undone.',
+      confirmLabel: 'Delete Agent'
+    });
+    if (!ok) return;
     try {
       await api.del('/api/agents/' + state.currentAgentId);
       toast('Agent deleted');
@@ -1054,6 +1119,12 @@
 
   async function clearShortMemory() {
     if (!state.currentAgentId) return;
+    var ok = await confirmAction({
+      title: 'Clear Short Memory',
+      message: 'This will erase all short-term memory for this agent. This cannot be undone.',
+      confirmLabel: 'Clear Memory'
+    });
+    if (!ok) return;
     try {
       await api.put('/api/agents/' + state.currentAgentId + '/memory/short', { content: '' });
       document.getElementById('agent-detail-short-mem').textContent = 'Empty';
@@ -1220,7 +1291,13 @@
   }
 
   async function resetSystem() {
-    if (!confirm('This will reset the initialized flag. You will see the setup wizard on next load. Continue?')) return;
+    var ok = await confirmAction({
+      title: 'Reset Entire System',
+      message: 'This will reset the system to its initial state. You will see the setup wizard on next load. This is a destructive action.',
+      confirmLabel: 'Reset System',
+      requireText: 'reset'
+    });
+    if (!ok) return;
     try {
       await api.post('/api/write-file', { path: 'config/system.json', content: JSON.stringify({ initialized: false, teamName: '', teamDescription: '', version: '1.0.0' }, null, 2) });
       toast('System reset. Reload the page to see the wizard.');
@@ -1228,7 +1305,13 @@
   }
 
   async function resetAgents() {
-    if (!confirm('This will delete ALL sub-agents (keeping the orchestrator). Continue?')) return;
+    var ok = await confirmAction({
+      title: 'Delete All Sub-Agents',
+      message: 'This will permanently delete ALL sub-agents. Only the orchestrator will remain. This cannot be undone.',
+      confirmLabel: 'Delete All Agents',
+      requireText: 'reset'
+    });
+    if (!ok) return;
     try {
       await api.post('/api/agents/reset', {});
       await loadSidebarAgents();

@@ -242,15 +242,21 @@
       renderSidebarAgents();
 
       document.getElementById('stat-agents').textContent = state.agents.length;
-      var pending = 0, active = 0, done = 0;
+      var pending = 0, approved = 0, active = 0, done = 0;
       state.tasks.forEach(function(t) {
         if (t.status === 'pending_approval') pending++;
-        else if (t.status === 'in_progress' || t.status === 'draft') active++;
+        else if (t.status === 'approved') approved++;
+        else if (t.status === 'in_progress' || t.status === 'draft' || t.status === 'revision_needed') active++;
         else if (t.status === 'done') done++;
       });
       document.getElementById('stat-pending').textContent = pending;
+      document.getElementById('stat-approved').textContent = approved;
       document.getElementById('stat-active-tasks').textContent = active;
       document.getElementById('stat-done').textContent = done;
+      // Highlight active filter stat card
+      document.querySelectorAll('.stat-card[data-filter]').forEach(function(card) {
+        card.classList.toggle('stat-card-active', card.dataset.filter === state.dashboardTaskFilter);
+      });
 
       // Fetch full task details for priority sorting
       var fullTasks = await Promise.all(state.tasks.map(function(t) {
@@ -354,10 +360,12 @@
       else if (t.status === 'in_progress' || t.status === 'draft' || t.status === 'revision_needed') active++;
       else if (t.status === 'done') done++;
     });
-    summaryEl.innerHTML = '<span class="badge badge-pending_approval">' + pending + ' Pending</span> ' +
-      '<span class="badge badge-approved">' + approved + ' Approved</span> ' +
-      '<span class="badge badge-in_progress">' + active + ' In Progress</span> ' +
-      '<span class="badge badge-done">' + done + ' Done</span>';
+    var af = state.agentTaskFilter;
+    summaryEl.innerHTML =
+      '<span class="badge badge-pending_approval clickable-badge' + (af === 'pending_approval' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'pending_approval\',\'agent\')">' + pending + ' Pending</span> ' +
+      '<span class="badge badge-approved clickable-badge' + (af === 'approved' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'approved\',\'agent\')">' + approved + ' Approved</span> ' +
+      '<span class="badge badge-in_progress clickable-badge' + (af === 'in_progress' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'in_progress\',\'agent\')">' + active + ' In Progress</span> ' +
+      '<span class="badge badge-done clickable-badge' + (af === 'done' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'done\',\'agent\')">' + done + ' Done</span>';
 
     state.cachedAgentTasks = tasks;
     renderFilteredTasks('agent');
@@ -367,15 +375,7 @@
     var filter = context === 'dashboard' ? state.dashboardTaskFilter : state.agentTaskFilter;
     var tasks = context === 'dashboard' ? state.cachedDashboardTasks : state.cachedAgentTasks;
     var listEl = document.getElementById(context === 'dashboard' ? 'dashboard-tasks' : 'agent-tasks-list');
-    var filterBar = document.getElementById(context === 'dashboard' ? 'dashboard-task-filters' : 'agent-task-filters');
     if (!listEl) return;
-
-    // Update active filter button
-    if (filterBar) {
-      filterBar.querySelectorAll('.filter-btn').forEach(function(btn) {
-        btn.classList.toggle('active', btn.dataset.filter === filter);
-      });
-    }
 
     // Filter tasks
     var filtered;
@@ -424,10 +424,70 @@
   function filterTasks(filter, context) {
     if (context === 'dashboard') {
       state.dashboardTaskFilter = filter;
+      // Update stat card highlights
+      document.querySelectorAll('.stat-card[data-filter]').forEach(function(card) {
+        card.classList.toggle('stat-card-active', card.dataset.filter === filter);
+      });
     } else {
       state.agentTaskFilter = filter;
+      // Re-render agent summary badges to update highlight
+      var summaryEl = document.getElementById('agent-tasks-summary');
+      if (summaryEl) {
+        summaryEl.querySelectorAll('.clickable-badge').forEach(function(badge) {
+          var badgeFilter = badge.getAttribute('onclick').match(/'([^']+)'/);
+          if (badgeFilter) badge.classList.toggle('badge-active-filter', badgeFilter[1] === filter);
+        });
+      }
     }
     renderFilteredTasks(context);
+  }
+
+  // ── Add Task Modal ────────────────────────────
+  function openAddTask(preselectedAgent) {
+    var modal = document.getElementById('add-task-modal');
+    var agentSelect = document.getElementById('add-task-agent');
+    // Populate agent dropdown
+    agentSelect.innerHTML = '<option value="">Auto (orchestrator decides)</option>';
+    state.agents.forEach(function(a) {
+      if (a.isOrchestrator) return;
+      var opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = a.name + ' — ' + a.role;
+      agentSelect.appendChild(opt);
+    });
+    if (preselectedAgent) agentSelect.value = preselectedAgent;
+    // Reset fields
+    document.getElementById('add-task-title').value = '';
+    document.getElementById('add-task-desc').value = '';
+    document.getElementById('add-task-priority').value = 'medium';
+    modal.classList.remove('hidden');
+    setTimeout(function() { document.getElementById('add-task-title').focus(); }, 100);
+  }
+
+  function closeAddTask() {
+    document.getElementById('add-task-modal').classList.add('hidden');
+  }
+
+  async function submitAddTask() {
+    var title = document.getElementById('add-task-title').value.trim();
+    if (!title) { toast('Please enter a task title', 'error'); return; }
+    var desc = document.getElementById('add-task-desc').value.trim();
+    var agent = document.getElementById('add-task-agent').value;
+    var priority = document.getElementById('add-task-priority').value;
+
+    try {
+      await api.post('/api/tasks', {
+        title: title,
+        description: desc || title,
+        assignedTo: agent || 'orchestrator',
+        status: 'draft',
+        priority: priority
+      });
+      closeAddTask();
+      toast('Task created! The orchestrator will refine it.', 'success');
+    } catch(e) {
+      toast('Failed to create task: ' + e.message, 'error');
+    }
   }
 
   function switchAgentTab(tab) {
@@ -1593,6 +1653,10 @@
     reviewTask: reviewTask,
     navigateBack: navigateBack,
     filterTasks: filterTasks,
+    openAddTask: openAddTask,
+    closeAddTask: closeAddTask,
+    submitAddTask: submitAddTask,
+    state: state,
     filterMedia: filterMedia,
     saveProfile: saveProfile,
     saveRules: saveRules,

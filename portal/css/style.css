@@ -138,13 +138,13 @@ body {
 .btn-inline:hover { text-decoration: underline; }
 
 /* ── Stats ───────────────────────────────────────── */
-.stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+.stats-row { display: flex; gap: 10px; margin-bottom: 20px; }
 .stat-card {
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
-  padding: 20px; text-align: center;
+  padding: 10px 16px; text-align: center; flex: 1;
 }
-.stat-value { font-size: 32px; font-weight: 700; color: var(--accent); }
-.stat-label { font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-top: 4px; }
+.stat-value { font-size: 22px; font-weight: 700; color: var(--accent); }
+.stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-top: 2px; }
 
 /* ── Panels ──────────────────────────────────────── */
 .panel {
@@ -341,7 +341,7 @@ body {
   #sidebar .sidebar-footer { display: none; }
   #sidebar .nav-link { justify-content: center; padding: 12px; }
   #main-content { margin-left: 60px; padding: 16px; }
-  .stats-row { grid-template-columns: repeat(2, 1fr); }
+  .stats-row { flex-wrap: wrap; }
   .form-grid { grid-template-columns: 1fr; }
   .two-col { grid-template-columns: 1fr; }
 }
@@ -555,3 +555,25 @@ body {
   font-size: 11px; font-weight: 600; color: var(--green);
   text-transform: uppercase; margin-bottom: 4px;
 }
+
+/* ── Clickable Stat Cards & Badges ──────────────── */
+.clickable-stat { cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; }
+.clickable-stat:hover { border-color: var(--accent); }
+.stat-card-active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.clickable-badge { cursor: pointer; transition: box-shadow 0.2s, opacity 0.2s; }
+.clickable-badge:hover { opacity: 0.85; }
+.badge-active-filter { box-shadow: 0 0 0 2px currentColor; }
+
+/* ── Modal Overlay ─────────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.6); display: flex;
+  align-items: center; justify-content: center;
+}
+.modal-overlay.hidden { display: none; }
+.modal-box {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 24px; width: 480px; max-width: 90vw;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+.modal-box h3 { margin: 0 0 16px; font-size: 18px; color: var(--text); }

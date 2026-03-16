@@ -159,21 +159,15 @@
 
     <!-- Dashboard -->
     <section id="view-dashboard" class="view active">
-      <header class="view-header"><h2>Dashboard</h2><button id="btn-round-table" class="btn btn-primary" onclick="App.runRoundTable()">Run Round Table</button></header>
+      <header class="view-header"><h2>Dashboard</h2><div class="header-actions"><button class="btn btn-secondary" onclick="App.openAddTask()">+ Add Task</button><button id="btn-round-table" class="btn btn-primary" onclick="App.runRoundTable()">Run Round Table</button></div></header>
       <div class="stats-row">
         <div class="stat-card"><div class="stat-value" id="stat-agents">0</div><div class="stat-label">Agents</div></div>
-        <div class="stat-card"><div class="stat-value" id="stat-pending">0</div><div class="stat-label">Pending</div></div>
-        <div class="stat-card"><div class="stat-value" id="stat-active-tasks">0</div><div class="stat-label">Active Tasks</div></div>
-        <div class="stat-card"><div class="stat-value" id="stat-done">0</div><div class="stat-label">Done</div></div>
+        <div class="stat-card clickable-stat" data-filter="pending_approval" onclick="App.filterTasks('pending_approval','dashboard')"><div class="stat-value" id="stat-pending">0</div><div class="stat-label">Pending</div></div>
+        <div class="stat-card clickable-stat" data-filter="approved" onclick="App.filterTasks('approved','dashboard')"><div class="stat-value" id="stat-approved">0</div><div class="stat-label">Approved</div></div>
+        <div class="stat-card clickable-stat" data-filter="in_progress" onclick="App.filterTasks('in_progress','dashboard')"><div class="stat-value" id="stat-active-tasks">0</div><div class="stat-label">In Progress</div></div>
+        <div class="stat-card clickable-stat" data-filter="done" onclick="App.filterTasks('done','dashboard')"><div class="stat-value" id="stat-done">0</div><div class="stat-label">Done</div></div>
       </div>
       <div class="panel"><h3>All Tasks</h3>
-        <div class="task-filter-bar" id="dashboard-task-filters">
-          <button class="filter-btn active" data-filter="pending_approval" onclick="App.filterTasks('pending_approval','dashboard')">Pending</button>
-          <button class="filter-btn" data-filter="approved" onclick="App.filterTasks('approved','dashboard')">Approved</button>
-          <button class="filter-btn" data-filter="in_progress" onclick="App.filterTasks('in_progress','dashboard')">In Progress</button>
-          <button class="filter-btn" data-filter="done" onclick="App.filterTasks('done','dashboard')">Done</button>
-          <button class="filter-btn" data-filter="all" onclick="App.filterTasks('all','dashboard')">All</button>
-        </div>
         <div id="dashboard-tasks" class="task-list"><div class="empty-state">No tasks yet</div></div>
       </div>
       <div class="panel"><h3>Last Round Table</h3><div id="last-round-table" class="round-table-summary"><div class="empty-state">No round tables yet</div></div></div>
@@ -210,13 +204,9 @@
         <button class="tab-btn" data-tab="memory" onclick="App.switchAgentTab('memory')">Memory</button>
       </div>
       <div id="agent-tab-tasks" class="agent-tab active">
-        <div class="agent-tasks-summary" id="agent-tasks-summary"></div>
-        <div class="task-filter-bar" id="agent-task-filters">
-          <button class="filter-btn active" data-filter="pending_approval" onclick="App.filterTasks('pending_approval','agent')">Pending</button>
-          <button class="filter-btn" data-filter="approved" onclick="App.filterTasks('approved','agent')">Approved</button>
-          <button class="filter-btn" data-filter="in_progress" onclick="App.filterTasks('in_progress','agent')">In Progress</button>
-          <button class="filter-btn" data-filter="done" onclick="App.filterTasks('done','agent')">Done</button>
-          <button class="filter-btn" data-filter="all" onclick="App.filterTasks('all','agent')">All</button>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div class="agent-tasks-summary" id="agent-tasks-summary"></div>
+          <button class="btn btn-secondary" onclick="App.openAddTask(App.state.currentAgentId)" style="font-size:12px;padding:4px 12px;white-space:nowrap">+ Add Task</button>
         </div>
         <div id="agent-tasks-list" class="task-list"></div>
       </div>
@@ -562,6 +552,42 @@
     </section>
 
   </main>
+
+  <!-- Add Task Modal -->
+  <div id="add-task-modal" class="modal-overlay hidden" onclick="if(event.target===this)App.closeAddTask()">
+    <div class="modal-box">
+      <h3>Add Task</h3>
+      <div class="form-grid">
+        <div class="form-group full-width">
+          <label>What needs to be done?</label>
+          <input type="text" id="add-task-title" placeholder="e.g. Write a blog post about AI trends" autofocus>
+        </div>
+        <div class="form-group full-width">
+          <label>Details (optional)</label>
+          <textarea id="add-task-desc" rows="3" placeholder="Any extra context or requirements..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Assign to</label>
+          <select id="add-task-agent">
+            <option value="">Auto (orchestrator decides)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Priority</label>
+          <select id="add-task-priority">
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+            <option value="high">High</option>
+            <option value="urgent">Urgent</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-secondary" onclick="App.closeAddTask()">Cancel</button>
+        <button class="btn btn-primary" onclick="App.submitAddTask()">Create Task</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>

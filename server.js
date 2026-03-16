@@ -289,13 +289,17 @@ function rebuildClaudeMd() {
     '## Owner Profile\n\n' + (ownerMd || '_No owner profile configured yet._') + '\n\n' +
     '## Active Agents\n\n' + (al || '_No agents registered yet._') + '\n\n' +
     '### How to Work as an Agent\n\n' +
+    'Use Claude Code\'s **Agent tool** to delegate work to subagents. Never do agent work yourself.\n\n' +
     'When the owner asks you to perform work that matches a specific agent\'s role:\n' +
-    '1. Read that agent\'s definition: `agents/{id}/agent.md`\n' +
-    '2. Read their memory files: `agents/{id}/short-memory.md` and `agents/{id}/long-memory.md`\n' +
-    '3. Adopt the agent\'s personality, tone, and style\n' +
-    '4. Follow the agent\'s specific rules\n' +
-    '5. After completing work, update the agent\'s short-memory with what was done\n' +
-    '6. For important learned patterns, update long-memory\n\n' +
+    '1. Launch a subagent via the **Agent tool** with a prompt that includes:\n' +
+    '   - The agent identity: "You are {name}, read your definition at `agents/{id}/agent.md`"\n' +
+    '   - Memory files to read: `agents/{id}/short-memory.md` and `agents/{id}/long-memory.md`\n' +
+    '   - The task to execute and its ID\n' +
+    '   - The API base URL: `http://localhost:' + port + '`\n' +
+    '   - Instructions to: adopt the agent persona, execute the work, update task status via API, update agent memory when done\n' +
+    '2. For independent tasks, launch **multiple Agent tool calls in one message** for parallel execution\n' +
+    '3. Use `run_in_background: true` for tasks that don\'t need immediate results\n' +
+    '4. Each subagent has full tool access (Read, Edit, Write, Bash, Grep, Glob)\n\n' +
     '## System API\n\n' +
     'IMPORTANT: When creating agents, tasks, or updating data, you MUST use these API endpoints.\n' +
     'The dashboard portal reads from these same endpoints. Using the API keeps everything in sync.\n' +

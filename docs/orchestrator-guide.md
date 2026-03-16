@@ -316,46 +316,93 @@ data/tasks/{task-id}/
 
 ---
 
-## 6. Working as an Agent
+## 6. Working as an Agent — Subagent Delegation
 
-When the owner asks you to do work that matches a specific agent's role, you must **become that agent**:
+When the owner asks you to do work that matches a specific agent's role, you **launch a subagent** using Claude Code's **Agent tool**. You do NOT become the agent yourself.
 
-1. **Read the agent's definition:** `agents/{id}/agent.md` — understand their role, personality, rules
-2. **Read their memory:** `agents/{id}/short-memory.md` (current context) and `long-memory.md` (patterns)
-3. **Adopt their persona:** Match the agent's tone, style, and personality traits
-4. **Follow their rules:** Each agent has domain-specific rules in `rules.md`
-5. **Do the work:** Execute the task as that agent would
-6. **Write deliverables:** Save outputs to `data/tasks/{task-id}/v{n}/`
-7. **Update status:** Set the task to `pending_approval` when done
-8. **Update memory:** Write what was done to the agent's `short-memory.md`
+### Launching a Subagent
+
+Use the `Agent` tool with a prompt that tells the subagent everything it needs:
+
+```
+Agent tool call:
+  prompt: |
+    You are the agent "{agent-name}" for TeamHero.
+    API base URL: http://localhost:{port}
+
+    1. Read your definition: agents/{id}/agent.md
+    2. Read your memory: agents/{id}/short-memory.md and agents/{id}/long-memory.md
+    3. Adopt the personality, tone, and style defined in your agent profile
+    4. Read the task: curl -s http://localhost:{port}/api/tasks/{task-id}
+    5. Set task to in_progress: curl -s -X PUT http://localhost:{port}/api/tasks/{task-id} -H "Content-Type: application/json" -d '{"status":"in_progress"}'
+    6. Execute the work as described in the task
+    7. Write deliverables to data/tasks/{task-id}/v{n}/
+    8. Set task to pending_approval when done
+    9. Update your short-memory with what was completed
+```
+
+### Parallel Execution
+
+When multiple tasks are independent, launch multiple Agent tool calls **in a single message**. They run in parallel:
+
+```
+# In one orchestrator response, call Agent tool multiple times:
+
+Agent tool call #1:
+  prompt: "You are Dev. Read agents/mmseaqj5hyzjmm/agent.md ... execute task X ..."
+
+Agent tool call #2:
+  prompt: "You are Scout. Read agents/mmsgzss0845l7c/agent.md ... execute task Y ..."
+```
+
+Both agents work simultaneously. You are notified when each completes.
+
+### Background Mode
+
+For tasks that don't need immediate results, use `run_in_background: true`:
+
+```
+Agent tool call:
+  prompt: "You are Scout. Execute task Z ..."
+  run_in_background: true
+```
+
+You can continue interacting with the owner while the background agent works. You'll be notified when it finishes.
+
+### Key Rules
+
+- **Always pass the API base URL** in the subagent prompt so it can call the API
+- **Never do agent work yourself** — always delegate via the Agent tool
+- **Group independent tasks** into a single message for parallel execution
+- **Use background mode** for long-running or low-priority tasks
+- **Each subagent gets full tool access** (Read, Edit, Write, Bash, Grep, Glob)
 
 ### Delivering Work
 
-When an agent completes a task:
+The subagent handles delivery as part of its execution. The prompt should instruct it to:
 
 ```bash
 # 1. Write the deliverable file
-curl -X POST http://localhost:3782/api/write-file \
+curl -X POST http://localhost:{port}/api/write-file \
   -H "Content-Type: application/json" \
   -d '{"path": "data/tasks/{id}/v1/deliverable.md", "content": "..."}'
 
 # 2. Update the version metadata
-curl -X PUT http://localhost:3782/api/tasks/{id}/versions/1 \
+curl -X PUT http://localhost:{port}/api/tasks/{id}/versions/1 \
   -H "Content-Type: application/json" \
   -d '{
     "content": "Summary of what was delivered",
     "status": "submitted",
-    "deliverable": "data/tasks/{id}/v1/deliverable.md",
-    "submittedAt": "2026-03-16T12:00:00Z"
+    "deliverable": "data/tasks/{id}/v1/deliverable.md"
   }'
 
 # 3. Update task status
-curl -X PUT http://localhost:3782/api/tasks/{id} \
+curl -X PUT http://localhost:{port}/api/tasks/{id} \
   -H "Content-Type: application/json" \
   -d '{"status": "pending_approval"}'
 
 # 4. Update agent short-memory
-curl -X PUT http://localhost:3782/api/agents/{agent-id}/memory/short \
+curl -X PUT http://localhost:{port}/api/agents/{agent-id}/memory/short \
   -H "Content-Type: application/json" \
   -d '{"content": "## Completed\n- Task: title (id) — delivered v1"}'
 ```
@@ -510,11 +557,9 @@ Promote tasks when their deliverables have lasting reference value (research rep
 
 1. **Identify which agent should do X** (match by role/capabilities)
 2. **Create a task** via `POST /api/tasks` assigned to that agent
-3. **Read the agent's definition and memory**
-4. **Become that agent** and execute the task
-5. **Deliver results** into the task's version folder
-6. **Set status to `pending_approval`**
-7. **Report back to the owner** with a summary
+3. **Launch a subagent** via the Agent tool with the agent's ID, task ID, and API base URL
+4. The subagent reads the agent definition, executes the task, delivers results, and updates status
+5. **Report back to the owner** with a summary when the subagent completes
 
 ### Owner says "build me a team for Y"
 

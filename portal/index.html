@@ -141,6 +141,8 @@
       <li><a href="#" data-view="add-agent" class="nav-link nav-add"><span class="icon">+</span> Add Agent</a></li>
       <li class="nav-section">Media</li>
       <li><a href="#" data-view="media" class="nav-link"><span class="icon">&#128444;</span> Media Library</a></li>
+      <li class="nav-section">Skills</li>
+      <li><a href="#" data-view="skills" class="nav-link"><span class="icon">&#9889;</span> Skills</a></li>
       <li class="nav-section">Settings</li>
       <li><a href="#" data-view="profile" class="nav-link"><span class="icon">&#9787;</span> Profile</a></li>
       <li><a href="#" data-view="rules" class="nav-link"><span class="icon">&#9997;</span> Team Rules</a></li>
@@ -217,8 +219,28 @@
       </div>
       <div id="agent-tab-memory" class="agent-tab">
         <div class="two-col">
-          <div class="panel"><h3>Short Memory <button class="btn-inline" onclick="App.clearShortMemory()">Clear</button></h3><pre id="agent-detail-short-mem" class="memory-content">Empty</pre></div>
-          <div class="panel"><h3>Long Memory</h3><pre id="agent-detail-long-mem" class="memory-content">Empty</pre></div>
+          <div class="panel">
+            <h3>Short Memory <button class="btn-inline" onclick="App.clearShortMemory()">Clear</button> <button class="btn-inline" id="short-mem-edit-btn" onclick="App.toggleMemoryEdit('short')">Edit</button></h3>
+            <pre id="agent-detail-short-mem" class="memory-content">Empty</pre>
+            <div id="short-mem-editor" class="hidden">
+              <textarea id="short-mem-textarea" class="md-editor" rows="8"></textarea>
+              <div class="form-actions">
+                <button class="btn btn-secondary" onclick="App.toggleMemoryEdit('short')">Cancel</button>
+                <button class="btn btn-primary" onclick="App.saveMemory('short')">Save</button>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>Long Memory <button class="btn-inline" id="long-mem-edit-btn" onclick="App.toggleMemoryEdit('long')">Edit</button></h3>
+            <pre id="agent-detail-long-mem" class="memory-content">Empty</pre>
+            <div id="long-mem-editor" class="hidden">
+              <textarea id="long-mem-textarea" class="md-editor" rows="8"></textarea>
+              <div class="form-actions">
+                <button class="btn btn-secondary" onclick="App.toggleMemoryEdit('long')">Cancel</button>
+                <button class="btn btn-primary" onclick="App.saveMemory('long')">Save</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -234,17 +256,26 @@
         <span class="badge" id="task-detail-priority">Priority</span>
         <span id="task-detail-agent"></span>
         <span id="task-detail-date"></span>
-        <span id="task-detail-version"></span>
       </div>
       <div class="panel">
         <h3>Description</h3>
         <p id="task-detail-desc" class="content-text"></p>
       </div>
       <div class="panel">
-        <h3>Version History</h3>
-        <div id="task-version-list"><div class="empty-state">No versions yet</div></div>
+        <h3>Version Timeline</h3>
+        <div id="task-version-timeline" class="version-timeline"><div class="empty-state">No versions yet</div></div>
       </div>
-      <div class="task-detail-actions" id="task-detail-actions"></div>
+      <div id="task-review-bar" class="review-bar hidden">
+        <h3>Review</h3>
+        <textarea id="task-review-comments" placeholder="Add feedback or comments for the agent..."></textarea>
+        <div class="review-actions">
+          <button class="btn btn-approve" onclick="App.reviewTask('approve')">Approve</button>
+          <button class="btn btn-primary" onclick="App.reviewTask('improve')">Improve</button>
+          <button class="btn btn-cancel" onclick="App.reviewTask('cancel')">Cancel Task</button>
+        </div>
+      </div>
+      <div id="task-done-bar" class="done-bar hidden">&#10003; This task has been approved and completed.</div>
+      <div id="task-cancelled-bar" class="done-bar hidden" style="color:var(--red);border-color:rgba(248,81,73,0.3);background:rgba(248,81,73,0.08);">&#10007; This task has been cancelled.</div>
     </section>
     <!-- Add/Edit Agent -->
     <section id="view-add-agent" class="view">
@@ -500,6 +531,13 @@
           </div>
         </div>
       </div>
+    </section>
+
+    <!-- Skills -->
+    <section id="view-skills" class="view">
+      <header class="view-header"><h2>Skills</h2></header>
+      <p class="form-hint" style="margin-bottom:20px">Enable curated capabilities for your agents. Skills install dependencies and configure integrations automatically.</p>
+      <div id="skills-grid" class="skills-grid"><div class="empty-state">Loading skills...</div></div>
     </section>
 
   </main>

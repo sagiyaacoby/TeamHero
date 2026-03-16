@@ -390,4 +390,141 @@ body {
   display: flex; gap: 10px; margin-top: 20px;
 }
 
+/* ── Version Timeline ───────────────────────────── */
+.version-timeline {
+  position: relative; padding-left: 28px;
+}
+.version-timeline::before {
+  content: ''; position: absolute; left: 10px; top: 0; bottom: 0;
+  width: 2px; background: var(--border);
+}
+.version-card {
+  position: relative; margin-bottom: 20px;
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 16px;
+}
+.version-card::before {
+  content: ''; position: absolute; left: -23px; top: 20px;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--text-muted); border: 2px solid var(--bg-card);
+}
+.version-card.latest { border-color: var(--accent); }
+.version-card.latest::before {
+  background: var(--accent); box-shadow: 0 0 8px var(--accent);
+}
+.version-card-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 10px;
+}
+.version-number { font-weight: 600; font-size: 14px; color: var(--text); }
+.version-content {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 14px; font-size: 13px; line-height: 1.7; color: var(--text);
+  max-height: 400px; overflow-y: auto;
+}
+.version-content p { margin-bottom: 8px; }
+.version-content h1, .version-content h2, .version-content h3 { margin: 12px 0 6px; }
+.version-content ul, .version-content ol { padding-left: 20px; margin-bottom: 8px; }
+.version-content code { background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+.version-content pre { background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }
+.version-content pre code { background: none; padding: 0; }
+.version-feedback {
+  margin-top: 10px; padding: 10px 14px;
+  background: rgba(210,153,34,0.08); border: 1px solid rgba(210,153,34,0.2);
+  border-radius: 6px; font-size: 13px; color: var(--text);
+}
+.version-feedback-label { font-size: 11px; font-weight: 600; color: var(--yellow); text-transform: uppercase; margin-bottom: 4px; }
+.version-timestamps {
+  margin-top: 8px; font-size: 11px; color: var(--text-muted);
+  display: flex; gap: 16px;
+}
+
+/* ── Review Bar ─────────────────────────────────── */
+.review-bar {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 20px; margin-top: 20px;
+}
+.review-bar h3 {
+  font-size: 14px; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: 0.5px; margin-bottom: 12px;
+}
+.review-bar textarea {
+  width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 12px; color: var(--text); font-size: 14px; font-family: inherit;
+  resize: vertical; min-height: 80px; margin-bottom: 12px;
+}
+.review-bar textarea:focus { outline: none; border-color: var(--accent); }
+.review-actions { display: flex; gap: 10px; }
+
+/* ── Done Bar ───────────────────────────────────── */
+.done-bar {
+  background: rgba(63,185,80,0.08); border: 1px solid rgba(63,185,80,0.3); border-radius: 8px;
+  padding: 16px 20px; margin-top: 20px;
+  display: flex; align-items: center; gap: 10px;
+  font-size: 14px; color: var(--green); font-weight: 500;
+}
+
+/* ── Extra Badges ───────────────────────────────── */
+.badge-cancelled { background: rgba(248,81,73,0.15); color: var(--red); }
+.badge-improve { background: rgba(210,153,34,0.15); color: var(--yellow); }
+.badge-submitted { background: rgba(88,166,255,0.15); color: var(--accent); }
+
+.hidden { display: none !important; }
+
 .task-item { cursor: pointer; }
+
+/* ── Skills ─────────────────────────────────────── */
+.skills-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.skill-card {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 20px; display: flex; flex-direction: column; gap: 12px;
+  transition: border-color 0.15s;
+}
+.skill-card:hover { border-color: var(--text-muted); }
+.skill-card.enabled { border-color: var(--green); }
+.skill-card-header {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+}
+.skill-card-info { display: flex; gap: 12px; align-items: center; flex: 1; min-width: 0; }
+.skill-icon { font-size: 28px; flex-shrink: 0; }
+.skill-card-title { font-size: 16px; font-weight: 600; }
+.skill-card-desc { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+.skill-card-footer {
+  display: flex; justify-content: space-between; align-items: center;
+  padding-top: 10px; border-top: 1px solid var(--border);
+}
+.skill-type-badge {
+  padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.skill-type-mcp { background: rgba(188,140,255,0.15); color: var(--purple); }
+.skill-type-cli { background: rgba(88,166,255,0.15); color: var(--accent); }
+
+.skill-status {
+  font-size: 11px; color: var(--text-muted); font-weight: 500;
+}
+.skill-status.installing { color: var(--yellow); }
+.skill-status.enabled { color: var(--green); }
+.skill-deps-warning {
+  font-size: 11px; color: var(--yellow); padding: 4px 8px;
+  background: rgba(255,200,0,0.08); border-radius: 4px; margin-top: 4px;
+}
+
+/* Toggle Switch */
+.toggle-switch {
+  position: relative; width: 44px; height: 24px; flex-shrink: 0;
+}
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute; cursor: pointer; inset: 0;
+  background: var(--border); border-radius: 24px;
+  transition: background 0.2s;
+}
+.toggle-slider::before {
+  content: ''; position: absolute; width: 18px; height: 18px;
+  left: 3px; bottom: 3px; background: var(--text);
+  border-radius: 50%; transition: transform 0.2s;
+}
+.toggle-switch input:checked + .toggle-slider { background: var(--green); }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
+.toggle-switch input:disabled + .toggle-slider { opacity: 0.5; cursor: not-allowed; }

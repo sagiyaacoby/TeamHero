@@ -33,8 +33,13 @@
     },
     async post(url, data) {
       const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-      if (!res.ok) throw new Error('API error: ' + res.status);
-      return res.json();
+      var body = await res.json();
+      if (!res.ok) {
+        var err = new Error(body.error || 'API error: ' + res.status);
+        err.body = body;
+        throw err;
+      }
+      return body;
     },
     async del(url) {
       const res = await fetch(url, { method: 'DELETE' });
@@ -92,6 +97,7 @@
       if (viewId === 'rules') loadRulesEditor();
       if (viewId === 'settings') loadSettings();
       if (viewId === 'media') loadMedia();
+      if (viewId === 'skills') loadSkills();
     }
   }
 
@@ -171,6 +177,9 @@
     }
     if (scope === 'all' || scope === 'secrets') {
       if (v === 'settings') loadSecretsStatus();
+    }
+    if (scope === 'all' || scope === 'skills') {
+      if (v === 'skills') loadSkills();
     }
   }
 
@@ -401,42 +410,35 @@
       document.getElementById('task-detail-title').textContent = task.title || 'Untitled';
 
       var statusEl = document.getElementById('task-detail-status');
-      statusEl.textContent = task.status || 'draft';
+      statusEl.textContent = (task.status || 'draft').replace(/_/g, ' ');
       statusEl.className = 'badge badge-' + (task.status || 'draft');
 
       var priorityEl = document.getElementById('task-detail-priority');
       priorityEl.textContent = task.priority || 'medium';
       priorityEl.className = 'badge badge-' + (task.priority || 'medium');
 
-      document.getElementById('task-detail-agent').textContent = task.assignedTo || 'Unassigned';
-      document.getElementById('task-detail-date').textContent = task.updatedAt || task.createdAt || '-';
-
-      // Load version dirs
-      var versionText = '-';
-      try {
-        var dirs = await api.get('/api/ls/data/tasks/' + id);
-        var versionDirs = dirs.filter(function(d) { return d.isDir && /^v\d+$/.test(d.name); });
-        if (versionDirs.length > 0) {
-          versionDirs.sort(function(a, b) { return b.name.localeCompare(a.name); });
-          versionText = versionDirs[0].name + ' (' + versionDirs.length + ' versions)';
-        }
-      } catch(ve) {}
-      document.getElementById('task-detail-version').textContent = versionText;
+      // Find agent name
+      var agentName = task.assignedTo || 'Unassigned';
+      if (task.assignedTo && state.agents.length > 0) {
+        var found = state.agents.find(function(a) { return a.id === task.assignedTo; });
+        if (found) agentName = found.name;
+      }
+      document.getElementById('task-detail-agent').textContent = agentName;
+      document.getElementById('task-detail-date').textContent = task.updatedAt ? new Date(task.updatedAt).toLocaleDateString() : '-';
 
       document.getElementById('task-detail-desc').textContent = task.description || 'No description.';
 
-      // Action buttons based on status
-      var actionsEl = document.getElementById('task-detail-actions');
-      if (actionsEl) {
-        if (task.status === 'pending_approval') {
-          actionsEl.innerHTML = '<button class="btn btn-primary" onclick="App.approveTask(' + q + id + q + ')">Approve</button> ' +
-            '<button class="btn btn-secondary" onclick="App.requestRevision(' + q + id + q + ')">Request Revision</button>';
-        } else if (task.status === 'approved') {
-          actionsEl.innerHTML = '<button class="btn btn-primary" onclick="App.markTaskDone(' + q + id + q + ')">Mark Done</button>';
-        } else {
-          actionsEl.innerHTML = '';
-        }
-      }
+      // Show/hide bars based on status
+      var reviewBar = document.getElementById('task-review-bar');
+      var doneBar = document.getElementById('task-done-bar');
+      var cancelledBar = document.getElementById('task-cancelled-bar');
+      reviewBar.classList.toggle('hidden', task.status !== 'pending_approval');
+      doneBar.classList.toggle('hidden', task.status !== 'approved' && task.status !== 'done');
+      cancelledBar.classList.toggle('hidden', task.status !== 'cancelled');
+      document.getElementById('task-review-comments').value = '';
+
+      // Render version timeline
+      await renderVersionTimeline(id);
 
       navigate('task-detail');
     } catch(e) {
@@ -445,28 +447,68 @@
     }
   }
 
-  async function approveTask(id) {
+  async function renderVersionTimeline(taskId) {
+    var container = document.getElementById('task-version-timeline');
     try {
-      await api.put('/api/tasks/' + id, { status: 'approved' });
-      toast('Task approved');
-      navigateBack();
-    } catch(e) { toast('Failed to approve task', 'error'); }
+      var versions = await api.get('/api/tasks/' + taskId + '/versions');
+      if (!versions || versions.length === 0) {
+        container.innerHTML = '<div class="empty-state">No versions yet</div>';
+        return;
+      }
+      var html = '';
+      versions.forEach(function(v, idx) {
+        var isLatest = idx === versions.length - 1;
+        var decisionBadge = '';
+        if (v.decision) {
+          decisionBadge = '<span class="badge badge-' + v.decision + '">' + v.decision + '</span>';
+        } else if (v.status) {
+          decisionBadge = '<span class="badge badge-' + v.status + '">' + v.status + '</span>';
+        }
+
+        var contentHtml = '';
+        if (v.content) {
+          try {
+            contentHtml = '<div class="version-content">' + (typeof marked !== 'undefined' && marked.parse ? marked.parse(v.content) : v.content.replace(/</g, '&lt;').replace(/\n/g, '<br>')) + '</div>';
+          } catch(e) {
+            contentHtml = '<div class="version-content">' + v.content.replace(/</g, '&lt;').replace(/\n/g, '<br>') + '</div>';
+          }
+        } else {
+          contentHtml = '<div class="version-content"><span class="empty-state" style="padding:8px">Awaiting submission...</span></div>';
+        }
+
+        var feedbackHtml = '';
+        if (v.comments) {
+          feedbackHtml = '<div class="version-feedback"><div class="version-feedback-label">Owner Feedback</div>' + v.comments.replace(/</g, '&lt;').replace(/\n/g, '<br>') + '</div>';
+        }
+
+        var timestamps = '';
+        var ts = [];
+        if (v.submittedAt) ts.push('Submitted: ' + new Date(v.submittedAt).toLocaleString());
+        if (v.decidedAt) ts.push('Decided: ' + new Date(v.decidedAt).toLocaleString());
+        if (ts.length > 0) timestamps = '<div class="version-timestamps">' + ts.map(function(t) { return '<span>' + t + '</span>'; }).join('') + '</div>';
+
+        html += '<div class="version-card' + (isLatest ? ' latest' : '') + '">' +
+          '<div class="version-card-header"><span class="version-number">Version ' + v.number + '</span>' + decisionBadge + '</div>' +
+          contentHtml + feedbackHtml + timestamps + '</div>';
+      });
+      container.innerHTML = html;
+    } catch(e) {
+      container.innerHTML = '<div class="empty-state">Failed to load versions</div>';
+    }
   }
 
-  async function requestRevision(id) {
+  async function reviewTask(action) {
+    var id = state.currentTaskId;
+    if (!id) return;
+    var comments = document.getElementById('task-review-comments').value.trim();
     try {
-      await api.put('/api/tasks/' + id, { status: 'revision_needed' });
-      toast('Revision requested');
-      navigateBack();
-    } catch(e) { toast('Failed to request revision', 'error'); }
-  }
-
-  async function markTaskDone(id) {
-    try {
-      await api.put('/api/tasks/' + id, { status: 'done' });
-      toast('Task marked done');
-      navigateBack();
-    } catch(e) { toast('Failed to mark task done', 'error'); }
+      await api.put('/api/tasks/' + id, { action: action, comments: comments });
+      var msgs = { approve: 'Task approved', improve: 'Revision requested', cancel: 'Task cancelled' };
+      toast(msgs[action] || 'Done');
+      await openTask(id);
+    } catch(e) {
+      toast('Failed: ' + e.message, 'error');
+    }
   }
 
   function navigateBack() {
@@ -577,6 +619,34 @@
       document.getElementById('agent-detail-short-mem').textContent = 'Empty';
       toast('Short memory cleared');
     } catch(e) { toast('Failed to clear memory', 'error'); }
+  }
+
+  function toggleMemoryEdit(type) {
+    var editor = document.getElementById(type + '-mem-editor');
+    var display = document.getElementById('agent-detail-' + type + '-mem');
+    var textarea = document.getElementById(type + '-mem-textarea');
+    var isHidden = editor.classList.contains('hidden');
+    if (isHidden) {
+      textarea.value = display.textContent === 'Empty' ? '' : display.textContent;
+      editor.classList.remove('hidden');
+      display.classList.add('hidden');
+    } else {
+      editor.classList.add('hidden');
+      display.classList.remove('hidden');
+    }
+  }
+
+  async function saveMemory(type) {
+    if (!state.currentAgentId) return;
+    var textarea = document.getElementById(type + '-mem-textarea');
+    var content = textarea.value.trim();
+    try {
+      await api.put('/api/agents/' + state.currentAgentId + '/memory/' + type, { content: content });
+      document.getElementById('agent-detail-' + type + '-mem').textContent = content || 'Empty';
+      document.getElementById(type + '-mem-editor').classList.add('hidden');
+      document.getElementById('agent-detail-' + type + '-mem').classList.remove('hidden');
+      toast(type.charAt(0).toUpperCase() + type.slice(1) + ' memory saved');
+    } catch(e) { toast('Failed to save memory', 'error'); }
   }
 
   // ── Templates ──────────────────────────────────────
@@ -1339,6 +1409,81 @@
   }
 
   // ── Public API ─────────────────────────────────────
+  // ── Skills ───────────────────────────────────────
+  var skillsInstalling = {};
+
+  async function loadSkills() {
+    try {
+      var data = await api.get('/api/skills');
+      renderSkills(data.skills || []);
+    } catch(e) {
+      console.error('Failed to load skills:', e);
+      document.getElementById('skills-grid').innerHTML = '<div class="empty-state">Failed to load skills</div>';
+    }
+  }
+
+  function renderSkills(skills) {
+    var grid = document.getElementById('skills-grid');
+    if (!skills.length) {
+      grid.innerHTML = '<div class="empty-state">No skills available</div>';
+      return;
+    }
+    grid.innerHTML = skills.map(function(s) {
+      var installing = !!skillsInstalling[s.id];
+      var statusText = installing ? 'Installing...' : (s.enabled ? 'Enabled' : 'Not installed');
+      var statusClass = installing ? 'installing' : (s.enabled ? 'enabled' : '');
+      var cardClass = s.enabled ? 'skill-card enabled' : 'skill-card';
+      return '<div class="' + cardClass + '" data-skill-id="' + s.id + '">' +
+        '<div class="skill-card-header">' +
+          '<div class="skill-card-info">' +
+            '<span class="skill-icon">' + (s.icon || '') + '</span>' +
+            '<div><div class="skill-card-title">' + escHtml(s.name) + '</div></div>' +
+          '</div>' +
+          '<label class="toggle-switch">' +
+            '<input type="checkbox" ' + (s.enabled ? 'checked' : '') + ' ' + (installing ? 'disabled' : '') +
+            ' onchange="App.toggleSkill(' + q + s.id + q + ', this.checked)">' +
+            '<span class="toggle-slider"></span>' +
+          '</label>' +
+        '</div>' +
+        '<div class="skill-card-desc">' + escHtml(s.description) + '</div>' +
+        (s.missingDeps && s.missingDeps.length && !s.enabled ?
+          '<div class="skill-deps-warning">Requires: ' + s.missingDeps.join(', ') + ' (will auto-install)</div>' : '') +
+        '<div class="skill-card-footer">' +
+          '<span class="skill-type-badge skill-type-' + s.type + '">' + s.type + '</span>' +
+          '<span class="skill-status ' + statusClass + '">' + statusText + '</span>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  async function toggleSkill(skillId, enable) {
+    var action = enable ? 'enable' : 'disable';
+    if (enable) {
+      skillsInstalling[skillId] = true;
+      loadSkills();
+    }
+    try {
+      var result = await api.post('/api/skills/' + skillId + '/' + action);
+      delete skillsInstalling[skillId];
+      if (result.ok) {
+        toast(enable ? 'Skill enabled' : 'Skill disabled');
+      } else {
+        var errMsg = result.error || 'Failed to ' + action + ' skill';
+        if (result.details) errMsg += '\n' + result.details;
+        toast(errMsg, 'error');
+        console.error('Skill ' + action + ' failed:', result);
+      }
+      loadSkills();
+    } catch(e) {
+      delete skillsInstalling[skillId];
+      var msg = (e && e.body && e.body.error) ? e.body.error : (e && e.message) ? e.message : 'Failed to ' + action + ' skill';
+      if (e && e.body && e.body.details) msg += '\n' + e.body.details;
+      toast(msg, 'error');
+      console.error('Skill ' + action + ' failed:', e && e.body ? e.body : e);
+      loadSkills();
+    }
+  }
+
   window.App = {
     navigate: navigate,
     wizardNext: wizardNext,
@@ -1349,11 +1494,11 @@
     editAgent: editAgent,
     deleteAgent: deleteAgent,
     clearShortMemory: clearShortMemory,
+    toggleMemoryEdit: toggleMemoryEdit,
+    saveMemory: saveMemory,
     switchAgentTab: switchAgentTab,
     openTask: openTask,
-    approveTask: approveTask,
-    requestRevision: requestRevision,
-    markTaskDone: markTaskDone,
+    reviewTask: reviewTask,
     navigateBack: navigateBack,
     filterMedia: filterMedia,
     saveProfile: saveProfile,
@@ -1376,6 +1521,7 @@
     checkForUpdates: checkForUpdates,
     performUpgrade: performUpgrade,
     checkClaudeStatus: checkClaudeStatus,
+    toggleSkill: toggleSkill,
   };
 
   init();

@@ -2,7 +2,64 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
+
+// Check if a command-line tool is available on the system
+function commandExists(cmd) {
+  try {
+    execSync(process.platform === 'win32' ? 'where ' + cmd : 'which ' + cmd,
+      { stdio: 'ignore', timeout: 5000 });
+    return true;
+  } catch(e) {
+    return false;
+  }
+}
+
+// Known package managers for installing system dependencies
+function getInstallCommand(dep) {
+  var p = process.platform;
+  if (p === 'win32') {
+    if (commandExists('winget')) return { cmd: 'winget', args: ['install', '--id', dep.winget || dep, '-e', '--accept-source-agreements', '--accept-package-agreements'] };
+    if (commandExists('choco')) return { cmd: 'choco', args: ['install', dep.choco || dep, '-y'] };
+    return null;
+  }
+  if (p === 'darwin') {
+    if (commandExists('brew')) return { cmd: 'brew', args: ['install', dep.brew || dep] };
+    return null;
+  }
+  // Linux
+  if (commandExists('apt-get')) return { cmd: 'sudo', args: ['apt-get', 'install', '-y', dep.apt || dep] };
+  if (commandExists('yum')) return { cmd: 'sudo', args: ['yum', 'install', '-y', dep.yum || dep] };
+  if (commandExists('pacman')) return { cmd: 'sudo', args: ['pacman', '-S', '--noconfirm', dep.pacman || dep] };
+  return null;
+}
+
+// Map of system dep names to package manager identifiers
+var SYSTEM_DEP_MAP = {
+  'ffmpeg': { winget: 'Gyan.FFmpeg', choco: 'ffmpeg', brew: 'ffmpeg', apt: 'ffmpeg', yum: 'ffmpeg', pacman: 'ffmpeg' },
+  'python': { winget: 'Python.Python.3.12', choco: 'python3', brew: 'python3', apt: 'python3', yum: 'python3', pacman: 'python' },
+  'git': { winget: 'Git.Git', choco: 'git', brew: 'git', apt: 'git', yum: 'git', pacman: 'git' }
+};
+
+// Attempt to install a system dependency, returns { success, output }
+function installSystemDep(depName) {
+  var depInfo = SYSTEM_DEP_MAP[depName] || depName;
+  var installCmd = getInstallCommand(depInfo);
+  if (!installCmd) {
+    return { success: false, output: 'No package manager found to install "' + depName + '". Please install it manually.' };
+  }
+  try {
+    var output = execSync(installCmd.cmd + ' ' + installCmd.args.join(' '),
+      { timeout: 300000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    // Verify it's now available
+    if (commandExists(depName)) {
+      return { success: true, output: 'Installed ' + depName + ' successfully.' };
+    }
+    return { success: false, output: 'Install command ran but "' + depName + '" still not found in PATH. Output: ' + output };
+  } catch(e) {
+    return { success: false, output: 'Failed to install "' + depName + '": ' + (e.stderr || e.message) };
+  }
+}
 
 var pty;
 try { pty = require('node-pty'); }
@@ -164,6 +221,7 @@ function broadcast(scope) {
 function ensureOrchestrator() {
   var rp = path.join(ROOT, 'agents/_registry.json');
   var rg = readJSON(rp) || { agents: [] };
+  if (!rg.agents || !Array.isArray(rg.agents)) rg = { agents: [] };
   var hasOrch = rg.agents.some(function(a) { return a.isOrchestrator; });
   if (hasOrch) return;
 
@@ -812,20 +870,63 @@ async function handle(pn, m, req, res) {
     const id = b.id || genId();
     const dir = path.join(ROOT, 'data/tasks', id);
     fs.mkdirSync(path.join(dir, 'v1'), { recursive: true });
+    const now = new Date().toISOString();
     const t = {
       id: id, title: b.title || 'Untitled', description: b.description || '',
       assignedTo: b.assignedTo || null, status: b.status || 'draft',
       priority: b.priority || 'medium',
       channel: b.channel || '', version: 1,
-      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+      createdAt: now, updatedAt: now
     };
     writeJSON(path.join(dir, 'task.json'), t);
+    // Write initial v1/version.json
+    writeJSON(path.join(dir, 'v1/version.json'), {
+      number: 1, content: b.content || '', status: 'submitted',
+      decision: null, comments: '', submittedAt: now, decidedAt: null
+    });
     const ip = path.join(ROOT, 'data/tasks/_index.json');
     const ix = readJSON(ip) || { tasks: [] };
     ix.tasks.push({ id: id, title: t.title, status: t.status, assignedTo: t.assignedTo, priority: t.priority });
     writeJSON(ip, ix);
     broadcast('tasks');
     return J(res, t, 201);
+  }
+
+  // TASK VERSIONS
+  const tvm = pn.match(/^\/api\/tasks\/([^\/]+)\/versions$/);
+  if (tvm && m === 'GET') {
+    const taskDir = path.join(ROOT, 'data/tasks', tvm[1]);
+    if (!fs.existsSync(taskDir)) return E(res, 'Not found', 404);
+    var versions = [];
+    try {
+      var entries = fs.readdirSync(taskDir);
+      entries.forEach(function(e) {
+        if (/^v\d+$/.test(e)) {
+          var vp = path.join(taskDir, e, 'version.json');
+          var vd = readJSON(vp);
+          if (vd) versions.push(vd);
+          else versions.push({ number: parseInt(e.slice(1)), content: '', status: 'empty', decision: null, comments: '', submittedAt: null, decidedAt: null });
+        }
+      });
+    } catch(e) {}
+    versions.sort(function(a, b) { return a.number - b.number; });
+    return J(res, versions);
+  }
+
+  const tvmn = pn.match(/^\/api\/tasks\/([^\/]+)\/versions\/(\d+)$/);
+  if (tvmn && m === 'PUT') {
+    const taskId = tvmn[1];
+    const vnum = parseInt(tvmn[2]);
+    const vDir = path.join(ROOT, 'data/tasks', taskId, 'v' + vnum);
+    if (!fs.existsSync(vDir)) fs.mkdirSync(vDir, { recursive: true });
+    const vp = path.join(vDir, 'version.json');
+    const existing = readJSON(vp) || { number: vnum, content: '', status: 'submitted', decision: null, comments: '', submittedAt: null, decidedAt: null };
+    const b = await parseBody(req);
+    var updated = Object.assign({}, existing, b, { number: vnum });
+    if (b.content !== undefined && !existing.submittedAt) updated.submittedAt = new Date().toISOString();
+    writeJSON(vp, updated);
+    broadcast('tasks');
+    return J(res, updated);
   }
 
   const tm = pn.match(/^\/api\/tasks\/([^\/]+)$/);
@@ -839,15 +940,71 @@ async function handle(pn, m, req, res) {
     const ex = readJSON(tp);
     if (!ex) return E(res, 'Not found', 404);
     const b = await parseBody(req);
-    const u = Object.assign({}, ex, b, { id: id, updatedAt: new Date().toISOString() });
-    writeJSON(tp, u);
-    const ip = path.join(ROOT, 'data/tasks/_index.json');
-    const ix = readJSON(ip) || { tasks: [] };
-    const i = ix.tasks.findIndex(function(x) { return x.id === id; });
-    if (i >= 0) ix.tasks[i] = { id: id, title: u.title, status: u.status, assignedTo: u.assignedTo, priority: u.priority };
-    writeJSON(ip, ix);
+    const now = new Date().toISOString();
+
+    // Handle review actions: approve, improve, cancel
+    if (b.action === 'approve' || b.action === 'improve' || b.action === 'cancel') {
+      // Find the latest version
+      var taskDir = path.join(ROOT, 'data/tasks', id);
+      var latestV = ex.version || 1;
+      try {
+        var entries = fs.readdirSync(taskDir);
+        entries.forEach(function(e) {
+          if (/^v\d+$/.test(e)) {
+            var n = parseInt(e.slice(1));
+            if (n > latestV) latestV = n;
+          }
+        });
+      } catch(e) {}
+
+      var vPath = path.join(taskDir, 'v' + latestV, 'version.json');
+      var vData = readJSON(vPath) || { number: latestV, content: '', status: 'submitted', decision: null, comments: '', submittedAt: null, decidedAt: null };
+
+      var actionResult;
+      vData.comments = b.comments || '';
+      vData.decidedAt = now;
+
+      if (b.action === 'approve') {
+        vData.decision = 'approved';
+        writeJSON(vPath, vData);
+        actionResult = Object.assign({}, ex, { status: 'approved', updatedAt: now });
+      } else if (b.action === 'improve') {
+        vData.decision = 'improve';
+        writeJSON(vPath, vData);
+        var nextV = latestV + 1;
+        var nextDir = path.join(taskDir, 'v' + nextV);
+        fs.mkdirSync(nextDir, { recursive: true });
+        writeJSON(path.join(nextDir, 'version.json'), {
+          number: nextV, content: '', status: 'draft',
+          decision: null, comments: '', submittedAt: null, decidedAt: null
+        });
+        actionResult = Object.assign({}, ex, { status: 'revision_needed', version: nextV, updatedAt: now });
+      } else {
+        vData.decision = 'cancelled';
+        writeJSON(vPath, vData);
+        actionResult = Object.assign({}, ex, { status: 'cancelled', updatedAt: now });
+      }
+
+      writeJSON(tp, actionResult);
+      var aip = path.join(ROOT, 'data/tasks/_index.json');
+      var aix = readJSON(aip) || { tasks: [] };
+      var ai = aix.tasks.findIndex(function(x) { return x.id === id; });
+      if (ai >= 0) aix.tasks[ai] = { id: id, title: actionResult.title, status: actionResult.status, assignedTo: actionResult.assignedTo, priority: actionResult.priority };
+      writeJSON(aip, aix);
+      broadcast('tasks');
+      return J(res, actionResult);
+    }
+
+    // Default: merge update
+    var merged = Object.assign({}, ex, b, { id: id, updatedAt: now });
+    writeJSON(tp, merged);
+    var mip = path.join(ROOT, 'data/tasks/_index.json');
+    var mix = readJSON(mip) || { tasks: [] };
+    var mi = mix.tasks.findIndex(function(x) { return x.id === id; });
+    if (mi >= 0) mix.tasks[mi] = { id: id, title: merged.title, status: merged.status, assignedTo: merged.assignedTo, priority: merged.priority };
+    writeJSON(mip, mix);
     broadcast('tasks');
-    return J(res, u);
+    return J(res, merged);
   }
 
   // RULES
@@ -998,6 +1155,176 @@ async function handle(pn, m, req, res) {
     var result = await performUpgrade();
     broadcast('all');
     return J(res, result, result.success ? 200 : 400);
+  }
+
+  // SKILLS
+  if (pn === '/api/skills' && m === 'GET') {
+    var catalog = readJSON(path.join(ROOT, 'config/skills-catalog.json')) || [];
+    var enabled = readJSON(path.join(ROOT, 'data/skills/enabled.json')) || {};
+    var skills = catalog.map(function(s) {
+      var deps = (s.systemDeps || []).map(function(dep) {
+        return { name: dep, installed: commandExists(dep) };
+      });
+      var missingDeps = deps.filter(function(d) { return !d.installed; }).map(function(d) { return d.name; });
+      return Object.assign({}, s, {
+        enabled: !!enabled[s.id],
+        depsStatus: deps,
+        missingDeps: missingDeps
+      });
+    });
+    return J(res, { skills: skills });
+  }
+
+  var skillMatch = pn.match(/^\/api\/skills\/([^\/]+)\/(enable|disable)$/);
+  if (skillMatch && m === 'POST') {
+    var skillId = skillMatch[1];
+    var action = skillMatch[2];
+    var catalog = readJSON(path.join(ROOT, 'config/skills-catalog.json')) || [];
+    var skill = catalog.find(function(s) { return s.id === skillId; });
+    if (!skill) return E(res, 'Skill not found', 404);
+
+    var enabledPath = path.join(ROOT, 'data/skills/enabled.json');
+    var enabled = readJSON(enabledPath) || {};
+
+    if (action === 'enable') {
+      // Step 1: Check and install system dependencies
+      var systemDeps = skill.systemDeps || [];
+      var depResults = [];
+      var depFailed = false;
+
+      for (var i = 0; i < systemDeps.length; i++) {
+        var dep = systemDeps[i];
+        if (commandExists(dep)) {
+          depResults.push({ dep: dep, status: 'already_installed' });
+        } else {
+          // Try to auto-install
+          var installRes = installSystemDep(dep);
+          depResults.push({ dep: dep, status: installRes.success ? 'installed' : 'failed', output: installRes.output });
+          if (!installRes.success) depFailed = true;
+        }
+      }
+
+      if (depFailed) {
+        var missing = depResults.filter(function(r) { return r.status === 'failed'; });
+        var missingNames = missing.map(function(r) { return r.dep; }).join(', ');
+        var details = missing.map(function(r) { return r.dep + ': ' + r.output; }).join('\n');
+        return J(res, {
+          ok: false,
+          error: 'Missing system dependencies: ' + missingNames,
+          details: details,
+          depResults: depResults
+        }, 500);
+      }
+
+      // Step 2: Ensure npm is available
+      if (!commandExists('npm')) {
+        return J(res, { ok: false, error: 'npm is not installed. Please install Node.js from https://nodejs.org' }, 500);
+      }
+
+      // Step 3: Install npm packages
+      var installResult = await new Promise(function(resolve) {
+        var args = ['install', '--save'].concat(skill.packages || []);
+        var proc = spawn('npm', args, { cwd: ROOT, shell: true, timeout: 120000 });
+        var output = '';
+        proc.stdout.on('data', function(ch) { output += ch; });
+        proc.stderr.on('data', function(ch) { output += ch; });
+        proc.on('close', function(code) {
+          resolve({ success: code === 0, output: output });
+        });
+        proc.on('error', function(err) {
+          resolve({ success: false, output: err.message });
+        });
+      });
+
+      if (!installResult.success) {
+        // Analyze npm failure for common causes
+        var npmOutput = installResult.output || '';
+        var hint = '';
+        if (npmOutput.match(/gyp ERR|node-gyp|python/i)) {
+          hint = ' You may need Python installed for native module compilation.';
+          if (!commandExists('python') && !commandExists('python3')) {
+            hint += ' Python was not found on your system — installing it may fix this.';
+          }
+        }
+        if (npmOutput.match(/EACCES|permission denied/i)) {
+          hint = ' Try running with administrator/sudo privileges.';
+        }
+        if (npmOutput.match(/ENOTFOUND|network|ETIMEDOUT/i)) {
+          hint = ' Check your internet connection.';
+        }
+        return J(res, { ok: false, error: 'npm install failed.' + hint, output: npmOutput }, 500);
+      }
+
+      // For MCP skills: write to .mcp.json
+      if (skill.type === 'mcp' && skill.mcpConfig) {
+        var mcpPath = path.join(ROOT, '.mcp.json');
+        var mcpData = readJSON(mcpPath) || { mcpServers: {} };
+        mcpData.mcpServers[skill.id] = skill.mcpConfig;
+        writeJSON(mcpPath, mcpData);
+      }
+
+      // For CLI skills: ensure data/skills/<id>/ directory
+      if (skill.type === 'cli') {
+        fs.mkdirSync(path.join(ROOT, 'data/skills', skill.id), { recursive: true });
+      }
+
+      enabled[skillId] = true;
+      writeJSON(enabledPath, enabled);
+      broadcast('skills');
+      return J(res, { ok: true, installed: true });
+
+    } else {
+      // Disable
+      // For MCP skills: remove from .mcp.json
+      if (skill.type === 'mcp') {
+        var mcpPath = path.join(ROOT, '.mcp.json');
+        var mcpData = readJSON(mcpPath) || { mcpServers: {} };
+        delete mcpData.mcpServers[skill.id];
+        writeJSON(mcpPath, mcpData);
+      }
+
+      enabled[skillId] = false;
+      writeJSON(enabledPath, enabled);
+      broadcast('skills');
+      return J(res, { ok: true });
+    }
+  }
+
+  // SCREEN RECORDER CONTROL
+  var recMatch = pn.match(/^\/api\/skills\/screen-recorder\/(start|stop|status)$/);
+  if (recMatch) {
+    var recAction = recMatch[1];
+    var recScript = path.join(ROOT, 'data/skills/screen-recorder/record.js');
+    if (!fs.existsSync(recScript)) return E(res, 'Screen recorder not installed', 404);
+
+    var recArgs = [recScript, recAction];
+    // For start, pass through query params as flags
+    if (recAction === 'start' && m === 'POST') {
+      var body = await new Promise(function(resolve) {
+        var d = ''; req.on('data', function(c) { d += c; }); req.on('end', function() {
+          try { resolve(JSON.parse(d)); } catch(e) { resolve({}); }
+        });
+      });
+      if (body.fps) recArgs.push('--fps', String(body.fps));
+      if (body.output) recArgs.push('--output', String(body.output));
+      if (body.window) recArgs.push('--window', String(body.window));
+      if (body.region) recArgs.push('--region', String(body.region));
+    }
+
+    var recResult = await new Promise(function(resolve) {
+      var proc = spawn('node', recArgs, { cwd: ROOT, shell: true, timeout: 10000 });
+      var output = '';
+      proc.stdout.on('data', function(ch) { output += ch; });
+      proc.stderr.on('data', function(ch) { output += ch; });
+      proc.on('close', function(code) {
+        try { resolve(JSON.parse(output)); } catch(e) { resolve({ ok: code === 0, output: output }); }
+      });
+      proc.on('error', function(err) {
+        resolve({ ok: false, error: err.message });
+      });
+    });
+
+    return J(res, recResult, recResult.error ? 500 : 200);
   }
 
   // CLAUDE CLI STATUS

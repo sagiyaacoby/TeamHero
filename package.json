@@ -1,6 +1,6 @@
 {
   "name": "teamhero",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Multi-agent orchestration platform powered by Claude CLI",
   "main": "server.js",
   "scripts": {
@@ -8,6 +8,8 @@
   },
   "private": true,
   "dependencies": {
-    "node-pty": "^1.0.0"
+    "@playwright/mcp": "^0.0.68",
+    "node-pty": "^1.0.0",
+    "playwright": "^1.58.2"
   }
 }

@@ -15,9 +15,6 @@ echo    Agent Team Portal
 echo  ===================================
 echo.
 
-:: -- Kill any orphaned server from a previous run --
-taskkill /f /fi "WINDOWTITLE eq AgentPortalServer" 1>NUL 2>NUL
-
 :: -- Ensure directories exist --
 if not exist "config" mkdir config
 if not exist "config\agent-templates" mkdir config\agent-templates
@@ -111,7 +108,7 @@ echo  -----------------------------------
 echo.
 
 echo  Starting portal server...
-start "AgentPortalServer" /min node server.js
+start "AgentPortalServer" /b node server.js
 timeout /t 3 /noq 1>NUL
 
 :: Read port from config/system.json

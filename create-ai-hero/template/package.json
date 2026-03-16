@@ -1,0 +1,13 @@
+{
+  "name": "ai-hero-project",
+  "version": "2.2.1",
+  "description": "AI-Hero — Multi-agent orchestration powered by Claude CLI",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "private": true,
+  "dependencies": {
+    "node-pty": "^1.0.0"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "create-ai-hero",
+  "version": "2.2.1",
+  "description": "Create a new AI-Hero agent team — multi-agent orchestration powered by Claude CLI",
+  "bin": {
+    "create-ai-hero": "./index.js"
+  },
+  "keywords": ["ai", "agents", "claude", "orchestration", "ai-hero", "multi-agent"],
+  "author": "AI-Hero",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sagiyak/ai-hero"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "index.js",
+    "template/"
+  ]
+}

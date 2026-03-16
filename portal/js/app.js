@@ -848,29 +848,42 @@
   async function renderProgressLog(taskId, task) { }
   async function renderVersionTimeline(taskId) { }
 
+  function showFilePreview(filename, content) {
+    var overlay = document.getElementById('file-preview-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'file-preview-overlay';
+      overlay.className = 'file-preview-overlay';
+      overlay.innerHTML = '<div class="file-preview-modal"><div class="file-preview-header"><span class="file-preview-title"></span><button class="btn btn-secondary" onclick="document.getElementById(\'file-preview-overlay\').classList.add(\'hidden\')">Close</button></div><div class="file-preview-body"></div></div>';
+      document.body.appendChild(overlay);
+    }
+    overlay.querySelector('.file-preview-title').textContent = filename;
+    var body = overlay.querySelector('.file-preview-body');
+    if (filename.endsWith('.md') && typeof marked !== 'undefined' && marked.parse) {
+      body.innerHTML = marked.parse(content);
+    } else {
+      body.innerHTML = '<pre>' + escHtml(content) + '</pre>';
+    }
+    overlay.classList.remove('hidden');
+  }
+
   async function viewVersionFile(el) {
     var taskId = el.dataset.task;
     var version = el.dataset.version;
     var file = el.dataset.file;
     try {
       var data = await api.get('/api/tasks/' + taskId + '/versions/' + version + '/files/' + encodeURIComponent(file));
-      // Show in a modal overlay
-      var overlay = document.getElementById('file-preview-overlay');
-      if (!overlay) {
-        overlay = document.createElement('div');
-        overlay.id = 'file-preview-overlay';
-        overlay.className = 'file-preview-overlay';
-        overlay.innerHTML = '<div class="file-preview-modal"><div class="file-preview-header"><span class="file-preview-title"></span><button class="btn btn-secondary" onclick="document.getElementById(\'file-preview-overlay\').classList.add(\'hidden\')">Close</button></div><div class="file-preview-body"></div></div>';
-        document.body.appendChild(overlay);
-      }
-      overlay.querySelector('.file-preview-title').textContent = file;
-      var body = overlay.querySelector('.file-preview-body');
-      if (file.endsWith('.md') && typeof marked !== 'undefined' && marked.parse) {
-        body.innerHTML = marked.parse(data.content);
-      } else {
-        body.innerHTML = '<pre>' + escHtml(data.content) + '</pre>';
-      }
-      overlay.classList.remove('hidden');
+      showFilePreview(file, data.content);
+    } catch(e) {
+      toast('Failed to load file', 'error');
+    }
+  }
+
+  async function viewFile(filePath) {
+    try {
+      var data = await api.get('/api/file/' + encodeURIComponent(filePath));
+      var filename = filePath.split('/').pop();
+      showFilePreview(filename, data.content);
     } catch(e) {
       toast('Failed to load file', 'error');
     }
@@ -2021,7 +2034,7 @@
     // Convert URLs to clickable links that open in new tab
     return text.replace(/(https?:\/\/[^\s<&]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:var(--accent)">$1</a>')
       .replace(/(data\/[^\s<&]+\.(md|txt|json|html|pdf|png|jpg|jpeg|gif|svg|mp4|csv))/gi, function(match) {
-        return '<a href="/api/file/' + match + '" target="_blank" rel="noopener" style="color:var(--accent)">' + match + '</a>';
+        return '<a href="#" onclick="App.viewFile(\'' + match.replace(/'/g, "\\'") + '\');return false;" style="color:var(--accent)">' + match + '</a>';
       });
   }
 
@@ -2207,6 +2220,7 @@
     toggleSkill: toggleSkill,
     saveSkillSettings: saveSkillSettings,
     viewVersionFile: viewVersionFile,
+    viewFile: viewFile,
     toggleRevisionMode: toggleRevisionMode,
     promoteToKnowledge: promoteToKnowledge,
     filterKnowledge: filterKnowledge,

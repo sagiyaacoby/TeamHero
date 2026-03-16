@@ -1,12 +1,31 @@
 {
   "name": "teamhero",
-  "version": "2.2.6",
+  "version": "2.3.0",
   "description": "Multi-agent orchestration platform powered by Claude CLI",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "private": true,
+  "license": "MIT",
+  "author": "Sagi Yaacoby (https://github.com/sagiyaacoby)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sagiyaacoby/TeamHero.git"
+  },
+  "homepage": "https://github.com/sagiyaacoby/TeamHero",
+  "bugs": {
+    "url": "https://github.com/sagiyaacoby/TeamHero/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "multi-agent",
+    "orchestration",
+    "claude",
+    "agent-framework",
+    "ai-team",
+    "task-management",
+    "dashboard"
+  ],
   "dependencies": {
     "@playwright/mcp": "^0.0.68",
     "node-pty": "^1.0.0",

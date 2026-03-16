@@ -60,6 +60,17 @@ body {
 .nav-orchestrator.active { color: var(--gold) !important; background: rgba(240,192,64,0.12) !important; border-right-color: var(--gold) !important; }
 .nav-orchestrator .icon { color: var(--gold); }
 
+/* Agent working indicator */
+.agent-working-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--green); margin-left: 6px; vertical-align: middle;
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(63,185,80,0.5); }
+  50% { opacity: 0.6; box-shadow: 0 0 0 4px rgba(63,185,80,0); }
+}
+
 /* Command Center nav item */
 .nav-chat { color: var(--gold) !important; }
 .nav-chat:hover { background: rgba(240,192,64,0.08) !important; }
@@ -379,6 +390,7 @@ body {
 .badge-low { background: rgba(139,148,158,0.15); color: var(--text-muted); }
 .badge-revision_needed { background: rgba(248,81,73,0.15); color: var(--red); }
 .badge-pending_approval { background: rgba(210,153,34,0.15); color: var(--yellow); }
+.badge-all { background: rgba(139,148,158,0.15); color: var(--text-muted); }
 
 /* -- Task Detail -- */
 /* ── Task Filter Bar ─────────────────────────────── */
@@ -390,83 +402,125 @@ body {
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
   font-size: 13px; color: var(--text-muted);
 }
-.task-detail-actions {
-  display: flex; gap: 10px; margin-top: 20px;
+
+/* ── Task Session (Chronological View) ──────────── */
+.task-session { display: flex; flex-direction: column; gap: 0; }
+
+.session-brief {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 20px; margin-bottom: 24px;
+}
+.session-section-label {
+  font-size: 12px; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px;
+}
+.session-brief-content {
+  font-size: 14px; line-height: 1.7; color: var(--text);
+}
+.session-brief-content p { margin-bottom: 8px; }
+.session-brief-content h1, .session-brief-content h2, .session-brief-content h3 { margin: 12px 0 6px; }
+.session-brief-content ul, .session-brief-content ol { padding-left: 20px; margin-bottom: 8px; }
+.session-brief-content + .session-brief-content { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+
+.session-awaiting {
+  padding: 32px; text-align: center;
+  color: var(--text-muted); font-size: 14px;
 }
 
-/* ── Version Timeline ───────────────────────────── */
-.version-timeline {
-  position: relative; padding-left: 28px;
+/* ── Session Version Cards ─────────────────────── */
+.session-version {
+  position: relative; padding: 20px; padding-left: 36px;
+  border-left: 2px solid var(--border); margin-left: 8px;
 }
-.version-timeline::before {
-  content: ''; position: absolute; left: 10px; top: 0; bottom: 0;
-  width: 2px; background: var(--border);
-}
-.version-card {
-  position: relative; margin-bottom: 20px;
-  background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px;
-  padding: 16px;
-}
-.version-card::before {
-  content: ''; position: absolute; left: -23px; top: 20px;
+.session-version::before {
+  content: ''; position: absolute; left: -6px; top: 24px;
   width: 10px; height: 10px; border-radius: 50%;
-  background: var(--text-muted); border: 2px solid var(--bg-card);
+  background: var(--text-muted); border: 2px solid var(--bg);
 }
-.version-card.latest { border-color: var(--accent); }
-.version-card.latest::before {
+.session-version.latest::before {
   background: var(--accent); box-shadow: 0 0 8px var(--accent);
 }
-.version-card-header {
+.session-dot.dot-approved { background: var(--green); }
+.session-dot.dot-improved { background: var(--yellow); }
+
+.session-version-header {
   display: flex; justify-content: space-between; align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
-.version-number { font-weight: 600; font-size: 14px; color: var(--text); }
-.version-content {
-  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-  padding: 14px; font-size: 13px; line-height: 1.7; color: var(--text);
-  max-height: 400px; overflow-y: auto;
+.session-version-id {
+  font-weight: 600; font-size: 15px; color: var(--text);
+  display: flex; align-items: center; gap: 8px;
 }
-.version-content p { margin-bottom: 8px; }
-.version-content h1, .version-content h2, .version-content h3 { margin: 12px 0 6px; }
-.version-content ul, .version-content ol { padding-left: 20px; margin-bottom: 8px; }
-.version-content code { background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 3px; font-size: 12px; }
-.version-content pre { background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }
-.version-content pre code { background: none; padding: 0; }
-.version-feedback {
-  margin-top: 10px; padding: 10px 14px;
-  background: rgba(210,153,34,0.08); border: 1px solid rgba(210,153,34,0.2);
-  border-radius: 6px; font-size: 13px; color: var(--text);
-}
-.version-feedback-label { font-size: 11px; font-weight: 600; color: var(--yellow); text-transform: uppercase; margin-bottom: 4px; }
-.version-timestamps {
-  margin-top: 8px; font-size: 11px; color: var(--text-muted);
-  display: flex; gap: 16px;
+.session-agent-name {
+  font-size: 12px; color: var(--text-muted); font-weight: 400;
 }
 
-/* ── Review Bar ─────────────────────────────────── */
-.review-bar {
+.session-content {
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 16px 20px; font-size: 13px; line-height: 1.7; color: var(--text);
+}
+.session-content p { margin-bottom: 8px; }
+.session-content h1, .session-content h2, .session-content h3 { margin: 14px 0 6px; }
+.session-content h1:first-child, .session-content h2:first-child, .session-content h3:first-child { margin-top: 0; }
+.session-content ul, .session-content ol { padding-left: 20px; margin-bottom: 8px; }
+.session-content code { background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+.session-content pre { background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }
+.session-content pre code { background: none; padding: 0; }
+.session-content table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+.session-content th, .session-content td { padding: 6px 10px; border: 1px solid var(--border); text-align: left; font-size: 12px; }
+.session-content th { background: rgba(255,255,255,0.04); font-weight: 600; }
+
+/* Owner feedback inline */
+.session-feedback {
+  margin-top: 12px; margin-left: 0;
+  padding: 12px 16px;
+  background: rgba(210,153,34,0.08); border: 1px solid rgba(210,153,34,0.2);
+  border-radius: 8px;
+}
+.session-feedback-label {
+  font-size: 11px; font-weight: 700; color: var(--yellow);
+  text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 6px;
+}
+.session-feedback-text { font-size: 13px; color: var(--text); line-height: 1.6; }
+
+/* ── Inline Review Bar ──────────────────────────── */
+.session-review {
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
-  padding: 20px; margin-top: 20px;
+  padding: 20px; margin-top: 20px; margin-left: 8px;
 }
-.review-bar h3 {
-  font-size: 14px; color: var(--text-muted); text-transform: uppercase;
-  letter-spacing: 0.5px; margin-bottom: 12px;
-}
-.review-bar textarea {
+.session-review textarea {
   width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
   padding: 10px 12px; color: var(--text); font-size: 14px; font-family: inherit;
-  resize: vertical; min-height: 80px; margin-bottom: 12px;
+  resize: vertical; min-height: 60px; margin-bottom: 12px;
 }
-.review-bar textarea:focus { outline: none; border-color: var(--accent); }
-.review-actions { display: flex; gap: 10px; }
+.session-review textarea:focus { outline: none; border-color: var(--accent); }
+.review-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
-/* ── Done Bar ───────────────────────────────────── */
-.done-bar {
-  background: rgba(63,185,80,0.08); border: 1px solid rgba(63,185,80,0.3); border-radius: 8px;
-  padding: 16px 20px; margin-top: 20px;
-  display: flex; align-items: center; gap: 10px;
+/* ── Outcome Section ────────────────────────────── */
+.session-outcome {
+  display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap;
+  padding: 16px 20px; margin-top: 20px; margin-left: 8px; border-radius: 8px;
+  background: rgba(63,185,80,0.08); border: 1px solid rgba(63,185,80,0.3);
   font-size: 14px; color: var(--green); font-weight: 500;
 }
+.session-outcome-icon { font-size: 18px; flex-shrink: 0; }
+.session-outcome-result {
+  width: 100%; margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid rgba(63,185,80,0.2);
+  font-size: 13px; font-weight: 400; color: var(--text); line-height: 1.6;
+}
+.session-outcome-hold {
+  background: rgba(210,153,34,0.08); border-color: rgba(210,153,34,0.3); color: var(--yellow);
+}
+.session-outcome-cancelled {
+  background: rgba(248,81,73,0.08); border-color: rgba(248,81,73,0.3); color: var(--red);
+}
+
+/* Revision toggle */
+.session-revision-toggle {
+  margin-top: 12px; margin-left: 8px;
+}
+.btn-sm { padding: 6px 14px; font-size: 12px; }
 
 /* ── Extra Badges ───────────────────────────────── */
 .badge-cancelled { background: rgba(248,81,73,0.15); color: var(--red); }
@@ -513,6 +567,21 @@ body {
   font-size: 11px; color: var(--yellow); padding: 4px 8px;
   background: rgba(255,200,0,0.08); border-radius: 4px; margin-top: 4px;
 }
+.skill-settings {
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+}
+.skill-settings-title {
+  font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.skill-setting-row { margin-bottom: 8px; }
+.skill-setting-row label { display: block; font-size: 12px; margin-bottom: 3px; color: var(--text); }
+.skill-setting-row input {
+  width: 100%; padding: 6px 10px; font-size: 13px; border: 1px solid var(--border);
+  border-radius: 4px; background: var(--bg); color: var(--text); box-sizing: border-box;
+}
+.skill-setting-row input:focus { border-color: var(--accent); outline: none; }
+.skill-settings .btn-sm { margin-top: 6px; padding: 5px 14px; font-size: 12px; }
 
 /* Toggle Switch */
 .toggle-switch {
@@ -557,6 +626,62 @@ body {
   text-transform: uppercase; margin-bottom: 4px;
 }
 
+/* ── Version Files ───────────────────────────────── */
+.version-files {
+  margin-top: 10px; padding: 10px 14px;
+  border: 1px solid rgba(210,153,34,0.2); border-radius: 6px;
+  background: rgba(210,153,34,0.06); font-size: 13px;
+}
+.version-files-label {
+  font-size: 11px; font-weight: 600; color: var(--yellow);
+  text-transform: uppercase; margin-bottom: 6px;
+}
+.version-file-link {
+  display: inline-block; padding: 4px 10px; margin: 2px 4px 2px 0;
+  background: rgba(210,153,34,0.1); border: 1px solid rgba(210,153,34,0.25);
+  border-radius: 4px; color: var(--yellow); text-decoration: none;
+  font-size: 12px; cursor: pointer; transition: background 0.2s;
+}
+.version-file-link:hover { background: rgba(210,153,34,0.2); }
+
+/* ── File Preview Modal ──────────────────────────── */
+.file-preview-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,0.7); display: flex;
+  align-items: center; justify-content: center;
+}
+.file-preview-overlay.hidden { display: none; }
+.file-preview-modal {
+  width: 80%; max-width: 900px; max-height: 85vh;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 10px; display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.file-preview-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.file-preview-title {
+  font-weight: 600; color: var(--text); font-size: 14px;
+}
+.file-preview-body {
+  padding: 20px; overflow-y: auto; color: var(--text);
+  font-size: 14px; line-height: 1.7;
+}
+.file-preview-body pre {
+  white-space: pre-wrap; word-break: break-word;
+}
+.file-preview-body h1, .file-preview-body h2, .file-preview-body h3 {
+  margin-top: 16px; margin-bottom: 8px; color: var(--text);
+}
+.file-preview-body table {
+  width: 100%; border-collapse: collapse; margin: 12px 0;
+}
+.file-preview-body th, .file-preview-body td {
+  padding: 6px 10px; border: 1px solid var(--border); text-align: left; font-size: 13px;
+}
+.file-preview-body th { background: rgba(255,255,255,0.04); font-weight: 600; }
+
 /* ── Clickable Stat Cards & Badges ──────────────── */
 .clickable-stat { cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; }
 .clickable-stat:hover { border-color: var(--accent); }
@@ -591,6 +716,7 @@ body {
 /* ── Hold Status ───────────────────────────────── */
 .badge-hold { background: rgba(210,153,34,0.15); color: var(--yellow); }
 .btn-hold { background: var(--yellow); color: #000; border-color: var(--yellow); }
+.btn-run-now { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
 
 /* ── Progress Log ──────────────────────────────── */
 .progress-log { display: flex; flex-direction: column; gap: 8px; }

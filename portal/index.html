@@ -268,40 +268,11 @@
         <span id="task-detail-date"></span>
         <span id="task-detail-tags"></span>
       </div>
-      <div class="panel">
-        <h3>Description</h3>
-        <p id="task-detail-desc" class="content-text"></p>
-      </div>
-      <div class="panel" id="task-brief-panel" style="display:none">
-        <h3>Brief</h3>
-        <div id="task-detail-brief" class="content-text"></div>
-      </div>
-      <div class="panel" id="task-progress-panel">
-        <h3>Progress Log</h3>
-        <div id="task-progress-log" class="progress-log"><div class="empty-state">No progress updates yet</div></div>
-      </div>
-      <div class="panel">
-        <h3>Version Timeline</h3>
-        <div id="task-version-timeline" class="version-timeline"><div class="empty-state">No versions yet</div></div>
-      </div>
+      <div id="task-session" class="task-session"></div>
       <div id="task-promote-bar" class="promote-bar hidden">
         <button class="btn btn-secondary" onclick="App.promoteToKnowledge()">Promote to Knowledge Base</button>
       </div>
       <div id="task-knowledge-link" class="knowledge-link hidden"></div>
-      <div id="task-review-bar" class="review-bar hidden">
-        <h3>Review</h3>
-        <textarea id="task-review-comments" placeholder="Add feedback or comments for the agent..."></textarea>
-        <div class="review-actions">
-          <button class="btn btn-approve" onclick="App.reviewTask('approve')">Approve</button>
-          <button class="btn btn-primary" onclick="App.reviewTask('improve')">Improve</button>
-          <button class="btn btn-hold" onclick="App.reviewTask('hold')">Hold</button>
-          <button class="btn btn-cancel" onclick="App.reviewTask('cancel')">Cancel Task</button>
-        </div>
-      </div>
-      <div id="task-action-feedback" class="action-feedback hidden"></div>
-      <div id="task-done-bar" class="done-bar hidden">&#10003; This task has been approved and completed.</div>
-      <div id="task-hold-bar" class="done-bar hidden" style="color:var(--yellow);border-color:rgba(210,153,34,0.3);background:rgba(210,153,34,0.08);">&#9208; This task is on hold.</div>
-      <div id="task-cancelled-bar" class="done-bar hidden" style="color:var(--red);border-color:rgba(248,81,73,0.3);background:rgba(248,81,73,0.08);">&#10007; This task has been cancelled.</div>
     </section>
     <!-- Add/Edit Agent -->
     <section id="view-add-agent" class="view">

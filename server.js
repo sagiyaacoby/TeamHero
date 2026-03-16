@@ -1000,13 +1000,29 @@ async function handle(pn, m, req, res) {
         if (/^v\d+$/.test(e)) {
           var vp = path.join(taskDir, e, 'version.json');
           var vd = readJSON(vp);
-          if (vd) versions.push(vd);
-          else versions.push({ number: parseInt(e.slice(1)), content: '', status: 'empty', decision: null, comments: '', submittedAt: null, decidedAt: null });
+          if (!vd) vd = { number: parseInt(e.slice(1)), content: '', status: 'empty', decision: null, comments: '', submittedAt: null, decidedAt: null };
+          // Attach list of extra files in version folder
+          try {
+            var vFiles = fs.readdirSync(path.join(taskDir, e));
+            vd.files = vFiles.filter(function(f) { return f !== 'version.json'; });
+          } catch(fe) { vd.files = []; }
+          versions.push(vd);
         }
       });
     } catch(e) {}
     versions.sort(function(a, b) { return a.number - b.number; });
     return J(res, versions);
+  }
+
+  // SERVE VERSION FILE CONTENT
+  const tvf = pn.match(/^\/api\/tasks\/([^\/]+)\/versions\/(\d+)\/files\/(.+)$/);
+  if (tvf && m === 'GET') {
+    var filePath = path.join(ROOT, 'data/tasks', tvf[1], 'v' + tvf[2], decodeURIComponent(tvf[3]));
+    // Prevent directory traversal
+    if (!filePath.startsWith(path.join(ROOT, 'data/tasks', tvf[1]))) return E(res, 'Forbidden', 403);
+    if (!fs.existsSync(filePath)) return E(res, 'Not found', 404);
+    var content = fs.readFileSync(filePath, 'utf8');
+    return J(res, { filename: tvf[3], content: content });
   }
 
   const tvmn = pn.match(/^\/api\/tasks\/([^\/]+)\/versions\/(\d+)$/);
@@ -1360,13 +1376,61 @@ async function handle(pn, m, req, res) {
         return { name: dep, installed: commandExists(dep) };
       });
       var missingDeps = deps.filter(function(d) { return !d.installed; }).map(function(d) { return d.name; });
+      var settingValues = {};
+      if (s.settings && s.settings.length) {
+        var sv = readJSON(path.join(ROOT, 'data/skills', s.id + '-settings.json'));
+        if (sv) {
+          // Mask secret values for display
+          s.settings.forEach(function(setting) {
+            if (sv[setting.key]) {
+              settingValues[setting.key] = setting.type === 'secret' ? '********' : sv[setting.key];
+            }
+          });
+        }
+      }
       return Object.assign({}, s, {
         enabled: !!enabled[s.id],
         depsStatus: deps,
-        missingDeps: missingDeps
+        missingDeps: missingDeps,
+        settingValues: settingValues
       });
     });
     return J(res, { skills: skills });
+  }
+
+  // Skill settings
+  var skillSettingsMatch = pn.match(/^\/api\/skills\/([^\/]+)\/settings$/);
+  if (skillSettingsMatch && m === 'PUT') {
+    var ssId = skillSettingsMatch[1];
+    var b = await parseBody(req);
+    var settingsPath = path.join(ROOT, 'data/skills', ssId + '-settings.json');
+    var existing = readJSON(settingsPath) || {};
+    // Merge — don't overwrite with masked values
+    for (var key in b) {
+      if (b[key] && b[key] !== '********') existing[key] = b[key];
+    }
+    writeJSON(settingsPath, existing);
+
+    // Update .mcp.json env vars with actual values
+    var catalog = readJSON(path.join(ROOT, 'config/skills-catalog.json')) || [];
+    var skill = catalog.find(function(s) { return s.id === ssId; });
+    if (skill && skill.type === 'mcp' && skill.mcpConfig && skill.mcpConfig.env) {
+      var mcpPath = path.join(ROOT, '.mcp.json');
+      var mcpData = readJSON(mcpPath) || { mcpServers: {} };
+      if (mcpData.mcpServers[ssId]) {
+        var env = {};
+        for (var envKey in skill.mcpConfig.env) {
+          var tmpl = skill.mcpConfig.env[envKey];
+          var match = tmpl.match(/^\$\{(.+)\}$/);
+          env[envKey] = match && existing[match[1]] ? existing[match[1]] : tmpl;
+        }
+        mcpData.mcpServers[ssId].env = env;
+        writeJSON(mcpPath, mcpData);
+      }
+    }
+
+    broadcast('skills');
+    return J(res, { ok: true });
   }
 
   var skillMatch = pn.match(/^\/api\/skills\/([^\/]+)\/(enable|disable)$/);
@@ -1415,45 +1479,89 @@ async function handle(pn, m, req, res) {
         return J(res, { ok: false, error: 'npm is not installed. Please install Node.js from https://nodejs.org' }, 500);
       }
 
-      // Step 3: Install npm packages
-      var installResult = await new Promise(function(resolve) {
-        var args = ['install', '--save'].concat(skill.packages || []);
-        var proc = spawn('npm', args, { cwd: ROOT, shell: true, timeout: 120000 });
-        var output = '';
-        proc.stdout.on('data', function(ch) { output += ch; });
-        proc.stderr.on('data', function(ch) { output += ch; });
-        proc.on('close', function(code) {
-          resolve({ success: code === 0, output: output });
+      // Step 3: Install npm packages (for npm-based skills)
+      if (skill.packages && skill.packages.length > 0) {
+        var installResult = await new Promise(function(resolve) {
+          var args = ['install', '--save'].concat(skill.packages);
+          var proc = spawn('npm', args, { cwd: ROOT, shell: true, timeout: 120000 });
+          var output = '';
+          proc.stdout.on('data', function(ch) { output += ch; });
+          proc.stderr.on('data', function(ch) { output += ch; });
+          proc.on('close', function(code) {
+            resolve({ success: code === 0, output: output });
+          });
+          proc.on('error', function(err) {
+            resolve({ success: false, output: err.message });
+          });
         });
-        proc.on('error', function(err) {
-          resolve({ success: false, output: err.message });
-        });
-      });
 
-      if (!installResult.success) {
-        // Analyze npm failure for common causes
-        var npmOutput = installResult.output || '';
-        var hint = '';
-        if (npmOutput.match(/gyp ERR|node-gyp|python/i)) {
-          hint = ' You may need Python installed for native module compilation.';
-          if (!commandExists('python') && !commandExists('python3')) {
-            hint += ' Python was not found on your system — installing it may fix this.';
+        if (!installResult.success) {
+          var npmOutput = installResult.output || '';
+          var hint = '';
+          if (npmOutput.match(/gyp ERR|node-gyp|python/i)) {
+            hint = ' You may need Python installed for native module compilation.';
+            if (!commandExists('python') && !commandExists('python3')) {
+              hint += ' Python was not found on your system — installing it may fix this.';
+            }
+          }
+          if (npmOutput.match(/EACCES|permission denied/i)) {
+            hint = ' Try running with administrator/sudo privileges.';
+          }
+          if (npmOutput.match(/ENOTFOUND|network|ETIMEDOUT/i)) {
+            hint = ' Check your internet connection.';
+          }
+          return J(res, { ok: false, error: 'npm install failed.' + hint, output: npmOutput }, 500);
+        }
+      }
+
+      // Step 3b: Git-based skills — clone repo and build
+      if (skill.gitRepo) {
+        var skillDir = path.join(ROOT, 'data/skills', skill.id);
+        fs.mkdirSync(skillDir, { recursive: true });
+
+        // Clone if not already cloned
+        if (!fs.existsSync(path.join(skillDir, '.git'))) {
+          var cloneResult = await new Promise(function(resolve) {
+            var proc = spawn('git', ['clone', skill.gitRepo, '.'], { cwd: skillDir, shell: true, timeout: 120000 });
+            var output = '';
+            proc.stdout.on('data', function(ch) { output += ch; });
+            proc.stderr.on('data', function(ch) { output += ch; });
+            proc.on('close', function(code) { resolve({ success: code === 0, output: output }); });
+            proc.on('error', function(err) { resolve({ success: false, output: err.message }); });
+          });
+          if (!cloneResult.success) {
+            return J(res, { ok: false, error: 'Git clone failed.', details: cloneResult.output }, 500);
           }
         }
-        if (npmOutput.match(/EACCES|permission denied/i)) {
-          hint = ' Try running with administrator/sudo privileges.';
+
+        // Build
+        if (skill.buildCmd) {
+          var buildResult = await new Promise(function(resolve) {
+            var proc = spawn(skill.buildCmd, [], { cwd: skillDir, shell: true, timeout: 180000 });
+            var output = '';
+            proc.stdout.on('data', function(ch) { output += ch; });
+            proc.stderr.on('data', function(ch) { output += ch; });
+            proc.on('close', function(code) { resolve({ success: code === 0, output: output }); });
+            proc.on('error', function(err) { resolve({ success: false, output: err.message }); });
+          });
+          if (!buildResult.success) {
+            return J(res, { ok: false, error: 'Build failed.', details: buildResult.output }, 500);
+          }
         }
-        if (npmOutput.match(/ENOTFOUND|network|ETIMEDOUT/i)) {
-          hint = ' Check your internet connection.';
-        }
-        return J(res, { ok: false, error: 'npm install failed.' + hint, output: npmOutput }, 500);
       }
 
       // For MCP skills: write to .mcp.json
       if (skill.type === 'mcp' && skill.mcpConfig) {
         var mcpPath = path.join(ROOT, '.mcp.json');
         var mcpData = readJSON(mcpPath) || { mcpServers: {} };
-        mcpData.mcpServers[skill.id] = skill.mcpConfig;
+        // Resolve env vars from secrets for git-based skills
+        var mcpEntry = JSON.parse(JSON.stringify(skill.mcpConfig));
+        if (skill.gitRepo && mcpEntry.args) {
+          mcpEntry.args = mcpEntry.args.map(function(a) {
+            return a.replace(/^data\/skills\//, path.join(ROOT, 'data/skills/').replace(/\\/g, '/') + '/').replace(/\\/g, '/');
+          });
+        }
+        mcpData.mcpServers[skill.id] = mcpEntry;
         writeJSON(mcpPath, mcpData);
       }
 
@@ -1554,11 +1662,11 @@ async function handle(pn, m, req, res) {
   }
 
   // STATIC FILES
-  let filePath = pn === '/' ? '/index.html' : pn;
-  filePath = path.join(BASE, filePath);
-  if (!filePath.startsWith(BASE)) { res.writeHead(403); return res.end('Forbidden'); }
-  const ext = path.extname(filePath).toLowerCase();
-  fs.readFile(filePath, function(e, data) {
+  var staticPath = pn === '/' ? '/index.html' : pn;
+  staticPath = path.join(BASE, staticPath);
+  if (!staticPath.startsWith(BASE)) { res.writeHead(403); return res.end('Forbidden'); }
+  var ext = path.extname(staticPath).toLowerCase();
+  fs.readFile(staticPath, function(e, data) {
     if (e) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('Not found'); }
     res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
     res.end(data);

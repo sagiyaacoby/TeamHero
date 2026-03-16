@@ -15,7 +15,7 @@
     currentTaskId: null,
     mediaFilter: 'all',
     dashboardTaskFilter: 'all',
-    agentTaskFilter: 'pending_approval',
+    agentTaskFilter: 'all',
     cachedDashboardTasks: [],
     cachedAgentTasks: [],
   };
@@ -131,6 +131,8 @@
   var termWs = null;
   var termSessionId = null;
   var termInitialized = false;
+  var termWsReconnectTimer = null;
+  var termSessionEnded = false;
 
   function connectWebSocket() {
     if (globalWs && globalWs.readyState <= 1) return;
@@ -140,7 +142,6 @@
     globalWs = new WebSocket(wsUrl);
 
     globalWs.onopen = function() {
-      setChatStatus('connected');
       clearTimeout(wsReconnectTimer);
     };
 
@@ -156,17 +157,39 @@
     };
 
     globalWs.onclose = function(evt) {
-      setChatStatus('disconnected');
       wsReconnectTimer = setTimeout(connectWebSocket, 3000);
     };
 
     globalWs.onerror = function(evt) {
-      setChatStatus('disconnected');
     };
   }
 
-  // ── Live Refresh Handler ───────────────────────────
+  // ── Live Refresh Handler (debounced) ────────────────
+  var refreshTimer = null;
+  var pendingRefreshScope = null;
+
   function handleRefresh(scope) {
+    // Merge scopes — 'all' wins, otherwise accumulate
+    if (pendingRefreshScope === 'all' || scope === 'all') {
+      pendingRefreshScope = 'all';
+    } else if (!pendingRefreshScope) {
+      pendingRefreshScope = scope;
+    }
+    // Debounce: wait 3 seconds before actually refreshing
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(function() {
+      doRefresh(pendingRefreshScope || 'all');
+      pendingRefreshScope = null;
+      refreshTimer = null;
+    }, 3000);
+  }
+
+  function doRefresh(scope) {
+    // Skip refresh if user is on the Command Center — don't disrupt terminal
+    if (state.currentView === 'chat') {
+      loadSidebarAgents();
+      return;
+    }
     loadSidebarAgents();
     var v = state.currentView;
     if (scope === 'all' || scope === 'agents' || scope === 'tasks') {
@@ -213,18 +236,26 @@
     var orchAgents = state.agents.filter(function(a) { return a.isOrchestrator; });
     var subAgents = state.agents.filter(function(a) { return !a.isOrchestrator; });
 
+    // Build set of agents with in_progress tasks
+    var workingAgents = {};
+    (state.tasks || []).forEach(function(t) {
+      if (t.status === 'in_progress' && t.assignedTo) workingAgents[t.assignedTo] = true;
+    });
+
     var html = '';
 
     orchAgents.forEach(function(a) {
       var isActive = state.currentView === 'agent-detail' && state.currentAgentId === a.id;
+      var working = workingAgents[a.id] ? '<span class="agent-working-dot" title="Working on task"></span>' : '';
       html += '<a href="#" data-agent-id="' + a.id + '" class="nav-link nav-orchestrator' + (isActive ? ' active' : '') + '">' +
-        '<span class="icon">&#9733;</span> ' + escHtml(a.name) + '</a>';
+        '<span class="icon">&#9733;</span> ' + escHtml(a.name) + working + '</a>';
     });
 
     subAgents.forEach(function(a) {
       var isActive = state.currentView === 'agent-detail' && state.currentAgentId === a.id;
+      var working = workingAgents[a.id] ? '<span class="agent-working-dot" title="Working on task"></span>' : '';
       html += '<a href="#" data-agent-id="' + a.id + '" class="nav-link' + (isActive ? ' active' : '') + '">' +
-        '<span class="icon">&#9670;</span> ' + escHtml(a.name) + '</a>';
+        '<span class="icon">&#9670;</span> ' + escHtml(a.name) + working + '</a>';
     });
 
     container.innerHTML = html;
@@ -369,7 +400,9 @@
       else if (t.status === 'done') done++;
     });
     var af = state.agentTaskFilter;
+    var total = tasks.length;
     summaryEl.innerHTML =
+      '<span class="badge badge-all clickable-badge' + (af === 'all' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'all\',\'agent\')">' + total + ' All</span> ' +
       '<span class="badge badge-pending_approval clickable-badge' + (af === 'pending_approval' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'pending_approval\',\'agent\')">' + pending + ' Pending</span> ' +
       '<span class="badge badge-approved clickable-badge' + (af === 'approved' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'approved\',\'agent\')">' + approved + ' Approved</span> ' +
       '<span class="badge badge-in_progress clickable-badge' + (af === 'in_progress' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'in_progress\',\'agent\')">' + active + ' In Progress</span> ' +
@@ -423,11 +456,14 @@
       var hasOutput = t.knowledgeDocId || t.hasDeliverable;
       var outputIcon = hasOutput ? '<span class="task-output-icon" title="Has output">&#128196;</span>' : '';
 
+      var isWorking = t.status === 'in_progress';
+      var workingDot = isWorking ? '<span class="agent-working-dot" title="In progress"></span>' : '';
+
       return '<div class="task-item" onclick="App.openTask(' + q + t.id + q + ')">' +
         '<span class="task-title">' + outputIcon + escHtml(t.title) + '</span>' +
         '<span class="task-meta">' +
           '<span class="badge ' + priorityClass + '">' + escHtml(t.priority || 'medium') + '</span>' +
-          '<span class="badge ' + statusClass + '">' + escHtml((t.status || 'draft').replace(/_/g, ' ')) + '</span>' +
+          '<span class="badge ' + statusClass + '">' + escHtml((t.status || 'draft').replace(/_/g, ' ')) + workingDot + '</span>' +
           (agentName ? '<span>' + escHtml(agentName) + '</span>' : '') +
         '</span></div>';
     }).join('');
@@ -539,7 +575,6 @@
       priorityEl.textContent = task.priority || 'medium';
       priorityEl.className = 'badge badge-' + (task.priority || 'medium');
 
-      // Find agent name
       var agentName = task.assignedTo || 'Unassigned';
       if (task.assignedTo && state.agents.length > 0) {
         var found = state.agents.find(function(a) { return a.id === task.assignedTo; });
@@ -548,9 +583,6 @@
       document.getElementById('task-detail-agent').textContent = agentName;
       document.getElementById('task-detail-date').textContent = task.updatedAt ? new Date(task.updatedAt).toLocaleDateString() : '-';
 
-      document.getElementById('task-detail-desc').textContent = task.description || 'No description.';
-
-      // Tags
       var tagsEl = document.getElementById('task-detail-tags');
       if (task.tags && task.tags.length > 0) {
         tagsEl.innerHTML = task.tags.map(function(tag) { return '<span class="tag-badge">' + escHtml(tag) + '</span>'; }).join('');
@@ -558,21 +590,6 @@
         tagsEl.innerHTML = '';
       }
 
-      // Brief
-      var briefPanel = document.getElementById('task-brief-panel');
-      var briefEl = document.getElementById('task-detail-brief');
-      if (task.brief) {
-        briefPanel.style.display = '';
-        try {
-          briefEl.innerHTML = (typeof marked !== 'undefined' && marked.parse) ? marked.parse(task.brief) : task.brief.replace(/</g, '&lt;').replace(/\n/g, '<br>');
-        } catch(e) {
-          briefEl.innerHTML = task.brief.replace(/</g, '&lt;').replace(/\n/g, '<br>');
-        }
-      } else {
-        briefPanel.style.display = 'none';
-      }
-
-      // Task type badge
       var typeEl = document.getElementById('task-detail-type');
       if (task.type && task.type !== 'general') {
         typeEl.textContent = task.type;
@@ -581,9 +598,6 @@
       } else {
         typeEl.style.display = 'none';
       }
-
-      // Progress log
-      await renderProgressLog(id, task);
 
       // Promote to Knowledge bar
       var promoteBar = document.getElementById('task-promote-bar');
@@ -600,23 +614,7 @@
         knowledgeLink.classList.add('hidden');
       }
 
-      // Show/hide bars based on status
-      var reviewBar = document.getElementById('task-review-bar');
-      var doneBar = document.getElementById('task-done-bar');
-      var holdBar = document.getElementById('task-hold-bar');
-      var cancelledBar = document.getElementById('task-cancelled-bar');
-      var actionFeedback = document.getElementById('task-action-feedback');
-      actionFeedback.classList.add('hidden');
-      // Always show review bar so owner can change their mind
-      reviewBar.classList.remove('hidden');
-      doneBar.classList.toggle('hidden', task.status !== 'approved' && task.status !== 'done');
-      holdBar.classList.toggle('hidden', task.status !== 'hold');
-      cancelledBar.classList.toggle('hidden', task.status !== 'cancelled');
-      document.getElementById('task-review-comments').value = '';
-
-      // Render version timeline
-      await renderVersionTimeline(id);
-
+      await renderTaskSession(id, task, agentName);
       navigate('task-detail');
     } catch(e) {
       console.error('Failed to load task:', e);
@@ -624,126 +622,199 @@
     }
   }
 
-  async function renderVersionTimeline(taskId) {
-    var container = document.getElementById('task-version-timeline');
+  function renderMarkdown(text) {
     try {
-      var versions = await api.get('/api/tasks/' + taskId + '/versions');
-      if (!versions || versions.length === 0) {
-        container.innerHTML = '<div class="empty-state">No versions yet</div>';
-        return;
-      }
-      var html = '';
+      return (typeof marked !== 'undefined' && marked.parse) ? marked.parse(text) : escHtml(text).replace(/\n/g, '<br>');
+    } catch(e) {
+      return escHtml(text).replace(/\n/g, '<br>');
+    }
+  }
+
+  async function renderTaskSession(taskId, task, agentName) {
+    var container = document.getElementById('task-session');
+    var html = '';
+
+    // ── Brief ──
+    html += '<div class="session-brief">';
+    html += '<div class="session-section-label">Brief</div>';
+    if (task.description) {
+      html += '<div class="session-brief-content">' + renderMarkdown(task.description) + '</div>';
+    }
+    if (task.brief) {
+      html += '<div class="session-brief-content">' + renderMarkdown(task.brief) + '</div>';
+    }
+    html += '</div>';
+
+    // ── Versions ──
+    var versions = [];
+    try {
+      versions = await api.get('/api/tasks/' + taskId + '/versions');
+      if (!versions) versions = [];
+    } catch(e) { versions = []; }
+
+    if (versions.length === 0 && task.status === 'draft') {
+      html += '<div class="session-awaiting">Awaiting agent submission...</div>';
+    }
+
+    if (versions.length > 0) {
       versions.forEach(function(v, idx) {
         var isLatest = idx === versions.length - 1;
-        var decisionBadge = '';
-        if (v.decision) {
-          decisionBadge = '<span class="badge badge-' + v.decision + '">' + v.decision + '</span>';
-        } else if (v.status) {
-          decisionBadge = '<span class="badge badge-' + v.status + '">' + v.status + '</span>';
-        }
+        var isApproved = v.decision === 'approve' || v.decision === 'approved';
+        var isImproved = v.decision === 'improve';
 
-        var contentHtml = '';
+        // Version header
+        html += '<div class="session-version' + (isLatest ? ' latest' : '') + '">';
+        html += '<div class="session-version-header">';
+        html += '<div class="session-version-id">';
+        html += '<span class="session-dot' + (isApproved ? ' dot-approved' : isImproved ? ' dot-improved' : '') + '"></span>';
+        html += 'v' + v.number;
+        if (v.submittedAt) html += ' &mdash; ' + new Date(v.submittedAt).toLocaleDateString();
+        else if (v.decidedAt) html += ' &mdash; ' + new Date(v.decidedAt).toLocaleDateString();
+        html += '</div>';
+        html += '<span class="session-agent-name">Agent: ' + escHtml(agentName) + '</span>';
+        html += '</div>';
+
+        // Version content
         if (v.content) {
-          try {
-            contentHtml = '<div class="version-content">' + (typeof marked !== 'undefined' && marked.parse ? marked.parse(v.content) : v.content.replace(/</g, '&lt;').replace(/\n/g, '<br>')) + '</div>';
-          } catch(e) {
-            contentHtml = '<div class="version-content">' + v.content.replace(/</g, '&lt;').replace(/\n/g, '<br>') + '</div>';
-          }
+          html += '<div class="session-content">' + renderMarkdown(v.content) + '</div>';
         } else {
-          contentHtml = '<div class="version-content"><span class="empty-state" style="padding:8px">Awaiting submission...</span></div>';
+          html += '<div class="session-content"><span class="empty-state" style="padding:8px">Awaiting submission...</span></div>';
         }
 
-        var feedbackHtml = '';
-        if (v.comments) {
-          feedbackHtml = '<div class="version-feedback"><div class="version-feedback-label">Owner Feedback</div>' + v.comments.replace(/</g, '&lt;').replace(/\n/g, '<br>') + '</div>';
-        }
-
-        var timestamps = '';
-        var ts = [];
-        if (v.submittedAt) ts.push('Submitted: ' + new Date(v.submittedAt).toLocaleString());
-        if (v.decidedAt) ts.push('Decided: ' + new Date(v.decidedAt).toLocaleString());
-        if (ts.length > 0) timestamps = '<div class="version-timestamps">' + ts.map(function(t) { return '<span>' + t + '</span>'; }).join('') + '</div>';
-
-        var deliverableHtml = '';
+        // Deliverable
         if (v.deliverable) {
-          deliverableHtml = '<div class="version-deliverable"><div class="version-deliverable-label">Deliverable</div>' + linkifyText(escHtml(v.deliverable)).replace(/\n/g, '<br>') + '</div>';
+          html += '<div class="version-deliverable"><div class="version-deliverable-label">Deliverable</div>' + linkifyText(escHtml(v.deliverable)).replace(/\n/g, '<br>') + '</div>';
         }
-
-        var resultHtml = '';
+        // Result
         if (v.result) {
-          resultHtml = '<div class="version-result"><div class="version-result-label">Result</div>' + linkifyText(escHtml(v.result)).replace(/\n/g, '<br>') + '</div>';
+          html += '<div class="version-result"><div class="version-result-label">Result</div>' + linkifyText(escHtml(v.result)).replace(/\n/g, '<br>') + '</div>';
+        }
+        // Files
+        if (v.files && v.files.length > 0) {
+          html += '<div class="version-files"><div class="version-files-label">Attachments</div>' +
+            v.files.map(function(f) {
+              return '<a href="#" class="version-file-link" data-task="' + taskId + '" data-version="' + v.number + '" data-file="' + escHtml(f) + '" onclick="App.viewVersionFile(this);return false;">' + escHtml(f) + '</a>';
+            }).join('') + '</div>';
         }
 
-        html += '<div class="version-card' + (isLatest ? ' latest' : '') + '">' +
-          '<div class="version-card-header"><span class="version-number">Version ' + v.number + '</span>' + decisionBadge + '</div>' +
-          contentHtml + deliverableHtml + resultHtml + feedbackHtml + timestamps + '</div>';
+        // Owner feedback (shown after version if improve/comments were given)
+        if (v.comments) {
+          html += '<div class="session-feedback">';
+          html += '<div class="session-feedback-label">Owner Feedback</div>';
+          html += '<div class="session-feedback-text">' + escHtml(v.comments).replace(/\n/g, '<br>') + '</div>';
+          html += '</div>';
+        }
+
+        html += '</div>'; // close session-version
       });
-      container.innerHTML = html;
-    } catch(e) {
-      container.innerHTML = '<div class="empty-state">Failed to load versions</div>';
     }
+
+    // ── Bottom section: review actions, outcome, or status bar ──
+    var isDone = task.status === 'done' || task.status === 'approved';
+    var isHold = task.status === 'hold';
+    var isCancelled = task.status === 'cancelled';
+
+    if (isDone) {
+      // Outcome
+      html += '<div class="session-outcome">';
+      html += '<span class="session-outcome-icon">&#10003;</span>';
+      html += '<span>Task completed and approved.</span>';
+      if (task.result) {
+        html += '<div class="session-outcome-result">' + linkifyText(escHtml(task.result)).replace(/\n/g, '<br>') + '</div>';
+      }
+      html += '</div>';
+      // Revision toggle
+      html += '<div class="session-revision-toggle">';
+      html += '<button class="btn btn-secondary btn-sm" onclick="App.toggleRevisionMode()">Request Revision</button>';
+      html += '</div>';
+      html += '<div id="session-review-inline" class="session-review hidden">';
+      html += '<textarea id="task-review-comments" placeholder="What needs to be changed?"></textarea>';
+      html += '<div class="review-actions">';
+      html += '<button class="btn btn-primary" onclick="App.reviewTask(\'improve\')">Send for Revision</button>';
+      html += '<button class="btn btn-secondary" onclick="App.toggleRevisionMode()">Cancel</button>';
+      html += '</div></div>';
+    } else if (isHold) {
+      html += '<div class="session-outcome session-outcome-hold">';
+      html += '<span class="session-outcome-icon">&#9208;</span>';
+      html += '<span>Task is on hold.</span>';
+      html += '</div>';
+      html += buildReviewBar();
+    } else if (isCancelled) {
+      html += '<div class="session-outcome session-outcome-cancelled">';
+      html += '<span class="session-outcome-icon">&#10007;</span>';
+      html += '<span>Task has been cancelled.</span>';
+      html += '</div>';
+    } else {
+      // Active — show inline review bar
+      html += buildReviewBar();
+    }
+
+    container.innerHTML = html;
+  }
+
+  function buildReviewBar() {
+    return '<div class="session-review">' +
+      '<textarea id="task-review-comments" placeholder="Add feedback or comments for the agent..."></textarea>' +
+      '<div class="review-actions">' +
+      '<button class="btn btn-run-now" onclick="App.runTaskNow()">&#9654; Run Now</button>' +
+      '<button class="btn btn-approve" onclick="App.reviewTask(\'approve\')">Approve</button>' +
+      '<button class="btn btn-primary" onclick="App.reviewTask(\'improve\')">Improve</button>' +
+      '<button class="btn btn-hold" onclick="App.reviewTask(\'hold\')">Hold</button>' +
+      '<button class="btn btn-cancel" onclick="App.reviewTask(\'cancel\')">Cancel</button>' +
+      '</div></div>';
+  }
+
+  function toggleRevisionMode() {
+    var bar = document.getElementById('session-review-inline');
+    if (bar) bar.classList.toggle('hidden');
   }
 
   async function reviewTask(action) {
     var id = state.currentTaskId;
     if (!id) return;
-    var comments = document.getElementById('task-review-comments').value.trim();
+    var commentsEl = document.getElementById('task-review-comments');
+    var comments = commentsEl ? commentsEl.value.trim() : '';
     try {
-      // Show action feedback bar
-      var feedbackEl = document.getElementById('task-action-feedback');
-      var feedbackMsgs = {
-        approve: '&#10003; Approved',
-        improve: '&#9998; Revision requested',
-        hold: '&#9208; Put on hold',
-        cancel: '&#10007; Cancelled'
-      };
-      feedbackEl.className = 'action-feedback feedback-' + action;
-      feedbackEl.innerHTML = feedbackMsgs[action] || 'Done';
-      feedbackEl.classList.remove('hidden');
-
-      // Update status badge immediately
-      var statusEl = document.getElementById('task-detail-status');
-      var statusMap = { approve: 'approved', improve: 'revision_needed', hold: 'hold', cancel: 'cancelled' };
-      var newStatus = statusMap[action] || action;
-      statusEl.textContent = newStatus.replace(/_/g, ' ');
-      statusEl.className = 'badge badge-' + newStatus;
-
-      // Show/hide status bars immediately
-      document.getElementById('task-done-bar').classList.toggle('hidden', newStatus !== 'approved' && newStatus !== 'done');
-      document.getElementById('task-hold-bar').classList.toggle('hidden', newStatus !== 'hold');
-      document.getElementById('task-cancelled-bar').classList.toggle('hidden', newStatus !== 'cancelled');
-
       await api.put('/api/tasks/' + id, { action: action, comments: comments });
       var msgs = { approve: 'Task approved', improve: 'Revision requested', hold: 'Task on hold', cancel: 'Task cancelled' };
       toast(msgs[action] || 'Done');
-
-      // Re-render timeline to show updated decision
-      await renderVersionTimeline(id);
+      // Re-render entire task
+      await openTask(id);
     } catch(e) {
       toast('Failed: ' + e.message, 'error');
-      await openTask(id);
     }
   }
 
-  async function renderProgressLog(taskId, task) {
-    var container = document.getElementById('task-progress-log');
-    var log = task.progressLog || [];
-    if (log.length === 0) {
-      container.innerHTML = '<div class="empty-state">No progress updates yet</div>';
-      return;
-    }
-    container.innerHTML = log.map(function(entry) {
-      var agentName = entry.agentId || '';
-      if (entry.agentId && state.agents.length > 0) {
-        var found = state.agents.find(function(a) { return a.id === entry.agentId; });
-        if (found) agentName = found.name;
+  // Legacy — kept for compatibility but no longer rendered as separate panel
+  async function renderProgressLog(taskId, task) { }
+  async function renderVersionTimeline(taskId) { }
+
+  async function viewVersionFile(el) {
+    var taskId = el.dataset.task;
+    var version = el.dataset.version;
+    var file = el.dataset.file;
+    try {
+      var data = await api.get('/api/tasks/' + taskId + '/versions/' + version + '/files/' + encodeURIComponent(file));
+      // Show in a modal overlay
+      var overlay = document.getElementById('file-preview-overlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'file-preview-overlay';
+        overlay.className = 'file-preview-overlay';
+        overlay.innerHTML = '<div class="file-preview-modal"><div class="file-preview-header"><span class="file-preview-title"></span><button class="btn btn-secondary" onclick="document.getElementById(\'file-preview-overlay\').classList.add(\'hidden\')">Close</button></div><div class="file-preview-body"></div></div>';
+        document.body.appendChild(overlay);
       }
-      return '<div class="progress-entry">' +
-        '<span class="progress-entry-time">' + (entry.timestamp ? new Date(entry.timestamp).toLocaleString() : '') + '</span>' +
-        (agentName ? '<span class="progress-entry-agent">' + escHtml(agentName) + '</span>' : '') +
-        '<span class="progress-entry-msg">' + escHtml(entry.message) + '</span>' +
-      '</div>';
-    }).join('');
+      overlay.querySelector('.file-preview-title').textContent = file;
+      var body = overlay.querySelector('.file-preview-body');
+      if (file.endsWith('.md') && typeof marked !== 'undefined' && marked.parse) {
+        body.innerHTML = marked.parse(data.content);
+      } else {
+        body.innerHTML = '<pre>' + escHtml(data.content) + '</pre>';
+      }
+      overlay.classList.remove('hidden');
+    } catch(e) {
+      toast('Failed to load file', 'error');
+    }
   }
 
   async function promoteToKnowledge() {
@@ -1502,6 +1573,10 @@
     if (termInitialized && terminal) {
       // Already initialized, just re-fit
       if (fitAddon) setTimeout(function() { try { fitAddon.fit(); } catch(e) {} }, 50);
+      // Reconnect WS if it died while on another tab
+      if (!termWs || termWs.readyState > 1) {
+        connectTerminalWs();
+      }
       return;
     }
 
@@ -1598,6 +1673,9 @@
   }
 
   function connectTerminalWs() {
+    // Clear any pending reconnect
+    if (termWsReconnectTimer) { clearTimeout(termWsReconnectTimer); termWsReconnectTimer = null; }
+
     // Reuse session ID from sessionStorage for tab persistence
     termSessionId = sessionStorage.getItem('termSessionId') || '';
 
@@ -1609,10 +1687,16 @@
       try { termWs.close(); } catch(e) {}
     }
 
+    termSessionEnded = false;
     termWs = new WebSocket(wsUrl);
 
     termWs.onopen = function() {
       setChatStatus('connected');
+      // Send initial resize
+      if (terminal && fitAddon) {
+        try { fitAddon.fit(); } catch(e) {}
+        termWs.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+      }
     };
 
     termWs.onmessage = function(evt) {
@@ -1623,10 +1707,9 @@
         } else if (data.type === 'terminal-ready') {
           termSessionId = data.session;
           sessionStorage.setItem('termSessionId', termSessionId);
-          if (data.reattached) {
-            // Buffer already replayed by server
-          }
+          termSessionEnded = false;
         } else if (data.type === 'terminal-exit') {
+          termSessionEnded = true;
           if (terminal) {
             terminal.write('\r\n\x1b[33m[Session ended. Click Restart to start a new session.]\x1b[0m\r\n');
           }
@@ -1642,22 +1725,23 @@
 
     termWs.onclose = function() {
       setChatStatus('disconnected');
+      // Auto-reconnect after 3s unless the session intentionally ended
+      if (!termSessionEnded) {
+        termWsReconnectTimer = setTimeout(function() {
+          if (termInitialized && (!termWs || termWs.readyState > 1)) {
+            connectTerminalWs();
+          }
+        }, 3000);
+      }
     };
 
     termWs.onerror = function() {
       setChatStatus('disconnected');
     };
-
-    // Send initial resize after connection
-    termWs.addEventListener('open', function() {
-      if (terminal && fitAddon) {
-        try { fitAddon.fit(); } catch(e) {}
-        termWs.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
-      }
-    });
   }
 
   function restartTerminal() {
+    termSessionEnded = false;
     if (termWs && termWs.readyState === 1) {
       termWs.send(JSON.stringify({ type: 'restart' }));
       if (terminal) terminal.clear();
@@ -1762,6 +1846,20 @@
     }, 1000);
   }
 
+  function runTaskNow() {
+    var id = state.currentTaskId;
+    if (!id) return;
+    var titleEl = document.getElementById('task-detail-title');
+    var title = titleEl ? titleEl.textContent : 'task ' + id;
+    navigate('chat');
+    setTimeout(function() {
+      if (termWs && termWs.readyState === 1) {
+        var text = 'Execute task "' + title + '" (ID: ' + id + ') now. Read the task details, work as the assigned agent, and deliver results.\n';
+        termWs.send(JSON.stringify({ type: 'input', data: text }));
+      }
+    }, 1000);
+  }
+
   // ── Helpers ────────────────────────────────────────
   function escHtml(str) {
     if (!str) return '';
@@ -1840,12 +1938,45 @@
         '<div class="skill-card-desc">' + escHtml(s.description) + '</div>' +
         (s.missingDeps && s.missingDeps.length && !s.enabled ?
           '<div class="skill-deps-warning">Requires: ' + s.missingDeps.join(', ') + ' (will auto-install)</div>' : '') +
+        (s.settings && s.settings.length && s.enabled ? renderSkillSettings(s) : '') +
         '<div class="skill-card-footer">' +
           '<span class="skill-type-badge skill-type-' + s.type + '">' + s.type + '</span>' +
           '<span class="skill-status ' + statusClass + '">' + statusText + '</span>' +
         '</div>' +
       '</div>';
     }).join('');
+  }
+
+  function renderSkillSettings(skill) {
+    var html = '<div class="skill-settings" data-skill="' + skill.id + '">';
+    html += '<div class="skill-settings-title">Settings</div>';
+    skill.settings.forEach(function(setting) {
+      var val = skill.settingValues && skill.settingValues[setting.key] ? skill.settingValues[setting.key] : '';
+      var inputType = setting.type === 'secret' ? 'password' : 'text';
+      html += '<div class="skill-setting-row">';
+      html += '<label>' + escHtml(setting.label) + (setting.required ? ' *' : '') + '</label>';
+      html += '<input type="' + inputType + '" data-key="' + setting.key + '" value="' + escHtml(val) + '" placeholder="' + escHtml(setting.help || '') + '">';
+      html += '</div>';
+    });
+    html += '<button class="btn btn-primary btn-sm" onclick="App.saveSkillSettings(' + q + skill.id + q + ')">Save Settings</button>';
+    html += '</div>';
+    return html;
+  }
+
+  async function saveSkillSettings(skillId) {
+    var container = document.querySelector('.skill-settings[data-skill="' + skillId + '"]');
+    if (!container) return;
+    var inputs = container.querySelectorAll('input[data-key]');
+    var settings = {};
+    inputs.forEach(function(input) {
+      if (input.value.trim()) settings[input.dataset.key] = input.value.trim();
+    });
+    try {
+      await api.put('/api/skills/' + skillId + '/settings', settings);
+      toast('Settings saved');
+    } catch(e) {
+      toast('Failed to save settings: ' + e.message, 'error');
+    }
   }
 
   async function toggleSkill(skillId, enable) {
@@ -1904,6 +2035,7 @@
     resetSystem: resetSystem,
     resetAgents: resetAgents,
     runRoundTable: runRoundTable,
+    runTaskNow: runTaskNow,
     restartTerminal: restartTerminal,
     savePermissionMode: savePermissionMode,
     unlockSecrets: unlockSecrets,
@@ -1919,6 +2051,9 @@
     performUpgrade: performUpgrade,
     checkClaudeStatus: checkClaudeStatus,
     toggleSkill: toggleSkill,
+    saveSkillSettings: saveSkillSettings,
+    viewVersionFile: viewVersionFile,
+    toggleRevisionMode: toggleRevisionMode,
     promoteToKnowledge: promoteToKnowledge,
     filterKnowledge: filterKnowledge,
     openKnowledgeDoc: openKnowledgeDoc,

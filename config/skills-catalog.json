@@ -24,5 +24,29 @@
       "stop": "node data/skills/screen-recorder/record.js stop",
       "status": "node data/skills/screen-recorder/record.js status"
     }
+  },
+  {
+    "id": "trello",
+    "name": "Trello",
+    "description": "Manage Trello boards, lists, and cards. Read, create, update, and move cards. Includes intelligent task analysis with complexity scoring and status-to-list mapping.",
+    "icon": "\ud83d\udccb",
+    "type": "mcp",
+    "packages": [],
+    "gitRepo": "https://github.com/MagnusNilsson/trello-mcp-server.git",
+    "buildCmd": "npm install && npm run build",
+    "mcpConfig": {
+      "command": "node",
+      "args": ["data/skills/trello/build/index.js"],
+      "env": {
+        "TRELLO_API_KEY": "${TRELLO_API_KEY}",
+        "TRELLO_API_TOKEN": "${TRELLO_API_TOKEN}",
+        "DEFAULT_TRELLO_BOARD_ID": "${TRELLO_BOARD_ID}"
+      }
+    },
+    "settings": [
+      { "key": "TRELLO_API_KEY", "label": "Trello API Key", "type": "secret", "required": true, "help": "Get your API key from https://trello.com/power-ups/admin" },
+      { "key": "TRELLO_API_TOKEN", "label": "Trello API Token", "type": "secret", "required": true, "help": "Generate a token at https://trello.com/1/authorize?expiration=never&scope=read,write&response_type=token&key=YOUR_API_KEY" },
+      { "key": "TRELLO_BOARD_ID", "label": "Default Board ID", "type": "text", "required": false, "help": "Optional. The default Trello board ID to operate on." }
+    ]
   }
 ]

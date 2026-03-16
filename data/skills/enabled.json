@@ -1,4 +1,5 @@
 {
   "screen-recorder": true,
-  "playwright": true
+  "playwright": true,
+  "trello": false
 }

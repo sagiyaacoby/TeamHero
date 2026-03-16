@@ -329,7 +329,9 @@ function rebuildClaudeMd() {
     '- **Update profile:** `PUT /api/profile` with owner JSON\n' +
     '- **Update rules:** `PUT /api/rules/team` or `/security` with `{"content":"..."}`\n' +
     '- **Rebuild CLAUDE.md:** `POST /api/rebuild-context`\n' +
-    '- **Write file:** `POST /api/write-file` with `{"path":"...","content":"..."}`\n\n' +
+    '- **Write file:** `POST /api/write-file` with `{"path":"...","content":"..."}`\n' +
+    '- **Temp status:** `GET /api/temp/status` \u2014 returns `{ fileCount, totalSizeMB }`\n' +
+    '- **Clean temp:** `POST /api/temp/cleanup` \u2014 deletes all contents of `temp/`\n\n' +
     'Use `curl` to call these endpoints. Example:\n' +
     '```bash\n' +
     'curl -X POST http://localhost:' + port + '/api/agents -H "Content-Type: application/json" -d \'{"name":"Writer","role":"Content Writer","mission":"Create engaging content"}\'\n' +
@@ -384,7 +386,16 @@ function rebuildClaudeMd() {
     '- `data/tasks/` \u2014 All tasks\n' +
     '- `data/knowledge/` \u2014 Knowledge base documents\n' +
     '- `data/round-tables/` \u2014 Round table summaries\n' +
-    '- `data/media/` \u2014 Shared media library\n\n' +
+    '- `data/media/` \u2014 Shared media library\n' +
+    '- `temp/` \u2014 Temporary workspace for agent artifacts (auto-cleaned)\n\n' +
+    '## Temp Workspace\n\n' +
+    'The `temp/` folder is a shared scratch space for agent work products (screenshots, downloads, generated files, Playwright artifacts).\n\n' +
+    '**Rules:**\n' +
+    '- Save all temporary/intermediate files to `temp/` \u2014 never to the project root\n' +
+    '- Playwright artifacts go to `temp/playwright/`\n' +
+    '- Organize by purpose: `temp/screenshots/`, `temp/downloads/`, etc.\n' +
+    '- Files in `temp/` are disposable \u2014 they may be cleaned at any time\n' +
+    '- Never store deliverables in `temp/` \u2014 use `data/tasks/{id}/v{n}/` instead\n\n' +
     '## Available Secrets\n\n' +
     'These environment variables are injected into your session when secrets are unlocked:\n\n' +
     (function() {
@@ -1238,6 +1249,40 @@ async function handle(pn, m, req, res) {
     } catch(e) { return J(res, []); }
   }
 
+  // TEMP WORKSPACE
+  if (pn === '/api/temp/status' && m === 'GET') {
+    var tempDir = path.join(ROOT, 'temp');
+    var fileCount = 0, totalSize = 0;
+    function countDir(dir) {
+      try {
+        var entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (var i = 0; i < entries.length; i++) {
+          var fp = path.join(dir, entries[i].name);
+          if (entries[i].isDirectory()) { countDir(fp); }
+          else { fileCount++; try { totalSize += fs.statSync(fp).size; } catch(e) {} }
+        }
+      } catch(e) {}
+    }
+    countDir(tempDir);
+    return J(res, { fileCount: fileCount, totalSizeMB: Math.round(totalSize / 1048576 * 100) / 100 });
+  }
+  if (pn === '/api/temp/cleanup' && m === 'POST') {
+    var tempDir = path.join(ROOT, 'temp');
+    function rmDir(dir) {
+      try {
+        var entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (var i = 0; i < entries.length; i++) {
+          var fp = path.join(dir, entries[i].name);
+          if (entries[i].isDirectory()) { rmDir(fp); try { fs.rmdirSync(fp); } catch(e) {} }
+          else { try { fs.unlinkSync(fp); } catch(e) {} }
+        }
+      } catch(e) {}
+    }
+    rmDir(tempDir);
+    fs.mkdirSync(tempDir, { recursive: true });
+    return J(res, { ok: true, message: 'Temp folder cleaned' });
+  }
+
   // GENERIC FILE WRITE
   if (pn === '/api/write-file' && m === 'POST') {
     const b = await parseBody(req);
@@ -1820,6 +1865,36 @@ server.on('upgrade', function(req, socket, head) {
 
 // ── Startup ──────────────────────────────────────────────
 fs.mkdirSync(path.join(ROOT, 'data/knowledge'), { recursive: true });
+fs.mkdirSync(path.join(ROOT, 'temp'), { recursive: true });
+
+// Auto-cleanup stale temp files if configured
+(function() {
+  var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
+  var days = sys.tempAutoCleanupDays;
+  if (days && typeof days === 'number' && days > 0) {
+    var tempDir = path.join(ROOT, 'temp');
+    try {
+      var cutoff = Date.now() - days * 86400000;
+      function cleanDir(dir) {
+        var entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (var i = 0; i < entries.length; i++) {
+          var fp = path.join(dir, entries[i].name);
+          if (entries[i].isDirectory()) {
+            cleanDir(fp);
+            try { fs.rmdirSync(fp); } catch(e) {}
+          } else {
+            try {
+              var st = fs.statSync(fp);
+              if (st.mtimeMs < cutoff) fs.unlinkSync(fp);
+            } catch(e) {}
+          }
+        }
+      }
+      cleanDir(tempDir);
+    } catch(e) { console.log('  Temp auto-cleanup skipped:', e.message); }
+  }
+})();
+
 ensureOrchestrator();
 
 (async function() {

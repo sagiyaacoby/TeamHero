@@ -1185,6 +1185,27 @@
     loadPermissionMode();
     checkForUpdates();
     loadSecretsStatus();
+    loadTempStatus();
+  }
+
+  async function loadTempStatus() {
+    try {
+      var result = await api.get('/api/temp/status');
+      var el = document.getElementById('temp-status');
+      if (el) el.textContent = result.fileCount + ' files, ' + result.totalSizeMB + ' MB';
+    } catch(e) {
+      var el = document.getElementById('temp-status');
+      if (el) el.textContent = '-';
+    }
+  }
+
+  async function cleanupTemp() {
+    if (!confirm('Delete all files in the temp workspace?')) return;
+    try {
+      await api.post('/api/temp/cleanup', {});
+      toast('Temp folder cleaned');
+      loadTempStatus();
+    } catch(e) { toast('Failed to clean temp', 'error'); }
   }
 
   async function rebuildContext() {
@@ -2058,6 +2079,8 @@
     filterKnowledge: filterKnowledge,
     openKnowledgeDoc: openKnowledgeDoc,
     deleteKnowledgeDoc: deleteKnowledgeDoc,
+    cleanupTemp: cleanupTemp,
+    loadTempStatus: loadTempStatus,
   };
 
   init();

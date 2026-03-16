@@ -89,6 +89,11 @@ TeamHero/
 │       ├── enabled.json         # Which skills are turned on
 │       └── {skill-id}/          # Skill-specific files
 │
+├── temp/                        # Temporary workspace (auto-created, disposable)
+│   ├── playwright/              # Playwright MCP artifacts
+│   ├── screenshots/             # Agent screenshots
+│   └── downloads/               # Agent downloads
+│
 ├── server.js                    # API server (DO NOT MODIFY)
 ├── portal/                      # Dashboard UI (DO NOT MODIFY)
 ├── launch.bat / launch.sh       # Launchers (DO NOT MODIFY)
@@ -544,7 +549,52 @@ curl -X PUT http://localhost:3782/api/tasks/{id} \
 
 ---
 
-## 13. Safety Boundaries
+## 13. Temp Workspace
+
+The `temp/` folder is a shared scratch space for all agents. It is auto-created at server startup and can be cleaned via the API or dashboard.
+
+### Structure
+
+```
+temp/
+├── playwright/     # Playwright MCP artifacts (screenshots, traces, videos)
+├── screenshots/    # Agent-captured screenshots
+├── downloads/      # Downloaded files
+└── ...             # Any other temporary agent work products
+```
+
+### Rules
+
+1. **All temporary files go here.** Never save screenshots, downloads, or intermediate files to the project root.
+2. **Playwright artifacts** are automatically directed to `temp/playwright/` via `.mcp.json`.
+3. **Organize by purpose.** Use subdirectories like `temp/screenshots/`, `temp/downloads/`.
+4. **Files are disposable.** The temp folder may be cleaned at any time — by the owner, auto-cleanup, or API call.
+5. **Never store deliverables here.** Task outputs belong in `data/tasks/{id}/v{n}/`.
+
+### API
+
+```bash
+# Check temp folder status
+curl -s http://localhost:3782/api/temp/status
+# Returns: { "fileCount": 12, "totalSizeMB": 45.3 }
+
+# Clean temp folder (deletes all contents)
+curl -X POST http://localhost:3782/api/temp/cleanup
+```
+
+### Auto-Cleanup
+
+Set `tempAutoCleanupDays` in `config/system.json` to automatically delete files older than N days on server startup:
+
+```json
+{
+  "tempAutoCleanupDays": 7
+}
+```
+
+---
+
+## 14. Safety Boundaries
 
 These are non-negotiable:
 
@@ -556,7 +606,7 @@ These are non-negotiable:
 
 ---
 
-## 14. Quick Reference
+## 15. Quick Reference
 
 ### API Base URL
 ```

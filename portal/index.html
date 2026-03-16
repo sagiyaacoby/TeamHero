@@ -515,6 +515,10 @@
         <h3>Actions</h3>
         <div class="settings-group">
           <div class="setting-item">
+            <span class="setting-label">Temp workspace: <span id="temp-status">-</span></span>
+            <button class="btn btn-secondary" onclick="App.cleanupTemp()">Clean Temp</button>
+          </div>
+          <div class="setting-item">
             <span class="setting-label">Rebuild CLAUDE.md context file</span>
             <button class="btn btn-secondary" onclick="App.rebuildContext()">Rebuild</button>
           </div>

@@ -3,7 +3,9 @@
     "playwright": {
       "command": "npx",
       "args": [
-        "@playwright/mcp"
+        "@playwright/mcp",
+        "--output-dir",
+        "temp/playwright"
       ]
     }
   }

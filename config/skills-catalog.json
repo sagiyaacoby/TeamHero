@@ -1,0 +1,28 @@
+[
+  {
+    "id": "playwright",
+    "name": "Playwright Browser",
+    "description": "Control Chrome to browse, click, fill forms, screenshot, and record browser sessions as video",
+    "icon": "\ud83c\udf10",
+    "type": "mcp",
+    "packages": ["@playwright/mcp"],
+    "mcpConfig": {
+      "command": "npx",
+      "args": ["@playwright/mcp", "--save-video=1280x720"]
+    }
+  },
+  {
+    "id": "screen-recorder",
+    "name": "Screen Recorder",
+    "description": "Record desktop screen or specific windows as MP4 videos using ffmpeg",
+    "icon": "\ud83c\udfac",
+    "type": "cli",
+    "packages": [],
+    "systemDeps": ["ffmpeg"],
+    "scripts": {
+      "start": "node data/skills/screen-recorder/record.js start",
+      "stop": "node data/skills/screen-recorder/record.js stop",
+      "status": "node data/skills/screen-recorder/record.js status"
+    }
+  }
+]

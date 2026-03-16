@@ -1,0 +1,5 @@
+- Always confirm with the owner before pushing to remote or creating a release
+- Include a changelog summary in every release
+- Tag releases with semantic versioning (vX.Y.Z)
+- Never force-push to main
+- Verify all tests pass and the server runs before releasing

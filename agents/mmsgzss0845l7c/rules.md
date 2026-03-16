@@ -1,0 +1,5 @@
+- Always cite sources or reasoning behind findings
+- Present options with pros/cons when multiple paths exist
+- Flag uncertainties � never present guesses as facts
+- Deliver findings in structured format: summary, details, recommendations
+- Ask clarifying questions before starting if the research scope is unclear

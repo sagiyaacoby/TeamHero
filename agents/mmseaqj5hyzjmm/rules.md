@@ -1,0 +1,6 @@
+- Always read existing code before modifying it
+- Keep changes minimal and focused � no over-engineering
+- Test changes before marking tasks done
+- Follow existing code patterns and conventions in the project
+- Document non-obvious decisions in code comments
+- Never modify system files without explicit approval

@@ -166,7 +166,16 @@
         <div class="stat-card"><div class="stat-value" id="stat-active-tasks">0</div><div class="stat-label">Active Tasks</div></div>
         <div class="stat-card"><div class="stat-value" id="stat-done">0</div><div class="stat-label">Done</div></div>
       </div>
-      <div class="panel"><h3>All Tasks</h3><div id="dashboard-tasks" class="task-list"><div class="empty-state">No tasks yet</div></div></div>
+      <div class="panel"><h3>All Tasks</h3>
+        <div class="task-filter-bar" id="dashboard-task-filters">
+          <button class="filter-btn active" data-filter="pending_approval" onclick="App.filterTasks('pending_approval','dashboard')">Pending</button>
+          <button class="filter-btn" data-filter="approved" onclick="App.filterTasks('approved','dashboard')">Approved</button>
+          <button class="filter-btn" data-filter="in_progress" onclick="App.filterTasks('in_progress','dashboard')">In Progress</button>
+          <button class="filter-btn" data-filter="done" onclick="App.filterTasks('done','dashboard')">Done</button>
+          <button class="filter-btn" data-filter="all" onclick="App.filterTasks('all','dashboard')">All</button>
+        </div>
+        <div id="dashboard-tasks" class="task-list"><div class="empty-state">No tasks yet</div></div>
+      </div>
       <div class="panel"><h3>Last Round Table</h3><div id="last-round-table" class="round-table-summary"><div class="empty-state">No round tables yet</div></div></div>
     </section>
 
@@ -202,6 +211,13 @@
       </div>
       <div id="agent-tab-tasks" class="agent-tab active">
         <div class="agent-tasks-summary" id="agent-tasks-summary"></div>
+        <div class="task-filter-bar" id="agent-task-filters">
+          <button class="filter-btn active" data-filter="pending_approval" onclick="App.filterTasks('pending_approval','agent')">Pending</button>
+          <button class="filter-btn" data-filter="approved" onclick="App.filterTasks('approved','agent')">Approved</button>
+          <button class="filter-btn" data-filter="in_progress" onclick="App.filterTasks('in_progress','agent')">In Progress</button>
+          <button class="filter-btn" data-filter="done" onclick="App.filterTasks('done','agent')">Done</button>
+          <button class="filter-btn" data-filter="all" onclick="App.filterTasks('all','agent')">All</button>
+        </div>
         <div id="agent-tasks-list" class="task-list"></div>
       </div>
       <div id="agent-tab-profile" class="agent-tab">
@@ -256,10 +272,15 @@
         <span class="badge" id="task-detail-priority">Priority</span>
         <span id="task-detail-agent"></span>
         <span id="task-detail-date"></span>
+        <span id="task-detail-tags"></span>
       </div>
       <div class="panel">
         <h3>Description</h3>
         <p id="task-detail-desc" class="content-text"></p>
+      </div>
+      <div class="panel" id="task-brief-panel" style="display:none">
+        <h3>Brief</h3>
+        <div id="task-detail-brief" class="content-text"></div>
       </div>
       <div class="panel">
         <h3>Version Timeline</h3>

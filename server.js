@@ -876,13 +876,16 @@ async function handle(pn, m, req, res) {
       assignedTo: b.assignedTo || null, status: b.status || 'draft',
       priority: b.priority || 'medium',
       channel: b.channel || '', version: 1,
+      tags: Array.isArray(b.tags) ? b.tags : [],
+      brief: b.brief || '',
       createdAt: now, updatedAt: now
     };
     writeJSON(path.join(dir, 'task.json'), t);
     // Write initial v1/version.json
     writeJSON(path.join(dir, 'v1/version.json'), {
       number: 1, content: b.content || '', status: 'submitted',
-      decision: null, comments: '', submittedAt: now, decidedAt: null
+      decision: null, comments: '', submittedAt: now, decidedAt: null,
+      deliverable: b.deliverable || '', result: b.result || ''
     });
     const ip = path.join(ROOT, 'data/tasks/_index.json');
     const ix = readJSON(ip) || { tasks: [] };

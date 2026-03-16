@@ -14,6 +14,10 @@
     previousAgentId: null,
     currentTaskId: null,
     mediaFilter: 'all',
+    dashboardTaskFilter: 'pending_approval',
+    agentTaskFilter: 'pending_approval',
+    cachedDashboardTasks: [],
+    cachedAgentTasks: [],
   };
 
   var PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
@@ -264,16 +268,8 @@
         return (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || '');
       });
 
-      var dashEl = document.getElementById('dashboard-tasks');
-      if (fullTasks.length === 0) {
-        dashEl.innerHTML = '<div class="empty-state">No tasks yet</div>';
-      } else {
-        dashEl.innerHTML = fullTasks.map(function(t) {
-          var statusClass = 'badge-' + (t.status || 'draft');
-          var priorityClass = 'badge-' + (t.priority || 'medium');
-          return '<div class="task-item" onclick="App.openTask(' + q + t.id + q + ')"><span class="task-title">' + escHtml(t.title) + '</span><span class="task-meta"><span class="badge ' + priorityClass + '">' + escHtml(t.priority || 'medium') + '</span><span class="badge ' + statusClass + '">' + escHtml(t.status || 'draft') + '</span>' + (t.assignedTo ? '<span>' + escHtml(t.assignedTo) + '</span>' : '') + '</span></div>';
-        }).join('');
-      }
+      state.cachedDashboardTasks = fullTasks;
+      renderFilteredTasks('dashboard');
 
       loadRoundTable();
     } catch(e) { console.error('Dashboard load error:', e); }
@@ -331,7 +327,7 @@
       // Fetch tasks assigned to this agent
       try {
         var tasksData = await api.get('/api/tasks');
-        var agentTasks = (tasksData.tasks || []).filter(function(t) { return t.assignedTo === agent.name; });
+        var agentTasks = (tasksData.tasks || []).filter(function(t) { return t.assignedTo === id; });
         var fullAgentTasks = await Promise.all(agentTasks.map(function(t) {
           return api.get('/api/tasks/' + t.id).catch(function() { return Object.assign({ priority: 'medium' }, t); });
         }));
@@ -349,21 +345,51 @@
   // ── Agent Tasks ───────────────────────────────
   function renderAgentTasks(tasks) {
     var summaryEl = document.getElementById('agent-tasks-summary');
-    var listEl = document.getElementById('agent-tasks-list');
-    if (!summaryEl || !listEl) return;
+    if (!summaryEl) return;
 
-    var pending = 0, active = 0, done = 0;
+    var pending = 0, approved = 0, active = 0, done = 0;
     tasks.forEach(function(t) {
       if (t.status === 'pending_approval') pending++;
-      else if (t.status === 'in_progress' || t.status === 'draft') active++;
+      else if (t.status === 'approved') approved++;
+      else if (t.status === 'in_progress' || t.status === 'draft' || t.status === 'revision_needed') active++;
       else if (t.status === 'done') done++;
     });
     summaryEl.innerHTML = '<span class="badge badge-pending_approval">' + pending + ' Pending</span> ' +
-      '<span class="badge badge-in_progress">' + active + ' Active</span> ' +
+      '<span class="badge badge-approved">' + approved + ' Approved</span> ' +
+      '<span class="badge badge-in_progress">' + active + ' In Progress</span> ' +
       '<span class="badge badge-done">' + done + ' Done</span>';
 
-    var statusOrder = { pending_approval: 0, in_progress: 1, draft: 2, revision_needed: 3, approved: 4, done: 5 };
-    tasks.sort(function(a, b) {
+    state.cachedAgentTasks = tasks;
+    renderFilteredTasks('agent');
+  }
+
+  function renderFilteredTasks(context) {
+    var filter = context === 'dashboard' ? state.dashboardTaskFilter : state.agentTaskFilter;
+    var tasks = context === 'dashboard' ? state.cachedDashboardTasks : state.cachedAgentTasks;
+    var listEl = document.getElementById(context === 'dashboard' ? 'dashboard-tasks' : 'agent-tasks-list');
+    var filterBar = document.getElementById(context === 'dashboard' ? 'dashboard-task-filters' : 'agent-task-filters');
+    if (!listEl) return;
+
+    // Update active filter button
+    if (filterBar) {
+      filterBar.querySelectorAll('.filter-btn').forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.filter === filter);
+      });
+    }
+
+    // Filter tasks
+    var filtered;
+    if (filter === 'all') {
+      filtered = tasks.slice();
+    } else if (filter === 'in_progress') {
+      filtered = tasks.filter(function(t) { return t.status === 'in_progress' || t.status === 'draft' || t.status === 'revision_needed'; });
+    } else {
+      filtered = tasks.filter(function(t) { return t.status === filter; });
+    }
+
+    // Sort
+    var statusOrder = { pending_approval: 0, approved: 1, in_progress: 2, draft: 3, revision_needed: 4, done: 5 };
+    filtered.sort(function(a, b) {
       var sa = statusOrder[a.status] !== undefined ? statusOrder[a.status] : 9;
       var sb = statusOrder[b.status] !== undefined ? statusOrder[b.status] : 9;
       if (sa !== sb) return sa - sb;
@@ -372,21 +398,36 @@
       return pa - pb;
     });
 
-    if (tasks.length === 0) {
-      listEl.innerHTML = '<div class="empty-state">No tasks assigned</div>';
+    if (filtered.length === 0) {
+      listEl.innerHTML = '<div class="empty-state">No ' + (filter === 'all' ? '' : filter.replace(/_/g, ' ') + ' ') + 'tasks</div>';
       return;
     }
 
-    listEl.innerHTML = tasks.map(function(t) {
+    listEl.innerHTML = filtered.map(function(t) {
       var statusClass = 'badge-' + (t.status || 'draft');
       var priorityClass = 'badge-' + (t.priority || 'medium');
+      var agentName = '';
+      if (context === 'dashboard' && t.assignedTo) {
+        var found = state.agents.find(function(a) { return a.id === t.assignedTo; });
+        agentName = found ? found.name : t.assignedTo;
+      }
       return '<div class="task-item" onclick="App.openTask(' + q + t.id + q + ')">' +
         '<span class="task-title">' + escHtml(t.title) + '</span>' +
         '<span class="task-meta">' +
           '<span class="badge ' + priorityClass + '">' + escHtml(t.priority || 'medium') + '</span>' +
-          '<span class="badge ' + statusClass + '">' + escHtml(t.status || 'draft') + '</span>' +
+          '<span class="badge ' + statusClass + '">' + escHtml((t.status || 'draft').replace(/_/g, ' ')) + '</span>' +
+          (agentName ? '<span>' + escHtml(agentName) + '</span>' : '') +
         '</span></div>';
     }).join('');
+  }
+
+  function filterTasks(filter, context) {
+    if (context === 'dashboard') {
+      state.dashboardTaskFilter = filter;
+    } else {
+      state.agentTaskFilter = filter;
+    }
+    renderFilteredTasks(context);
   }
 
   function switchAgentTab(tab) {
@@ -427,6 +468,28 @@
       document.getElementById('task-detail-date').textContent = task.updatedAt ? new Date(task.updatedAt).toLocaleDateString() : '-';
 
       document.getElementById('task-detail-desc').textContent = task.description || 'No description.';
+
+      // Tags
+      var tagsEl = document.getElementById('task-detail-tags');
+      if (task.tags && task.tags.length > 0) {
+        tagsEl.innerHTML = task.tags.map(function(tag) { return '<span class="tag-badge">' + escHtml(tag) + '</span>'; }).join('');
+      } else {
+        tagsEl.innerHTML = '';
+      }
+
+      // Brief
+      var briefPanel = document.getElementById('task-brief-panel');
+      var briefEl = document.getElementById('task-detail-brief');
+      if (task.brief) {
+        briefPanel.style.display = '';
+        try {
+          briefEl.innerHTML = (typeof marked !== 'undefined' && marked.parse) ? marked.parse(task.brief) : task.brief.replace(/</g, '&lt;').replace(/\n/g, '<br>');
+        } catch(e) {
+          briefEl.innerHTML = task.brief.replace(/</g, '&lt;').replace(/\n/g, '<br>');
+        }
+      } else {
+        briefPanel.style.display = 'none';
+      }
 
       // Show/hide bars based on status
       var reviewBar = document.getElementById('task-review-bar');
@@ -487,9 +550,19 @@
         if (v.decidedAt) ts.push('Decided: ' + new Date(v.decidedAt).toLocaleString());
         if (ts.length > 0) timestamps = '<div class="version-timestamps">' + ts.map(function(t) { return '<span>' + t + '</span>'; }).join('') + '</div>';
 
+        var deliverableHtml = '';
+        if (v.deliverable) {
+          deliverableHtml = '<div class="version-deliverable"><div class="version-deliverable-label">Deliverable</div>' + escHtml(v.deliverable).replace(/\n/g, '<br>') + '</div>';
+        }
+
+        var resultHtml = '';
+        if (v.result) {
+          resultHtml = '<div class="version-result"><div class="version-result-label">Result</div>' + escHtml(v.result).replace(/\n/g, '<br>') + '</div>';
+        }
+
         html += '<div class="version-card' + (isLatest ? ' latest' : '') + '">' +
           '<div class="version-card-header"><span class="version-number">Version ' + v.number + '</span>' + decisionBadge + '</div>' +
-          contentHtml + feedbackHtml + timestamps + '</div>';
+          contentHtml + deliverableHtml + resultHtml + feedbackHtml + timestamps + '</div>';
       });
       container.innerHTML = html;
     } catch(e) {
@@ -1188,6 +1261,25 @@
     terminal.open(container);
     fitAddon.fit();
 
+    // Handle paste (Ctrl+V) and copy (Ctrl+C with selection)
+    terminal.attachCustomKeyEventHandler(function(ev) {
+      if (ev.type === 'keydown' && ev.ctrlKey) {
+        if (ev.key === 'v') {
+          navigator.clipboard.readText().then(function(text) {
+            if (text && termWs && termWs.readyState === 1) {
+              termWs.send(JSON.stringify({ type: 'input', data: text }));
+            }
+          }).catch(function() {});
+          return false;
+        }
+        if (ev.key === 'c' && terminal.hasSelection()) {
+          navigator.clipboard.writeText(terminal.getSelection()).catch(function() {});
+          return false;
+        }
+      }
+      return true;
+    });
+
     // Handle user input -> send to server
     terminal.onData(function(data) {
       if (termWs && termWs.readyState === 1) {
@@ -1500,6 +1592,7 @@
     openTask: openTask,
     reviewTask: reviewTask,
     navigateBack: navigateBack,
+    filterTasks: filterTasks,
     filterMedia: filterMedia,
     saveProfile: saveProfile,
     saveRules: saveRules,

@@ -6,6 +6,24 @@
       "role": "Team Orchestrator",
       "status": "active",
       "isOrchestrator": true
+    },
+    {
+      "id": "mmseaqj5hyzjmm",
+      "name": "Dev",
+      "role": "Full-Stack Developer",
+      "status": "active"
+    },
+    {
+      "id": "mmsgzss0845l7c",
+      "name": "Scout",
+      "role": "Researcher & Analyst",
+      "status": "active"
+    },
+    {
+      "id": "mmsihktfavfrjh",
+      "name": "Shipper",
+      "role": "Release & GitHub Manager",
+      "status": "active"
     }
   ]
 }

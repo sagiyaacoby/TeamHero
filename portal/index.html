@@ -120,6 +120,10 @@
           <strong style="color:var(--yellow);">&#9733; Next Step:</strong>
           Head to the <strong>Command Center</strong> and ask your orchestrator to build your team. For example: <em>"Build me a team with a Content Writer and a Researcher"</em>
         </div>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:16px;margin:16px 0;font-size:12px;line-height:1.6;color:var(--text-muted);">
+          <strong style="color:var(--text);">&#128274; Security Note:</strong>
+          Agents run with the same file access as your user account. On machines with sensitive data, we recommend using <strong>Supervised</strong> permission mode - agents will ask for your confirmation before file writes and shell commands. You can change this anytime in <strong>Settings</strong>. See <strong>Help > Security &amp; Secrets</strong> for details.
+        </div>
         <div class="wizard-actions">
           <button class="btn btn-primary btn-lg" onclick="App.wizardFinish()">Go to Command Center</button>
         </div>
@@ -136,6 +140,7 @@
     <div class="nav-sticky-top">
       <a href="#" data-view="chat" class="nav-link nav-chat active"><span class="icon">&#9654;</span> Command Center</a>
       <a href="#" data-view="dashboard" class="nav-link"><span class="icon">&#9632;</span> Dashboard</a>
+      <a href="#" data-view="autopilot" class="nav-link"><span class="icon">&#9881;</span> Autopilot<span class="nav-badge hidden" id="nav-autopilot-badge">0</span></a>
     </div>
     <ul class="nav-list" id="nav-list">
       <li class="nav-section">Work</li>
@@ -167,18 +172,81 @@
     <section id="view-dashboard" class="view active">
       <header class="view-header"><h2>Dashboard</h2><div class="header-actions"><button class="btn btn-secondary" onclick="App.openAddTask()">+ Add Task</button><button id="btn-round-table" class="btn btn-primary" onclick="App.runRoundTable()">Run Round Table</button></div></header>
       <div class="stats-row">
-        <div class="stat-card clickable-stat" data-filter="all" onclick="App.filterTasks('all','dashboard')"><div class="stat-value" id="stat-total">0</div><div class="stat-label">All</div></div>
-        <div class="stat-card clickable-stat" data-filter="draft" onclick="App.filterTasks('draft','dashboard')"><div class="stat-value" id="stat-draft">0</div><div class="stat-label">Draft</div></div>
-        <div class="stat-card clickable-stat" data-filter="in_progress" onclick="App.filterTasks('in_progress','dashboard')"><div class="stat-value" id="stat-working">0</div><div class="stat-label">Working</div></div>
         <div class="stat-card clickable-stat" data-filter="pending_approval" onclick="App.filterTasks('pending_approval','dashboard')"><div class="stat-value" id="stat-pending">0</div><div class="stat-label">Pending</div></div>
+        <div class="stat-card clickable-stat" data-filter="all" onclick="App.filterTasks('all','dashboard')"><div class="stat-value" id="stat-total">0</div><div class="stat-label">All</div></div>
+        <div class="stat-card clickable-stat" data-filter="in_progress" onclick="App.filterTasks('in_progress','dashboard')"><div class="stat-value" id="stat-working">0</div><div class="stat-label">Working</div></div>
         <div class="stat-card clickable-stat" data-filter="accepted" onclick="App.filterTasks('accepted','dashboard')"><div class="stat-value" id="stat-accepted">0</div><div class="stat-label">Accepted</div></div>
         <div class="stat-card clickable-stat" data-filter="closed" onclick="App.filterTasks('closed','dashboard')"><div class="stat-value" id="stat-closed">0</div><div class="stat-label">Closed</div></div>
         <div class="stat-card"><div class="stat-value" id="stat-agents">0</div><div class="stat-label">Agents</div></div>
       </div>
-      <div class="panel"><h3 id="dashboard-tasks-title">All Tasks</h3>
+      <div class="panel"><h3 id="dashboard-tasks-title">Pending Review
+        <span class="view-mode-toggle">
+          <button class="view-mode-btn active" data-view="list" onclick="App.setViewMode('list','dashboard')">List</button>
+          <button class="view-mode-btn" data-view="flow" onclick="App.setViewMode('flow','dashboard')">Flow</button>
+          <button class="view-mode-btn" data-view="hierarchy" onclick="App.setViewMode('hierarchy','dashboard')">Tree</button>
+        </span></h3>
         <div id="dashboard-tasks" class="task-list"><div class="empty-state">No tasks yet</div></div>
       </div>
-      <div class="panel"><h3>Last Round Table</h3><div id="last-round-table" class="round-table-summary"><div class="empty-state">No round tables yet</div></div></div>
+      <div class="panel round-table-panel"><h3><span class="rt-icon"></span>Last Round Table</h3><div id="last-round-table" class="round-table-summary"><div class="empty-state">No round tables yet</div></div></div>
+    </section>
+
+    <!-- Autopilot -->
+    <section id="view-autopilot" class="view">
+      <header class="view-header">
+        <h2>Autopilot</h2>
+        <div class="header-actions">
+          <button class="btn btn-secondary" id="ap-pause-all-btn" onclick="App.pauseAllAutopilot()">Pause All</button>
+          <button class="btn btn-primary" onclick="App.openAutopilotForm()">+ Add Schedule</button>
+        </div>
+      </header>
+      <div class="panel">
+        <h3>Schedules</h3>
+        <div id="autopilot-list"></div>
+        <div id="autopilot-form" class="hidden">
+          <div class="form-grid" style="margin-top:12px">
+            <div class="form-group full-width">
+              <label>Name</label>
+              <input type="text" id="ap-name" placeholder="e.g. Daily standup">
+            </div>
+            <div class="form-group full-width">
+              <label>Prompt</label>
+              <textarea id="ap-prompt" rows="3" placeholder="The prompt to send to the terminal..."></textarea>
+            </div>
+            <div class="form-group">
+              <label>Agent</label>
+              <div class="custom-select" id="ap-agent-select" data-target="ap-agent">
+                <div class="custom-select-trigger">Select agent</div>
+                <div class="custom-select-dropdown" id="ap-agent-options"></div>
+              </div>
+              <input type="hidden" id="ap-agent">
+            </div>
+            <div class="form-group">
+              <label>Interval</label>
+              <input type="number" id="ap-interval" min="1" value="60">
+            </div>
+            <div class="form-group">
+              <label>Unit</label>
+              <div class="custom-select" id="ap-unit-select" data-target="ap-interval-unit">
+                <div class="custom-select-trigger">Minutes</div>
+                <div class="custom-select-dropdown">
+                  <div class="custom-select-option selected" data-value="minutes">Minutes</div>
+                  <div class="custom-select-option" data-value="hours">Hours</div>
+                  <div class="custom-select-option" data-value="days">Days</div>
+                </div>
+              </div>
+              <input type="hidden" id="ap-interval-unit" value="minutes">
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-secondary" onclick="App.cancelAutopilotForm()">Cancel</button>
+            <button class="btn btn-primary" onclick="App.saveAutopilot()">Save</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Autopilot Tasks</h3>
+        <div id="autopilot-tasks" class="task-list"><div class="empty-state">No autopilot tasks</div></div>
+      </div>
     </section>
 
     <!-- Command Center (Terminal) -->
@@ -223,7 +291,14 @@
       <div id="agent-tab-tasks" class="agent-tab active">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <div class="agent-tasks-summary" id="agent-tasks-summary"></div>
-          <button class="btn btn-secondary" onclick="App.openAddTask(App.state.currentAgentId)" style="font-size:12px;padding:4px 12px;white-space:nowrap">+ Add Task</button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span class="view-mode-toggle">
+              <button class="view-mode-btn active" data-view="list" onclick="App.setViewMode('list','agent')">List</button>
+              <button class="view-mode-btn" data-view="flow" onclick="App.setViewMode('flow','agent')">Flow</button>
+              <button class="view-mode-btn" data-view="hierarchy" onclick="App.setViewMode('hierarchy','agent')">Tree</button>
+            </span>
+            <button class="btn btn-secondary" onclick="App.openAddTask(App.state.currentAgentId)" style="font-size:12px;padding:4px 12px;white-space:nowrap">+ Add Task</button>
+          </div>
         </div>
         <div id="agent-tasks-list" class="task-list"></div>
       </div>
@@ -525,44 +600,7 @@
           </div>
         </div>
       </div>
-      <div class="panel">
-        <div class="settings-section-header">
-          <h3>Autopilot</h3>
-          <button class="btn btn-secondary" onclick="App.openAutopilotForm()">+ Add Schedule</button>
-        </div>
-        <div id="autopilot-list"></div>
-        <div id="autopilot-form" class="hidden">
-          <div class="form-grid" style="margin-top:12px">
-            <div class="form-group full-width">
-              <label>Name</label>
-              <input type="text" id="ap-name" placeholder="e.g. Daily standup">
-            </div>
-            <div class="form-group full-width">
-              <label>Prompt</label>
-              <textarea id="ap-prompt" rows="3" placeholder="The prompt to send to the terminal..."></textarea>
-            </div>
-            <div class="form-group">
-              <label>Agent</label>
-              <select id="ap-agent"></select>
-            </div>
-            <div class="form-group">
-              <label>Interval</label>
-              <div style="display:flex;gap:8px">
-                <input type="number" id="ap-interval" min="1" value="60" style="width:80px">
-                <select id="ap-interval-unit">
-                  <option value="minutes">Minutes</option>
-                  <option value="hours">Hours</option>
-                  <option value="days">Days</option>
-                </select>
-              </div>
-            </div>
-          </div>
-          <div class="form-actions">
-            <button class="btn btn-secondary" onclick="App.cancelAutopilotForm()">Cancel</button>
-            <button class="btn btn-primary" onclick="App.saveAutopilot()">Save</button>
-          </div>
-        </div>
-      </div>
+      <!-- Autopilot moved to dedicated view -->
       <div class="panel">
         <h3>Actions</h3>
         <div class="settings-group">

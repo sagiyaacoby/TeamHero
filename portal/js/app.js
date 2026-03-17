@@ -14,10 +14,14 @@
     previousAgentId: null,
     currentTaskId: null,
     mediaFilter: 'all',
-    dashboardTaskFilter: 'all',
+    dashboardTaskFilter: 'pending_approval',
     agentTaskFilter: 'all',
     cachedDashboardTasks: [],
     cachedAgentTasks: [],
+    dashboardViewMode: 'list',
+    agentViewMode: 'list',
+    hierarchyExpanded: {},
+    flowExpanded: {},
   };
 
   var PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
@@ -165,6 +169,7 @@
       if (viewId === 'skills') loadSkills();
       if (viewId === 'knowledge') loadKnowledge();
       if (viewId === 'help') loadHelp(0);
+      if (viewId === 'autopilot') loadAutopilotPage();
     }
   }
 
@@ -284,6 +289,7 @@
     }
     if (scope === 'all' || scope === 'autopilot') {
       if (v === 'settings') loadAutopilot();
+      if (v === 'autopilot') loadAutopilotPage();
     }
   }
 
@@ -362,6 +368,7 @@
         badge.remove();
       }
     }
+    updateAutopilotBadge();
   }
 
   // ── Dashboard ──────────────────────────────────────
@@ -376,18 +383,17 @@
       renderSidebarAgents();
 
       document.getElementById('stat-agents').textContent = state.agents.length;
-      var draft = 0, working = 0, pending = 0, accepted = 0, closed = 0;
-      // Only count top-level tasks (not subtasks) in stats
+      var working = 0, pending = 0, accepted = 0, closed = 0;
       state.tasks.forEach(function(t) {
+        // Pending counts ALL tasks (including subtasks) - owner must see everything needing review
+        if (t.status === 'pending_approval') { pending++; return; }
+        // Other stats count top-level only
         if (t.parentTaskId) return;
-        if (t.status === 'draft') draft++;
-        else if (t.status === 'in_progress' || t.status === 'revision_needed') working++;
-        else if (t.status === 'pending_approval') pending++;
+        if (t.status === 'in_progress' || t.status === 'draft' || t.status === 'revision_needed') working++;
         else if (t.status === 'accepted') accepted++;
         else if (t.status === 'closed' || t.status === 'done') closed++;
       });
       document.getElementById('stat-total').textContent = state.tasks.filter(function(t) { return !t.parentTaskId; }).length;
-      document.getElementById('stat-draft').textContent = draft;
       document.getElementById('stat-working').textContent = working;
       document.getElementById('stat-pending').textContent = pending;
       document.getElementById('stat-accepted').textContent = accepted;
@@ -502,9 +508,9 @@
     var af = state.agentTaskFilter;
     var total = tasks.length;
     summaryEl.innerHTML =
+      '<span class="badge badge-pending_approval clickable-badge' + (af === 'pending_approval' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'pending_approval\',\'agent\')">' + pending + ' Pending</span> ' +
       '<span class="badge badge-all clickable-badge' + (af === 'all' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'all\',\'agent\')">' + total + ' All</span> ' +
       '<span class="badge badge-in_progress clickable-badge' + (af === 'in_progress' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'in_progress\',\'agent\')">' + working + ' Working</span> ' +
-      '<span class="badge badge-pending_approval clickable-badge' + (af === 'pending_approval' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'pending_approval\',\'agent\')">' + pending + ' Pending</span> ' +
       '<span class="badge badge-accepted clickable-badge' + (af === 'accepted' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'accepted\',\'agent\')">' + accepted + ' Accepted</span> ' +
       '<span class="badge badge-closed clickable-badge' + (af === 'closed' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'closed\',\'agent\')">' + closed + ' Closed</span>';
 
@@ -512,13 +518,10 @@
     renderFilteredTasks('agent');
   }
 
-  function renderFilteredTasks(context) {
+  function getFilteredRootTasks(context) {
     var filter = context === 'dashboard' ? state.dashboardTaskFilter : state.agentTaskFilter;
     var tasks = context === 'dashboard' ? state.cachedDashboardTasks : state.cachedAgentTasks;
-    var listEl = document.getElementById(context === 'dashboard' ? 'dashboard-tasks' : 'agent-tasks-list');
-    if (!listEl) return;
 
-    // Filter tasks - hide subtasks from main list (they appear under parents)
     var filtered;
     if (filter === 'all') {
       filtered = tasks.filter(function(t) { return !t.parentTaskId; });
@@ -526,11 +529,13 @@
       filtered = tasks.filter(function(t) { return !t.parentTaskId && (t.status === 'in_progress' || t.status === 'draft' || t.status === 'revision_needed'); });
     } else if (filter === 'closed') {
       filtered = tasks.filter(function(t) { return !t.parentTaskId && (t.status === 'closed' || t.status === 'done'); });
+    } else if (filter === 'pending_approval') {
+      // Pending shows ALL tasks needing review - including subtasks, since the owner must see them
+      filtered = tasks.filter(function(t) { return t.status === 'pending_approval'; });
     } else {
       filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === filter; });
     }
 
-    // Sort
     var statusOrder = { pending_approval: 0, revision_needed: 1, in_progress: 2, draft: 3, accepted: 4, hold: 5, closed: 6, done: 7 };
     filtered.sort(function(a, b) {
       var sa = statusOrder[a.status] !== undefined ? statusOrder[a.status] : 9;
@@ -540,25 +545,420 @@
       var pb = PRIORITY_ORDER[b.priority] !== undefined ? PRIORITY_ORDER[b.priority] : 2;
       return pa - pb;
     });
+    return filtered;
+  }
+
+  function isTaskBlocked(task, allTasks) {
+    if (!task.dependsOn || task.dependsOn.length === 0) return false;
+    return task.dependsOn.some(function(depId) {
+      var dep = allTasks.find(function(t) { return t.id === depId; });
+      return !dep || (dep.status !== 'accepted' && dep.status !== 'closed');
+    });
+  }
+
+  function findSubtasks(parentId, allTasks) {
+    return allTasks.filter(function(t) { return t.parentTaskId === parentId; });
+  }
+
+  function renderFilteredTasks(context) {
+    var listEl = document.getElementById(context === 'dashboard' ? 'dashboard-tasks' : 'agent-tasks-list');
+    if (!listEl) return;
+    var viewMode = context === 'dashboard' ? state.dashboardViewMode : state.agentViewMode;
+    var filtered = getFilteredRootTasks(context);
 
     if (filtered.length === 0) {
+      var filter = context === 'dashboard' ? state.dashboardTaskFilter : state.agentTaskFilter;
       listEl.innerHTML = '<div class="empty-state">No ' + (filter === 'all' ? '' : filter.replace(/_/g, ' ') + ' ') + 'tasks</div>';
       return;
     }
 
+    if (viewMode === 'flow') {
+      renderFlowView(listEl, filtered, context);
+    } else if (viewMode === 'hierarchy') {
+      renderHierarchyView(listEl, filtered, context);
+    } else {
+      renderListView(listEl, filtered, context);
+    }
+  }
+
+  function renderListView(listEl, filtered, context) {
+    var allTasks = context === 'dashboard' ? state.cachedDashboardTasks : state.cachedAgentTasks;
     var html = '';
     filtered.forEach(function(t) {
       html += renderTaskCard(t, context);
-      // Render subtasks inline under parent
       if (t.subtasks && t.subtasks.length > 0) {
-        var allTasks = context === 'dashboard' ? state.cachedDashboardTasks : state.cachedAgentTasks;
-        t.subtasks.forEach(function(sid) {
-          var sub = allTasks.find(function(st) { return st.id === sid; });
-          if (sub) html += renderTaskCard(sub, context, true);
-        });
+        html += renderSubtasksListRecursive(t.subtasks, allTasks, context, 1);
       }
     });
     listEl.innerHTML = html;
+  }
+
+  function renderSubtasksListRecursive(subtaskIds, allTasks, context, depth) {
+    var html = '';
+    subtaskIds.forEach(function(sid) {
+      var sub = allTasks.find(function(st) { return st.id === sid; });
+      if (sub) {
+        html += renderTaskCard(sub, context, true, depth);
+        if (sub.subtasks && sub.subtasks.length > 0) {
+          html += renderSubtasksListRecursive(sub.subtasks, allTasks, context, depth + 1);
+        }
+      }
+    });
+    return html;
+  }
+
+  // ── Flow View (Node Graph) ─────────────────────────────────
+  function renderFlowView(listEl, filtered, context) {
+    var allTasks = context === 'dashboard' ? state.cachedDashboardTasks : state.cachedAgentTasks;
+    var taskMap = {};
+    allTasks.forEach(function(t) { taskMap[t.id] = t; });
+
+    // Collect ALL nodes to render: parents + subtasks as separate nodes
+    var nodes = []; // flat list of all tasks to render as nodes
+    var edges = []; // {from, to, type} - 'parent' or 'dep'
+    var nodeSet = {};
+
+    function addNode(task) {
+      if (nodeSet[task.id]) return;
+      nodeSet[task.id] = true;
+      nodes.push(task);
+    }
+
+    filtered.forEach(function(t) {
+      addNode(t);
+      // Add subtasks as separate nodes
+      if (t.subtasks && t.subtasks.length > 0) {
+        t.subtasks.forEach(function(sid) {
+          var sub = taskMap[sid];
+          if (sub) addNode(sub);
+        });
+      }
+    });
+
+    // Second pass: add parent->child edges only when child has no visible dependency edges
+    nodes.forEach(function(t) {
+      if (t.parentTaskId && nodeSet[t.parentTaskId]) {
+        var childHasDeps = t.dependsOn && t.dependsOn.some(function(d) { return nodeSet[d]; });
+        if (!childHasDeps) {
+          edges.push({ from: t.parentTaskId, to: t.id, type: 'parent' });
+        }
+      }
+    });
+
+    // Third pass: add dependency edges for ALL nodes (root + subtasks)
+    nodes.forEach(function(t) {
+      if (t.dependsOn && t.dependsOn.length > 0) {
+        t.dependsOn.forEach(function(depId) {
+          if (nodeSet[depId]) edges.push({ from: depId, to: t.id, type: 'dep' });
+        });
+      }
+    });
+
+    // Layout: place parent nodes in column 0, their subtasks in column 1
+    // Independent tasks (no parent, no children) go in column 0
+    // Tasks with deps go in later columns
+    var nodeW = 220, nodeH = 64, nodeGapX = 300, nodeGapY = 20, padX = 40, padY = 40;
+    var nodePositions = {};
+
+    // Assign columns: parents/independent at col 0, subtasks at col 1, dep chains push further
+    var colMap = {};
+    function getCol(id, visited) {
+      if (colMap[id] !== undefined) return colMap[id];
+      if (!visited) visited = {};
+      if (visited[id]) return 0;
+      visited[id] = true;
+      var t = taskMap[id];
+      if (!t) return 0;
+      var col = 0;
+      // If it's a subtask, place one column after parent
+      if (t.parentTaskId && nodeSet[t.parentTaskId]) {
+        col = Math.max(col, getCol(t.parentTaskId, visited) + 1);
+      }
+      // If it depends on other tasks, place after them
+      if (t.dependsOn) {
+        t.dependsOn.forEach(function(depId) {
+          if (nodeSet[depId]) col = Math.max(col, getCol(depId, visited) + 1);
+        });
+      }
+      colMap[id] = col;
+      return col;
+    }
+    nodes.forEach(function(t) { getCol(t.id); });
+
+    // Group into columns
+    var maxCol = 0;
+    nodes.forEach(function(t) { if (colMap[t.id] > maxCol) maxCol = colMap[t.id]; });
+    var columns = [];
+    for (var c = 0; c <= maxCol; c++) columns.push([]);
+    nodes.forEach(function(t) { columns[colMap[t.id] || 0].push(t); });
+
+    // Sort within columns: active statuses first
+    var statusPriority = { in_progress: 0, revision_needed: 1, pending_approval: 2, draft: 3, accepted: 4, hold: 5, closed: 6, cancelled: 7 };
+    columns.forEach(function(col) {
+      col.sort(function(a, b) {
+        var sa = statusPriority[a.status] !== undefined ? statusPriority[a.status] : 8;
+        var sb = statusPriority[b.status] !== undefined ? statusPriority[b.status] : 8;
+        return sa - sb;
+      });
+    });
+
+    // Compute positions
+    var canvasH = 0;
+    columns.forEach(function(col, ci) {
+      var x = padX + ci * nodeGapX;
+      var y = padY;
+      col.forEach(function(task) {
+        nodePositions[task.id] = { x: x, y: y, w: nodeW, h: nodeH };
+        y += nodeH + nodeGapY;
+      });
+      if (y > canvasH) canvasH = y;
+    });
+    canvasH = Math.max(canvasH + padY, 300);
+    var canvasW = padX * 2 + (maxCol + 1) * nodeGapX;
+
+    // Build HTML
+    var html = '<div class="flow-canvas" id="flow-canvas-' + context + '" style="min-width:' + canvasW + 'px;min-height:' + canvasH + 'px;position:relative;">';
+
+    // SVG layer for connections
+    html += '<svg class="flow-svg" id="flow-svg-' + context + '" width="' + canvasW + '" height="' + canvasH + '">';
+    html += '<defs>';
+    html += '<marker id="dot-' + context + '" markerWidth="6" markerHeight="6" refX="3" refY="3">';
+    html += '<circle cx="3" cy="3" r="2.5" fill="#262a30"/></marker>';
+    html += '<marker id="dot-blocked-' + context + '" markerWidth="6" markerHeight="6" refX="3" refY="3">';
+    html += '<circle cx="3" cy="3" r="2.5" fill="#e06060"/></marker>';
+    html += '</defs>';
+
+    // Draw edges
+    edges.forEach(function(edge) {
+      var sp = nodePositions[edge.from];
+      var tp = nodePositions[edge.to];
+      if (!sp || !tp) return;
+
+      var x1 = sp.x + sp.w; // right edge of source
+      var y1 = sp.y + sp.h / 2;
+      var x2 = tp.x; // left edge of target
+      var y2 = tp.y + tp.h / 2;
+
+      // If target is in same or earlier column, route differently
+      if (x2 <= x1) {
+        x1 = sp.x + sp.w / 2;
+        y1 = sp.y + sp.h;
+        x2 = tp.x + tp.w / 2;
+        y2 = tp.y;
+      }
+
+      var dx = Math.abs(x2 - x1) * 0.5;
+      var cssClass, marker;
+      if (edge.type === 'parent') {
+        cssClass = 'flow-edge-parent';
+        marker = 'url(#dot-' + context + ')';
+      } else {
+        var blocked = isTaskBlocked(taskMap[edge.to], allTasks);
+        cssClass = blocked ? 'flow-edge-blocked' : 'flow-edge-dep';
+        marker = blocked ? 'url(#dot-blocked-' + context + ')' : 'url(#dot-' + context + ')';
+      }
+
+      html += '<path class="' + cssClass + '" data-edge-from="' + edge.from + '" data-edge-to="' + edge.to + '" d="M' + x1 + ',' + y1 + ' C' + (x1 + dx) + ',' + y1 + ' ' + (x2 - dx) + ',' + y2 + ' ' + x2 + ',' + y2 + '" marker-end="' + marker + '"/>';
+    });
+    html += '</svg>';
+
+    // Render nodes
+    nodes.forEach(function(task) {
+      var pos = nodePositions[task.id];
+      if (!pos) return;
+      html += renderFlowNode(task, allTasks, context, pos);
+    });
+
+    html += '</div>';
+    listEl.innerHTML = '<div class="flow-view">' + html + '</div>';
+
+    // ── Hover: highlight upstream & downstream dependency chain ──
+    var flowContainer = listEl.querySelector('.flow-view');
+    if (flowContainer) {
+      // Build adjacency maps from edges
+      var upstreamMap = {};   // id -> [ids that feed into it]
+      var downstreamMap = {}; // id -> [ids that depend on it]
+      edges.forEach(function(e) {
+        if (!upstreamMap[e.to]) upstreamMap[e.to] = [];
+        upstreamMap[e.to].push(e.from);
+        if (!downstreamMap[e.from]) downstreamMap[e.from] = [];
+        downstreamMap[e.from].push(e.to);
+      });
+
+      function collectChain(id, map, result) {
+        var neighbors = map[id];
+        if (!neighbors) return;
+        neighbors.forEach(function(nid) {
+          if (!result[nid]) {
+            result[nid] = true;
+            collectChain(nid, map, result);
+          }
+        });
+      }
+
+      flowContainer.querySelectorAll('.flow-node').forEach(function(nodeEl) {
+        var tid = nodeEl.dataset.taskId;
+        nodeEl.addEventListener('mouseenter', function() {
+          var upstream = {}, downstream = {};
+          collectChain(tid, upstreamMap, upstream);
+          collectChain(tid, downstreamMap, downstream);
+          var chain = Object.assign({}, upstream, downstream);
+          // Highlight related nodes
+          flowContainer.querySelectorAll('.flow-node').forEach(function(n) {
+            if (n.dataset.taskId !== tid) {
+              if (chain[n.dataset.taskId]) {
+                n.classList.add('flow-chain-highlight');
+              } else {
+                n.classList.add('flow-chain-dim');
+              }
+            }
+          });
+          // Highlight related edges
+          flowContainer.querySelectorAll('.flow-svg path').forEach(function(p) {
+            var eFrom = p.getAttribute('data-edge-from');
+            var eTo = p.getAttribute('data-edge-to');
+            var inChain = (chain[eFrom] || eFrom === tid) && (chain[eTo] || eTo === tid);
+            if (inChain) {
+              p.classList.add('flow-edge-highlight');
+            } else {
+              p.classList.add('flow-edge-dim');
+            }
+          });
+        });
+        nodeEl.addEventListener('mouseleave', function() {
+          flowContainer.querySelectorAll('.flow-chain-highlight, .flow-chain-dim').forEach(function(n) {
+            n.classList.remove('flow-chain-highlight', 'flow-chain-dim');
+          });
+          flowContainer.querySelectorAll('.flow-edge-highlight, .flow-edge-dim').forEach(function(p) {
+            p.classList.remove('flow-edge-highlight', 'flow-edge-dim');
+          });
+        });
+      });
+    }
+  }
+
+  function renderFlowNode(task, allTasks, context, pos) {
+    var blocked = isTaskBlocked(task, allTasks);
+    var statusClass = 'status-' + (task.status || 'draft');
+    var blockedClass = blocked ? ' blocked' : '';
+    var isChild = !!task.parentTaskId;
+    var agentName = '';
+    if (task.assignedTo) {
+      var found = state.agents.find(function(a) { return a.id === task.assignedTo; });
+      agentName = found ? found.name : '';
+    }
+    var statusLabel = STATUS_LABELS[task.status] || (task.status || 'draft').replace(/_/g, ' ');
+    var hasOut = task.subtasks && task.subtasks.length > 0;
+    var hasIn = isChild || (task.dependsOn && task.dependsOn.length > 0);
+
+    var html = '<div class="flow-node ' + statusClass + blockedClass + (isChild ? ' flow-child' : '') + '" data-task-id="' + task.id + '" ';
+    html += 'style="position:absolute;left:' + pos.x + 'px;top:' + pos.y + 'px;width:' + pos.w + 'px;height:' + pos.h + 'px;" ';
+    html += 'onclick="App.openTask(\'' + task.id + '\')">';
+
+    // Connection ports
+    if (hasIn) html += '<div class="flow-port flow-port-in"></div>';
+    if (hasOut) html += '<div class="flow-port flow-port-out"></div>';
+
+    html += '<div class="flow-node-title">' + escHtml(task.title) + '</div>';
+    html += '<div class="flow-node-meta">';
+    html += '<span class="flow-node-status badge badge-' + task.status + '">' + escHtml(statusLabel) + '</span>';
+    if (agentName) html += '<span class="flow-node-agent">' + escHtml(agentName) + '</span>';
+    html += '</div>';
+    html += '</div>';
+    return html;
+  }
+
+  // drawFlowArrows is no longer needed - arrows are rendered inline as SVG paths
+  function drawFlowArrows() { }
+
+  function toggleFlowExpand(taskId, context) {
+    state.flowExpanded[taskId] = state.flowExpanded[taskId] === false ? true : false;
+    renderFilteredTasks(context);
+  }
+
+  // ── Hierarchy View ────────────────────────────
+  function renderHierarchyView(listEl, filtered, context) {
+    var allTasks = context === 'dashboard' ? state.cachedDashboardTasks : state.cachedAgentTasks;
+    var html = '<div class="hierarchy-view">';
+    filtered.forEach(function(t) {
+      html += renderHierarchyNode(t, allTasks, context, 0);
+    });
+    html += '</div>';
+    listEl.innerHTML = html;
+  }
+
+  function renderHierarchyNode(task, allTasks, context, depth) {
+    var blocked = isTaskBlocked(task, allTasks);
+    var subs = findSubtasks(task.id, allTasks);
+    var hasChildren = subs.length > 0;
+    var expanded = state.hierarchyExpanded[task.id] !== false;
+    var statusLabel = STATUS_LABELS[task.status] || (task.status || 'draft').replace(/_/g, ' ');
+    var agentName = '';
+    if (task.assignedTo) {
+      var found = state.agents.find(function(a) { return a.id === task.assignedTo; });
+      agentName = found ? found.name : '';
+    }
+    var depBadge = '';
+    if (task.dependsOn && task.dependsOn.length > 0) {
+      depBadge = '<span class="hierarchy-dep-badge' + (blocked ? ' dep-blocked' : '') + '">' + (blocked ? 'blocked' : 'deps') + '</span>';
+    }
+
+    var html = '<div class="hierarchy-node">';
+    html += '<div class="hierarchy-item' + (blocked ? ' blocked' : '') + '" onclick="App.openTask(' + q + task.id + q + ')">';
+    html += '<div class="hierarchy-item-left">';
+    if (hasChildren) {
+      html += '<span class="hierarchy-toggle" onclick="event.stopPropagation();App.toggleHierarchyExpand(' + q + task.id + q + ',' + q + context + q + ')">' + (expanded ? '&#9660;' : '&#9654;') + '</span>';
+    } else {
+      html += '<span class="hierarchy-toggle">&bull;</span>';
+    }
+    html += '<span class="hierarchy-title">' + escHtml(task.title) + '</span>';
+    html += '</div>';
+    html += '<div class="hierarchy-meta">';
+    html += depBadge;
+    html += '<span class="badge badge-' + (task.priority || 'medium') + '">' + escHtml(task.priority || 'medium') + '</span>';
+    html += '<span class="badge badge-' + (task.status || 'draft') + '">' + escHtml(statusLabel) + '</span>';
+    if (agentName) html += '<span style="font-size:11px;color:var(--text-muted)">' + escHtml(agentName) + '</span>';
+    html += '</div></div>';
+
+    if (hasChildren) {
+      // Sort subtasks by priority
+      subs.sort(function(a, b) {
+        var pa = PRIORITY_ORDER[a.priority] !== undefined ? PRIORITY_ORDER[a.priority] : 2;
+        var pb = PRIORITY_ORDER[b.priority] !== undefined ? PRIORITY_ORDER[b.priority] : 2;
+        return pa - pb;
+      });
+      html += '<div class="hierarchy-children' + (expanded ? '' : ' collapsed') + '">';
+      subs.forEach(function(sub) {
+        html += renderHierarchyNode(sub, allTasks, context, depth + 1);
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function toggleHierarchyExpand(taskId, context) {
+    state.hierarchyExpanded[taskId] = state.hierarchyExpanded[taskId] === false ? true : false;
+    renderFilteredTasks(context);
+  }
+
+  function setViewMode(mode, context) {
+    if (context === 'dashboard') {
+      state.dashboardViewMode = mode;
+    } else {
+      state.agentViewMode = mode;
+    }
+    // Update toggle button active state
+    var panel = context === 'dashboard' ? document.getElementById('dashboard-tasks') : document.getElementById('agent-tasks-list');
+    if (panel) {
+      var toggle = panel.closest('.panel');
+      if (toggle) {
+        toggle.querySelectorAll('.view-mode-btn').forEach(function(btn) {
+          btn.classList.toggle('active', btn.dataset.view === mode);
+        });
+      }
+    }
+    renderFilteredTasks(context);
   }
 
   var STATUS_LABELS = {
@@ -568,7 +968,7 @@
     approved: 'execute'
   };
 
-  function renderTaskCard(t, context, isSubtask) {
+  function renderTaskCard(t, context, isSubtask, depth) {
     var statusClass = 'badge-' + (t.status || 'draft');
     var priorityClass = 'badge-' + (t.priority || 'medium');
     var agentName = '';
@@ -582,9 +982,10 @@
     var workingDot = isWorking ? '<span class="agent-working-dot" title="Working"></span>' : '';
     var autopilotIcon = t.autopilot ? '<span class="autopilot-badge" title="Autopilot">&#9881;</span>' : '';
     var subtaskClass = isSubtask ? ' subtask-item' : '';
+    var depthStyle = isSubtask && depth ? ' style="padding-left:' + (16 + depth * 16) + 'px;margin-left:' + (depth * 12) + 'px"' : '';
     var statusLabel = STATUS_LABELS[t.status] || (t.status || 'draft').replace(/_/g, ' ');
 
-    return '<div class="task-item' + subtaskClass + '" onclick="App.openTask(' + q + t.id + q + ')">' +
+    return '<div class="task-item' + subtaskClass + '"' + depthStyle + ' onclick="App.openTask(' + q + t.id + q + ')">' +
       '<span class="task-title">' + outputIcon + autopilotIcon + escHtml(t.title) + '</span>' +
       '<span class="task-meta">' +
         '<span class="badge ' + priorityClass + '">' + escHtml(t.priority || 'medium') + '</span>' +
@@ -600,11 +1001,17 @@
       document.querySelectorAll('.stat-card[data-filter]').forEach(function(card) {
         card.classList.toggle('stat-card-active', card.dataset.filter === filter);
       });
-      // Update panel title
+      // Update panel title text without destroying the view-mode-toggle buttons inside the h3
       var titleEl = document.getElementById('dashboard-tasks-title');
       if (titleEl) {
-        var labels = { all: 'All Tasks', draft: 'Draft', pending_approval: 'Pending Review', in_progress: 'Working', accepted: 'Accepted', closed: 'Closed', revision_needed: 'Improve' };
-        titleEl.textContent = labels[filter] || filter.replace(/_/g, ' ');
+        var labels = { all: 'All Tasks', pending_approval: 'Pending Review', in_progress: 'Working', accepted: 'Accepted', closed: 'Closed', revision_needed: 'Improve' };
+        var titleText = labels[filter] || filter.replace(/_/g, ' ');
+        var firstText = titleEl.firstChild;
+        if (firstText && firstText.nodeType === 3) {
+          firstText.textContent = titleText + '\n        ';
+        } else {
+          titleEl.insertBefore(document.createTextNode(titleText + '\n        '), titleEl.firstChild);
+        }
       }
     } else {
       state.agentTaskFilter = filter;
@@ -1612,7 +2019,6 @@
     checkForUpdates();
     loadSecretsStatus();
     loadTempStatus();
-    loadAutopilot();
   }
 
   async function loadTempStatus() {
@@ -2131,21 +2537,11 @@
     terminal.open(container);
     fitAddon.fit();
 
-    // Handle paste (Ctrl+V) and copy (Ctrl+C with selection)
+    // Handle copy (Ctrl+C with selection) - paste is handled natively by xterm via onData
     terminal.attachCustomKeyEventHandler(function(ev) {
-      if (ev.type === 'keydown' && ev.ctrlKey) {
-        if (ev.key === 'v') {
-          navigator.clipboard.readText().then(function(text) {
-            if (text && termWs && termWs.readyState === 1) {
-              termWs.send(JSON.stringify({ type: 'input', data: text }));
-            }
-          }).catch(function() {});
-          return false;
-        }
-        if (ev.key === 'c' && terminal.hasSelection()) {
-          navigator.clipboard.writeText(terminal.getSelection()).catch(function() {});
-          return false;
-        }
+      if (ev.type === 'keydown' && ev.ctrlKey && ev.key === 'c' && terminal.hasSelection()) {
+        navigator.clipboard.writeText(terminal.getSelection()).catch(function() {});
+        return false;
       }
       return true;
     });
@@ -2515,6 +2911,8 @@
   var autopilotEditId = null;
 
   async function loadAutopilot() {
+    var container = document.getElementById('autopilot-list');
+    if (!container) return;
     try {
       var schedules = await api.get('/api/autopilot');
       var agentsData = await api.get('/api/agents');
@@ -2522,8 +2920,6 @@
       (agentsData.agents || []).forEach(function(a) { agentMap[a.id] = a.name; });
       agentMap['orchestrator'] = agentMap['orchestrator'] || 'Orchestrator';
 
-      var container = document.getElementById('autopilot-list');
-      if (!container) return;
       if (!schedules || schedules.length === 0) {
         container.innerHTML = '<div class="empty-state" style="padding:16px 0;font-size:13px">No autopilot schedules yet</div>';
         return;
@@ -2552,7 +2948,9 @@
       });
       html += '</tbody></table>';
       container.innerHTML = html;
-    } catch(e) { console.error('Failed to load autopilot:', e); }
+    } catch(e) {
+      container.innerHTML = '<div class="empty-state" style="padding:16px 0;font-size:13px">No autopilot schedules yet</div>';
+    }
   }
 
   function escHtml(s) {
@@ -2572,9 +2970,21 @@
     document.getElementById('ap-name').value = '';
     document.getElementById('ap-prompt').value = '';
     document.getElementById('ap-interval').value = '60';
-    document.getElementById('ap-interval-unit').value = 'minutes';
+    setCustomSelect('ap-unit-select', 'minutes', 'Minutes');
     await populateAutopilotAgents();
     document.getElementById('autopilot-form').classList.remove('hidden');
+  }
+
+  function setCustomSelect(selectId, value, label) {
+    var cs = document.getElementById(selectId);
+    if (!cs) return;
+    var hidden = document.getElementById(cs.dataset.target);
+    if (hidden) hidden.value = value;
+    var trigger = cs.querySelector('.custom-select-trigger');
+    if (trigger) trigger.textContent = label;
+    cs.querySelectorAll('.custom-select-option').forEach(function(o) {
+      o.classList.toggle('selected', o.dataset.value === value);
+    });
   }
 
   function cancelAutopilotForm() {
@@ -2583,18 +2993,59 @@
   }
 
   async function populateAutopilotAgents() {
-    var sel = document.getElementById('ap-agent');
-    sel.innerHTML = '';
+    var container = document.getElementById('ap-agent-options');
+    var hidden = document.getElementById('ap-agent');
+    if (!container) return;
+    container.innerHTML = '';
     try {
       var data = await api.get('/api/agents');
+      var first = true;
       (data.agents || []).forEach(function(a) {
-        var opt = document.createElement('option');
-        opt.value = a.id;
-        opt.textContent = a.name + (a.isOrchestrator ? ' (Orchestrator)' : '');
-        sel.appendChild(opt);
+        var div = document.createElement('div');
+        div.className = 'custom-select-option' + (first ? ' selected' : '');
+        div.dataset.value = a.id;
+        div.textContent = a.name + (a.isOrchestrator ? ' (Orchestrator)' : '');
+        container.appendChild(div);
+        if (first) {
+          hidden.value = a.id;
+          container.closest('.custom-select').querySelector('.custom-select-trigger').textContent = div.textContent;
+          first = false;
+        }
       });
     } catch(e) {}
   }
+
+  // Custom select behavior
+  document.addEventListener('click', function(e) {
+    var trigger = e.target.closest('.custom-select-trigger');
+    if (trigger) {
+      var cs = trigger.closest('.custom-select');
+      // Close all others
+      document.querySelectorAll('.custom-select.open').forEach(function(el) {
+        if (el !== cs) el.classList.remove('open');
+      });
+      cs.classList.toggle('open');
+      return;
+    }
+    var opt = e.target.closest('.custom-select-option');
+    if (opt) {
+      var cs = opt.closest('.custom-select');
+      var val = opt.dataset.value;
+      var label = opt.textContent;
+      // Update hidden input
+      var hiddenId = cs.dataset.target;
+      if (hiddenId) document.getElementById(hiddenId).value = val;
+      // Update trigger text
+      cs.querySelector('.custom-select-trigger').textContent = label;
+      // Update selected state
+      cs.querySelectorAll('.custom-select-option').forEach(function(o) { o.classList.remove('selected'); });
+      opt.classList.add('selected');
+      cs.classList.remove('open');
+      return;
+    }
+    // Close all if clicking outside
+    document.querySelectorAll('.custom-select.open').forEach(function(el) { el.classList.remove('open'); });
+  });
 
   async function saveAutopilot() {
     var name = document.getElementById('ap-name').value.trim();
@@ -2638,18 +3089,20 @@
       await populateAutopilotAgents();
       document.getElementById('ap-name').value = sched.name || '';
       document.getElementById('ap-prompt').value = sched.prompt || '';
-      document.getElementById('ap-agent').value = sched.agentId || '';
+      // Set agent custom select
+      var agentOpt = document.querySelector('#ap-agent-options .custom-select-option[data-value="' + sched.agentId + '"]');
+      if (agentOpt) setCustomSelect('ap-agent-select', sched.agentId, agentOpt.textContent);
       // Decompose intervalMinutes into value + unit
       var mins = sched.intervalMinutes;
       if (mins >= 1440 && mins % 1440 === 0) {
         document.getElementById('ap-interval').value = mins / 1440;
-        document.getElementById('ap-interval-unit').value = 'days';
+        setCustomSelect('ap-unit-select', 'days', 'Days');
       } else if (mins >= 60 && mins % 60 === 0) {
         document.getElementById('ap-interval').value = mins / 60;
-        document.getElementById('ap-interval-unit').value = 'hours';
+        setCustomSelect('ap-unit-select', 'hours', 'Hours');
       } else {
         document.getElementById('ap-interval').value = mins;
-        document.getElementById('ap-interval-unit').value = 'minutes';
+        setCustomSelect('ap-unit-select', 'minutes', 'Minutes');
       }
       document.getElementById('autopilot-form').classList.remove('hidden');
     } catch(e) { toast('Failed to load schedule', 'error'); }
@@ -2669,199 +3122,355 @@
     } catch(e) { toast('Failed to delete schedule', 'error'); }
   }
 
+  async function loadAutopilotPage() {
+    loadAutopilot();
+    loadAutopilotTasks();
+    updateAutopilotBadge();
+  }
+
+  async function loadAutopilotTasks() {
+    var container = document.getElementById('autopilot-tasks');
+    if (!container) return;
+    try {
+      var tasksData = await api.get('/api/tasks');
+      var tasks = (tasksData.tasks || []).filter(function(t) {
+        return t.autopilot && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled';
+      });
+      if (tasks.length === 0) {
+        container.innerHTML = '<div class="empty-state">No active autopilot tasks</div>';
+        return;
+      }
+      var html = '';
+      tasks.forEach(function(t) {
+        html += renderTaskCard(t, 'dashboard', false, 0);
+      });
+      container.innerHTML = html;
+    } catch(e) { console.error('Failed to load autopilot tasks:', e); }
+  }
+
+  async function updateAutopilotBadge() {
+    try {
+      // Count active autopilot tasks for the badge
+      var tasksData = state.tasks && state.tasks.length > 0 ? { tasks: state.tasks } : await api.get('/api/tasks');
+      var apTasks = (tasksData.tasks || []).filter(function(t) {
+        return t.autopilot && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled';
+      });
+      var badge = document.getElementById('nav-autopilot-badge');
+      if (badge) {
+        badge.textContent = apTasks.length;
+        badge.classList.toggle('hidden', apTasks.length === 0);
+      }
+    } catch(e) {}
+  }
+
+  async function pauseAllAutopilot() {
+    try {
+      var schedules = await api.get('/api/autopilot');
+      await Promise.all(schedules.filter(function(s) { return s.enabled; }).map(function(s) {
+        return api.put('/api/autopilot/' + s.id, { enabled: false });
+      }));
+      toast('All schedules paused');
+      loadAutopilotPage();
+    } catch(e) { toast('Failed to pause schedules', 'error'); }
+  }
+
+  async function resumeAllAutopilot() {
+    try {
+      var schedules = await api.get('/api/autopilot');
+      await Promise.all(schedules.filter(function(s) { return !s.enabled; }).map(function(s) {
+        return api.put('/api/autopilot/' + s.id, { enabled: true });
+      }));
+      toast('All schedules resumed');
+      loadAutopilotPage();
+    } catch(e) { toast('Failed to resume schedules', 'error'); }
+  }
+
   // ── Help Section ─────────────────────────────────────
   var helpTopics = [
     {
-      title: 'Getting Started',
+      title: 'How TeamHero Works',
       icon: '&#9733;',
-      content: '<h2>Getting Started</h2>' +
-        '<p>TeamHero is an AI agent team management platform that follows a <strong>scrum-like methodology</strong> with structured review sessions called <strong>Round Tables</strong>.</p>' +
-        '<h3>How It Works</h3>' +
-        '<p>The <strong>Orchestrator</strong> is the brain of your team. It manages all agents, delegates tasks, runs round tables, and serves as your main point of contact through the Command Center.</p>' +
-        '<h3>Task Lifecycle</h3>' +
+      content: '<h2>How TeamHero Works</h2>' +
+        '<p>TeamHero is an <strong>AI agent team management platform</strong>. You manage a team of AI agents the same way you' + q + 'd manage a team of people - by assigning work, reviewing results, and giving feedback.</p>' +
+        '<h3>The Three Layers</h3>' +
         '<ol>' +
-        '<li><strong>Draft</strong> — Task is created but not yet reviewed</li>' +
-        '<li><strong>Pending Approval</strong> — Agent submitted work for your review</li>' +
-        '<li><strong>Execute</strong> — You sent the task for agent execution</li>' +
-        '<li><strong>Improve</strong> — You requested revisions with feedback</li>' +
-        '<li><strong>In Progress</strong> — Agent is actively working on it</li>' +
-        '<li><strong>Closed</strong> — Task is finished, no further work needed</li>' +
+        '<li><strong>You (the Owner)</strong> - You set goals, review deliverables, and provide feedback. You talk to the orchestrator through the Command Center.</li>' +
+        '<li><strong>The Orchestrator (Hero)</strong> - Your team lead. It takes your instructions, breaks them into tasks, assigns them to the right agents, and makes sure work gets done. It never does the work itself - it delegates.</li>' +
+        '<li><strong>Agents (the Team)</strong> - Specialized AI workers, each with their own role, personality, and memory. A developer, a researcher, a content writer - whatever your project needs.</li>' +
         '</ol>' +
-        '<h3>Your Role as Owner</h3>' +
-        '<p>You review and approve work, provide feedback, and guide the team through the Command Center. The orchestrator handles delegation and execution.</p>' +
+        '<h3>The Workflow</h3>' +
+        '<ol>' +
+        '<li>You tell the orchestrator what you need in the Command Center</li>' +
+        '<li>The orchestrator creates tasks and assigns them to agents</li>' +
+        '<li>Agents do the work and submit it for your review</li>' +
+        '<li>You accept good work or send feedback to improve it</li>' +
+        '<li>Accepted work is closed automatically</li>' +
+        '</ol>' +
+        '<p>Think of it as a project management tool where your employees are AI agents that work instantly, 24/7, and get better over time.</p>' +
         '<button class="help-go-link" onclick="App.navigate(\'chat\')">Go to Command Center &#8594;</button>'
+    },
+    {
+      title: 'Command Center',
+      icon: '&#9654;',
+      content: '<h2>Command Center</h2>' +
+        '<p>The Command Center is your <strong>terminal interface</strong> to the orchestrator. This is where you give instructions, ask questions, and manage your team. Everything starts here.</p>' +
+        '<h3>What You Can Do</h3>' +
+        '<ul>' +
+        '<li><code>Run a round table</code> - Trigger a full team review. The orchestrator will close completed work, launch agents on pending tasks, surface blockers, and give you a status report.</li>' +
+        '<li><code>Create a task for Dev to build a login page</code> - Create and assign work directly to an agent.</li>' +
+        '<li><code>Build me a team with a Content Writer and a QA Tester</code> - Create multiple agents at once.</li>' +
+        '<li><code>What is Scout working on?</code> - Check any agent' + q + 's current status.</li>' +
+        '<li><code>Research competitor pricing</code> - The orchestrator decides which agent is best and delegates.</li>' +
+        '</ul>' +
+        '<h3>Tips</h3>' +
+        '<ul>' +
+        '<li>Be specific about what you want - the orchestrator delegates to the right agent</li>' +
+        '<li>You can reference agents by name</li>' +
+        '<li>The orchestrator never does agent work itself - it always delegates via tasks</li>' +
+        '<li>Use Ctrl+C to copy selected text, paste works normally</li>' +
+        '</ul>' +
+        '<button class="help-go-link" onclick="App.navigate(\'chat\')">Go to Command Center &#8594;</button>'
+    },
+    {
+      title: 'Dashboard & Views',
+      icon: '&#9632;',
+      content: '<h2>Dashboard &amp; Views</h2>' +
+        '<p>The Dashboard is your <strong>mission control</strong>. It shows all tasks, their statuses, and the latest round table summary. It defaults to showing <strong>Pending</strong> tasks - work that needs your attention.</p>' +
+        '<h3>Stat Cards</h3>' +
+        '<p>Click any stat card to filter: <strong>Pending</strong>, <strong>All</strong>, <strong>Working</strong>, <strong>Accepted</strong>, or <strong>Closed</strong>. The pending count includes subtasks so nothing slips through.</p>' +
+        '<h3>Three View Modes</h3>' +
+        '<ul>' +
+        '<li><strong>List</strong> - Flat list sorted by priority. Quick scanning.</li>' +
+        '<li><strong>Flow</strong> - Visual dependency graph showing how tasks connect. Nodes pulse when in progress, dim when done, glow when pending. Hover any node to highlight its upstream and downstream chain.</li>' +
+        '<li><strong>Tree</strong> - Hierarchical view showing parent tasks with their subtasks nested below. Expandable/collapsible.</li>' +
+        '</ul>' +
+        '<h3>Round Table Summary</h3>' +
+        '<p>The right panel shows the latest round table report - what was executed, what needs your attention, and overall team status.</p>' +
+        '<button class="help-go-link" onclick="App.navigate(\'dashboard\')">Go to Dashboard &#8594;</button>'
+    },
+    {
+      title: 'Tasks & Lifecycle',
+      icon: '&#9998;',
+      content: '<h2>Tasks &amp; Lifecycle</h2>' +
+        '<p>Tasks are <strong>work units</strong> assigned to agents. Every piece of work flows through a clear lifecycle so nothing gets lost.</p>' +
+        '<h3>Status Flow</h3>' +
+        '<p><strong>Working &rarr; Pending &rarr; Accepted &rarr; Closed</strong></p>' +
+        '<ul>' +
+        '<li><strong>Working</strong> - Agent is actively doing the work. This is the starting state - when a task is created, the agent begins immediately.</li>' +
+        '<li><strong>Pending</strong> - Agent submitted a deliverable for your review. You can <strong>Accept</strong> or <strong>Improve</strong>.</li>' +
+        '<li><strong>Accepted</strong> - You approved the work. The orchestrator closes it automatically.</li>' +
+        '<li><strong>Improve</strong> - You sent feedback. The agent revises and resubmits to Pending.</li>' +
+        '<li><strong>Closed</strong> - Done. Terminal state. No further work.</li>' +
+        '<li><strong>Hold</strong> - Paused. Agent will not touch it until released.</li>' +
+        '<li><strong>Cancelled</strong> - Abandoned. No further action.</li>' +
+        '</ul>' +
+        '<h3>Key Principles</h3>' +
+        '<ul>' +
+        '<li>There is no draft state. Tasks start working immediately when created.</li>' +
+        '<li>Accepted tasks are closed automatically - you never need to close them manually.</li>' +
+        '<li>Each submission creates a new version. You can see the full revision history on the task detail page.</li>' +
+        '<li>Use the Improve button with specific feedback to tell the agent exactly what to change.</li>' +
+        '</ul>' +
+        '<h3>Subtasks &amp; Dependencies</h3>' +
+        '<p>Tasks can have subtasks assigned to different agents, and tasks can depend on other tasks. When all subtasks are done, the parent auto-advances. Blocked tasks (waiting on dependencies) show a lock icon.</p>' +
+        '<h3>Autopilot Mode</h3>' +
+        '<p>Individual tasks can be set to autopilot - the agent delivers, the orchestrator auto-accepts, and the task closes without your review. Toggle it on the task detail page.</p>' +
+        '<button class="help-go-link" onclick="App.navigate(\'dashboard\')">View Tasks &#8594;</button>'
     },
     {
       title: 'Round Tables',
       icon: '&#9679;',
       content: '<h2>Round Tables</h2>' +
-        '<p>Round Tables are <strong>structured review sessions</strong>, similar to sprint reviews or standups in agile methodology. They give you a complete overview of your team' + q + 's progress.</p>' +
-        '<h3>What Happens During a Round Table</h3>' +
+        '<p>Round Tables are <strong>execution-first team reviews</strong>. They are the heartbeat of your team - run them regularly to keep work moving.</p>' +
+        '<h3>What Happens (In Order)</h3>' +
+        '<p><strong>Phase 1: Execute</strong> - The orchestrator acts before it reports:</p>' +
         '<ul>' +
-        '<li>The orchestrator scans <strong>all tasks</strong> and reviews each status</li>' +
-        '<li>Agent progress is summarized — what' + q + 's done, what' + q + 's pending</li>' +
-        '<li>All <strong>approved tasks are executed immediately</strong></li>' +
-        '<li>Blockers and issues are flagged for your attention</li>' +
-        '<li>The Knowledge Base is reviewed for stale or outdated documents</li>' +
+        '<li>Closes all accepted tasks immediately</li>' +
+        '<li>Launches agents on tasks that have your feedback (improve status)</li>' +
+        '<li>Starts agents on any ready tasks that haven' + q + 't been picked up</li>' +
+        '<li>Flags stalled work with no recent progress</li>' +
+        '</ul>' +
+        '<p><strong>Phase 2: Surface Blockers</strong></p>' +
+        '<ul>' +
+        '<li>Tasks stuck waiting on unmet dependencies</li>' +
+        '<li>Tasks with no recent progress that may be stalled</li>' +
+        '<li>Tasks that need your decision (pending review)</li>' +
+        '<li>Agents with no active tasks (available capacity)</li>' +
+        '</ul>' +
+        '<p><strong>Phase 3: Report</strong></p>' +
+        '<ul>' +
+        '<li>Brief summary of what was just executed</li>' +
+        '<li>What needs your decision</li>' +
+        '<li>Knowledge base review - stale docs flagged</li>' +
         '</ul>' +
         '<h3>How to Trigger</h3>' +
-        '<p>Open the Command Center and type: <code>Run a round table</code></p>' +
-        '<p>You can also click the <strong>Run Round Table</strong> button on the Dashboard.</p>' +
+        '<p>Type <code>Run a round table</code> in the Command Center, or click the <strong>Round Table</strong> button on the Dashboard or Command Center header.</p>' +
         '<button class="help-go-link" onclick="App.navigate(\'dashboard\')">Go to Dashboard &#8594;</button>'
     },
     {
       title: 'Agents',
-      icon: '&#9632;',
+      icon: '&#9670;',
       content: '<h2>Agents</h2>' +
-        '<p>Agents are <strong>AI team members</strong>, each with a distinct role, personality, and set of capabilities. They execute tasks autonomously and submit work for your review.</p>' +
+        '<p>Agents are <strong>AI team members</strong>. Each has a distinct role, personality, rules, and memory. They execute tasks autonomously and improve over time as they learn your preferences.</p>' +
         '<h3>Agent Properties</h3>' +
         '<ul>' +
-        '<li><strong>Role</strong> — Their job title and area of expertise</li>' +
-        '<li><strong>Personality</strong> — Traits, tone, and communication style</li>' +
-        '<li><strong>Rules</strong> — Guidelines specific to this agent</li>' +
-        '<li><strong>Capabilities</strong> — Skills and tools they can use</li>' +
+        '<li><strong>Role</strong> - Their job title and area of expertise (e.g. Full-Stack Developer, Researcher)</li>' +
+        '<li><strong>Personality</strong> - Traits, tone, and communication style that shape their output</li>' +
+        '<li><strong>Rules</strong> - Guidelines specific to this agent' + q + 's domain</li>' +
+        '<li><strong>Capabilities</strong> - Skills and tools they can use</li>' +
         '</ul>' +
         '<h3>Agent Memory</h3>' +
-        '<p>Each agent has two memory banks:</p>' +
+        '<p>Each agent has two memory banks that persist across conversations:</p>' +
         '<ul>' +
-        '<li><strong>Short Memory</strong> — Current context, recent tasks, and active work. Cleared after round tables.</li>' +
-        '<li><strong>Long Memory</strong> — Persistent knowledge, preferences, and lessons learned.</li>' +
+        '<li><strong>Short Memory</strong> - Current context, active work, and recent round table outcomes. Gets refreshed regularly.</li>' +
+        '<li><strong>Long Memory</strong> - Persistent knowledge, your preferences, and lessons learned over time.</li>' +
         '</ul>' +
+        '<h3>The Orchestrator</h3>' +
+        '<p>The orchestrator (Hero) is a special agent that manages the team. It never does work itself - it plans, delegates, coordinates, and reports. You talk to it through the Command Center, and it talks to agents via tasks.</p>' +
         '<h3>Creating Agents</h3>' +
-        '<p>Create agents through the dashboard or ask the orchestrator in the Command Center: <code>Build me a team with a Content Writer and a Researcher</code></p>' +
+        '<p>Use the Add Agent page, or ask the orchestrator: <code>Build me a team with a Content Writer, a QA Tester, and a Designer</code></p>' +
         '<button class="help-go-link" onclick="App.navigate(\'add-agent\')">Add New Agent &#8594;</button>'
     },
     {
-      title: 'Tasks',
-      icon: '&#9998;',
-      content: '<h2>Tasks</h2>' +
-        '<p>Tasks are <strong>work units</strong> assigned to agents. Each task tracks its status, version history, and feedback between you and the agent.</p>' +
-        '<h3>Status Pipeline</h3>' +
-        '<p>Click any status badge on a task to change it:</p>' +
-        '<ul>' +
-        '<li><strong>Draft</strong> — Created, awaiting initial work</li>' +
-        '<li><strong>Pending Approval</strong> — Agent submitted deliverable for review</li>' +
-        '<li><strong>Execute</strong> — You sent the task for agent execution</li>' +
-        '<li><strong>Improve</strong> — Request revisions with specific feedback</li>' +
-        '<li><strong>In Progress</strong> — Agent is actively working</li>' +
-        '<li><strong>Closed</strong> — Finished, no further work needed</li>' +
-        '<li><strong>Hold</strong> — Paused, visible but not actively worked on</li>' +
-        '<li><strong>Cancelled</strong> — Abandoned</li>' +
-        '</ul>' +
-        '<h3>Feedback &amp; Improve</h3>' +
-        '<p>When reviewing a task, use the <strong>Improve</strong> action to send comments back to the agent. Comments are required — they tell the agent exactly what to change. Each revision creates a new version in the timeline.</p>' +
-        '<h3>Versions</h3>' +
-        '<p>Tasks track every submission as a version. You can see the full conversation history between you and the agent on the task detail page.</p>' +
-        '<button class="help-go-link" onclick="App.navigate(\'dashboard\')">View Tasks &#8594;</button>'
+      title: 'Autopilot',
+      icon: '&#9881;',
+      content: '<h2>Autopilot</h2>' +
+        '<p>Autopilot enables <strong>autonomous task execution</strong> - work that runs without your review in the loop.</p>' +
+        '<h3>Two Types of Autopilot</h3>' +
+        '<p><strong>1. Task-level autopilot</strong> - Toggle autopilot on any individual task. The agent delivers, the orchestrator auto-accepts and closes. No owner review needed. Good for routine or low-risk work.</p>' +
+        '<p><strong>2. Scheduled autopilot</strong> - Create recurring schedules that fire automatically on an interval. Assign a prompt to an agent, set how often it runs (minutes, hours, days), and let it go. Good for daily standups, periodic research, content generation, or system checks.</p>' +
+        '<h3>Safety</h3>' +
+        '<p>Autopilot tasks still appear in the dashboard with a gear icon so you can monitor them. Use <strong>Pause All</strong> to instantly stop all schedules if needed. You can toggle autopilot off on any task at any time to re-enable human review.</p>' +
+        '<button class="help-go-link" onclick="App.navigate(\'autopilot\')">Go to Autopilot &#8594;</button>'
     },
     {
       title: 'Knowledge Base',
       icon: '&#9776;',
       content: '<h2>Knowledge Base</h2>' +
-        '<p>The Knowledge Base is a <strong>library of research deliverables</strong> and reference documents created by your agents.</p>' +
+        '<p>The Knowledge Base is a <strong>library of research and reference documents</strong> created by your agents. It' + q + 's the team' + q + 's institutional memory.</p>' +
         '<h3>How It Works</h3>' +
         '<ul>' +
-        '<li>When a research task is completed, it can be <strong>promoted to the Knowledge Base</strong></li>' +
+        '<li>When a research task is completed, its deliverable can be <strong>promoted to the Knowledge Base</strong></li>' +
         '<li>Documents are categorized: Research, Analysis, Reference, or Guide</li>' +
-        '<li>Tag documents for easy discovery and filtering</li>' +
+        '<li>Tag documents for easy filtering and discovery</li>' +
+        '<li>Agents can reference knowledge base docs in future work</li>' +
         '</ul>' +
-        '<h3>Promoting Tasks</h3>' +
-        '<p>On any completed task, click the <strong>Promote to Knowledge Base</strong> button to save its deliverable as a knowledge document.</p>' +
         '<h3>Staleness</h3>' +
-        '<p>Documents older than 30 days are flagged as stale during round tables for review or archival.</p>' +
+        '<p>Documents older than 30 days are flagged as stale during round tables. The orchestrator will ask you whether to update, archive, or keep them.</p>' +
         '<button class="help-go-link" onclick="App.navigate(\'knowledge\')">Go to Knowledge Base &#8594;</button>'
     },
     {
       title: 'Media Library',
       icon: '&#9634;',
       content: '<h2>Media Library</h2>' +
-        '<p>The Media Library stores <strong>files, images, and documents</strong> associated with your team' + q + 's work.</p>' +
+        '<p>The Media Library stores <strong>images, screenshots, videos, and documents</strong> from your team' + q + 's work.</p>' +
         '<h3>Features</h3>' +
         '<ul>' +
-        '<li><strong>Thumbnails</strong> — Image files display visual previews</li>' +
-        '<li><strong>Preview</strong> — Click any file to preview it in the browser</li>' +
-        '<li><strong>Open in Folder</strong> — Quickly locate files on your system</li>' +
-        '<li><strong>Filter</strong> — Browse by type: Images, Documents, Video, or All</li>' +
+        '<li><strong>Thumbnails</strong> - Image files show visual previews</li>' +
+        '<li><strong>Preview</strong> - Click any file to preview it in the browser</li>' +
+        '<li><strong>Open in Folder</strong> - Jump to the file on your system</li>' +
+        '<li><strong>Filter</strong> - Browse by type: Images, Documents, Video, or All</li>' +
         '</ul>' +
-        '<p>Files are stored in the <code>data/media/</code> folder in your project directory.</p>' +
+        '<p>Files are stored in <code>data/media/</code>. Agents save screenshots, generated images, and other assets here automatically.</p>' +
         '<button class="help-go-link" onclick="App.navigate(\'media\')">Go to Media Library &#8594;</button>'
     },
     {
       title: 'Skills & Connectors',
       icon: '&#9670;',
       content: '<h2>Skills &amp; Connectors</h2>' +
-        '<p>Skills are <strong>MCP (Model Context Protocol) integrations</strong> that give your agents the ability to interact with external tools and services.</p>' +
-        '<h3>How Skills Work</h3>' +
+        '<p>Skills extend what your agents can do by connecting them to <strong>external tools and services</strong>.</p>' +
+        '<h3>Skill Types</h3>' +
         '<ul>' +
-        '<li>Each skill installs its dependencies and configures the integration automatically</li>' +
-        '<li>Enable or disable skills with a toggle switch</li>' +
-        '<li>Some skills require configuration (API keys, workspace IDs, etc.)</li>' +
+        '<li><strong>MCP Skills</strong> - Model Context Protocol integrations that give agents direct tool access (e.g. Playwright for browser control, Trello for project boards)</li>' +
+        '<li><strong>CLI Skills</strong> - Command-line tools agents can invoke (e.g. screen recording with ffmpeg, video creation with Remotion)</li>' +
         '</ul>' +
-        '<h3>Available Connectors</h3>' +
-        '<p>Connectors include integrations like <strong>Trello</strong>, <strong>Gmail</strong>, <strong>Playwright</strong> (browser automation), and more. Check the Skills page for the full list of available integrations.</p>' +
+        '<h3>Managing Skills</h3>' +
+        '<ul>' +
+        '<li>Enable/disable skills with a toggle</li>' +
+        '<li>Some skills require configuration (API keys, tokens)</li>' +
+        '<li>Dependencies are installed automatically when you enable a skill</li>' +
+        '</ul>' +
         '<button class="help-go-link" onclick="App.navigate(\'skills\')">Go to Skills &#8594;</button>'
     },
     {
-      title: 'Autopilot',
-      icon: '&#9654;',
-      content: '<h2>Autopilot</h2>' +
-        '<p>Autopilot lets you <strong>schedule recurring tasks</strong> that run automatically on a set interval.</p>' +
-        '<h3>How It Works</h3>' +
+      title: 'Security & Secrets',
+      icon: '&#128274;',
+      content: '<h2>Security &amp; Secrets</h2>' +
+        '<p>TeamHero runs <strong>100% locally</strong> on your machine. No cloud, no external servers, no telemetry. Your data never leaves your computer unless you explicitly tell an agent to post or send something.</p>' +
+        '<h3>Agent Sandbox - What You Need to Know</h3>' +
+        '<p>Agents are instructed to stay within the project folder and follow security rules. However, <strong>this is enforced by rules, not by a technical sandbox</strong>. Agents run as Claude Code subprocesses with the same OS permissions as your user account. In theory, an agent could access files or run commands outside the project if it ignored its instructions.</p>' +
+        '<p>The layers of protection:</p>' +
         '<ul>' +
-        '<li>Create a schedule with a <strong>name</strong>, <strong>prompt</strong>, and <strong>interval</strong></li>' +
-        '<li>Assign it to a specific agent or let the orchestrator decide</li>' +
-        '<li>Set the interval in minutes, hours, or days</li>' +
-        '<li>Enable or disable schedules with the play/pause controls</li>' +
+        '<li><strong>CLAUDE.md safety boundaries</strong> - Every agent session includes strict rules: stay within the project root, never modify platform files, no destructive system commands. Claude follows these reliably.</li>' +
+        '<li><strong>Security rules</strong> - Explicitly ban directory traversal, system file access, and dangerous commands (rm -rf, shutdown, kill, etc.).</li>' +
+        '<li><strong>Supervised mode</strong> - In supervised mode, Claude Code prompts you for confirmation before file writes and shell commands outside the project. This is the strongest guard available.</li>' +
+        '<li><strong>Autonomous mode</strong> - No confirmation prompts. The only protection is the AI following its rules. Faster, but you are trusting the instructions to hold.</li>' +
         '</ul>' +
-        '<h3>Use Cases</h3>' +
+        '<p><strong>Recommendation:</strong> If your machine has sensitive files outside the project, use <strong>supervised mode</strong>. Use autonomous mode only when you trust the workflow and have reviewed your agent rules. You can switch modes anytime in Settings.</p>' +
+        '<h3>Secret Storage (Vault)</h3>' +
+        '<p>API keys and tokens are stored in a single <strong>encrypted file</strong>: <code>config/secrets.enc</code>. This is TeamHero' + q + 's own vault - it does <strong>not</strong> use the OS keychain (Windows Credential Manager, macOS Keychain, etc.). The file is self-contained and portable with your project.</p>' +
+        '<h3>How the Vault Works</h3>' +
+        '<p>The encrypted file structure: <code>[32-byte salt] [12-byte IV] [16-byte auth tag] [ciphertext]</code></p>' +
         '<ul>' +
-        '<li>Daily standups or round tables</li>' +
-        '<li>Periodic content generation</li>' +
-        '<li>Scheduled research updates</li>' +
-        '<li>Regular system health checks</li>' +
+        '<li><strong>Encryption:</strong> AES-256-GCM - the same standard used by banks and governments</li>' +
+        '<li><strong>Key derivation:</strong> Your master password is transformed into an encryption key using PBKDF2 with SHA-512 and 100,000 iterations - this makes brute-force attacks impractical</li>' +
+        '<li><strong>Random salt:</strong> A 32-byte random salt is generated per vault, so identical passwords produce different keys even if the password is reused</li>' +
+        '<li><strong>Tamper detection:</strong> GCM mode includes an authentication tag - if anyone modifies the encrypted file, decryption fails</li>' +
+        '<li><strong>Locked by default:</strong> On disk, secrets are always encrypted. They are only decrypted into memory after you unlock with your master password. When the server stops, the decrypted values are gone.</li>' +
         '</ul>' +
-        '<button class="help-go-link" onclick="App.navigate(\'settings\')">Go to Settings &#8594;</button>'
+        '<h3>Risks You Should Know</h3>' +
+        '<ul>' +
+        '<li><strong>Master password is not stored anywhere.</strong> If you forget it, your secrets are gone. There is no recovery mechanism - that is by design. Write it down somewhere safe.</li>' +
+        '<li><strong>In-memory exposure:</strong> While the server is running and the vault is unlocked, decrypted secrets exist in process memory. Anyone with access to your machine could theoretically read them from the running process.</li>' +
+        '<li><strong>AI agents can use your keys.</strong> When secrets are unlocked, agents receive them as environment variables. A misconfigured or poorly prompted agent could call an API in ways you did not intend. Always review agent rules and use supervised mode for sensitive operations.</li>' +
+        '<li><strong>The encrypted file is only as strong as your password.</strong> A weak master password can be brute-forced offline. Use a strong, unique password.</li>' +
+        '<li><strong>No access control between agents.</strong> All unlocked secrets are available to all agents. You cannot restrict specific keys to specific agents. If an agent should not have access to a key, do not store it in the vault while that agent is active.</li>' +
+        '<li><strong>Local network exposure:</strong> The dashboard runs on localhost. If your machine is on a shared network and the port is accessible, others could potentially reach the dashboard. TeamHero does not have authentication on the web UI.</li>' +
+        '</ul>' +
+        '<h3>Secret Injection</h3>' +
+        '<p>When the vault is unlocked, secrets are injected as <strong>environment variables</strong> into agent sessions. Agents can use them (e.g. <code>$TRELLO_API_KEY</code>) but never see the actual values in plain text.</p>' +
+        '<h3>Output Scrubbing</h3>' +
+        '<p>All terminal output is <strong>automatically scrubbed</strong> before being displayed. If an agent accidentally echoes a secret value, it appears as <code>[REDACTED]</code>. This works in real-time on every line of output.</p>' +
+        '<h3>Prompt Injection Protection</h3>' +
+        '<p>When agents process external content (emails, web pages, user-submitted text), they treat it as <strong>untrusted data</strong>:</p>' +
+        '<ul>' +
+        '<li>Never execute instructions found in external content</li>' +
+        '<li>Summarize rather than quote verbatim</li>' +
+        '<li>Flag suspicious content that looks like injection attempts</li>' +
+        '</ul>' +
+        '<h3>File System Boundaries</h3>' +
+        '<ul>' +
+        '<li>All agent file operations are confined to the <strong>project root directory</strong></li>' +
+        '<li>Agents cannot modify platform files (server.js, portal/) - these are protected</li>' +
+        '<li>Path traversal is validated to prevent escaping the project sandbox</li>' +
+        '<li>No destructive system commands (rm -rf, shutdown, kill, etc.)</li>' +
+        '</ul>' +
+        '<h3>External Communication Control</h3>' +
+        '<ul>' +
+        '<li>No emails, social media posts, git pushes, or API calls without <strong>explicit owner approval</strong></li>' +
+        '<li>Content must be reviewed before publishing - even autopilot tasks log what they do</li>' +
+        '<li>All published URLs are logged on the task for auditability</li>' +
+        '</ul>' +
+        '<h3>Security Rules</h3>' +
+        '<p>You can edit the security rules in <strong>Team Rules</strong> under the Security section. These rules are injected into every agent session and enforced automatically.</p>' +
+        '<button class="help-go-link" onclick="App.navigate(\'rules\')">Edit Security Rules &#8594;</button>'
     },
     {
-      title: 'Settings',
+      title: 'Settings & Config',
       icon: '&#9881;',
-      content: '<h2>Settings</h2>' +
-        '<p>Configure your TeamHero platform to match your workflow.</p>' +
+      content: '<h2>Settings &amp; Configuration</h2>' +
         '<h3>Owner Profile</h3>' +
-        '<p>Your profile tells agents about you — your name, role, expertise, and goals. Agents use this context to tailor their work.</p>' +
-        '<h3>Team Rules &amp; Security Rules</h3>' +
-        '<p>Define operational rules that apply to all agents, plus security guidelines for data protection and prompt injection prevention.</p>' +
+        '<p>Your profile tells agents who you are - your name, role, expertise, and goals. Agents use this to tailor their work to your needs.</p>' +
+        '<h3>Team Rules</h3>' +
+        '<p>Operational rules that apply to all agents: task lifecycle, delegation rules, content standards, and collaboration protocols. These are the law of your team.</p>' +
         '<h3>Permission Modes</h3>' +
         '<ul>' +
-        '<li><strong>Autonomous</strong> — Claude operates freely, executing tasks without confirmation prompts</li>' +
-        '<li><strong>Supervised</strong> — Claude asks for confirmation before executing certain actions</li>' +
+        '<li><strong>Autonomous</strong> - Agents operate freely without confirmation prompts</li>' +
+        '<li><strong>Supervised</strong> - Agents ask before executing certain actions</li>' +
         '</ul>' +
-        '<h3>Secrets &amp; API Keys</h3>' +
-        '<p>Store encrypted secrets (API keys, tokens) that are injected into Claude sessions. Protected with AES-256-GCM encryption and a master password.</p>' +
-        '<h3>Software Updates</h3>' +
-        '<p>Check for platform updates from GitHub. Updates only affect platform files — your agents, tasks, and data are never changed.</p>' +
+        '<h3>Updates</h3>' +
+        '<p>Check for platform updates from GitHub. Updates only affect platform files - your agents, tasks, and data are never touched.</p>' +
         '<button class="help-go-link" onclick="App.navigate(\'settings\')">Go to Settings &#8594;</button>'
-    },
-    {
-      title: 'Command Center',
-      icon: '&#9654;',
-      content: '<h2>Command Center</h2>' +
-        '<p>The Command Center is your <strong>terminal interface</strong> to the orchestrator. It' + q + 's where you give instructions, ask questions, and manage your team.</p>' +
-        '<h3>Common Commands</h3>' +
-        '<ul>' +
-        '<li><code>Run a round table</code> — Trigger a structured team review</li>' +
-        '<li><code>Create a task for [agent] to [description]</code> — Create and assign work</li>' +
-        '<li><code>Build me a team with [roles]</code> — Create multiple agents at once</li>' +
-        '<li><code>What is [agent] working on?</code> — Check agent status</li>' +
-        '<li><code>Summarize all pending tasks</code> — Get an overview</li>' +
-        '</ul>' +
-        '<h3>Tips</h3>' +
-        '<ul>' +
-        '<li>Be specific about what you want — the orchestrator will delegate to the right agent</li>' +
-        '<li>You can reference agents by name in your prompts</li>' +
-        '<li>The orchestrator remembers context within a session</li>' +
-        '</ul>' +
-        '<button class="help-go-link" onclick="App.navigate(\'chat\')">Go to Command Center &#8594;</button>'
     }
   ];
 
@@ -2963,9 +3572,14 @@
     toggleAutopilot: toggleAutopilot,
     editAutopilot: editAutopilot,
     deleteAutopilot: deleteAutopilot,
+    pauseAllAutopilot: pauseAllAutopilot,
+    resumeAllAutopilot: resumeAllAutopilot,
     selectHelpTopic: selectHelpTopic,
     navigateTask: navigateTask,
     toggleTaskAutopilot: toggleTaskAutopilot,
+    setViewMode: setViewMode,
+    toggleFlowExpand: toggleFlowExpand,
+    toggleHierarchyExpand: toggleHierarchyExpand,
   };
 
   init();

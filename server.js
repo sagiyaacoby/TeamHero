@@ -403,7 +403,7 @@ function rebuildClaudeMd() {
     '### Autopilot\n' +
     'Tasks with `autopilot: true` run the full lifecycle without human review. Agent delivers, orchestrator auto-accepts, auto-closes.\n\n' +
     '### Subtasks\n' +
-    'Parent tasks can have subtasks (`parentTaskId`, `subtasks[]`, `dependsOn[]`). Max 1 level deep.\n' +
+    'Parent tasks can have subtasks (`parentTaskId`, `subtasks[]`, `dependsOn[]`). Unlimited nesting.\n' +
     'When all subtasks reach accepted/closed, parent auto-advances to pending_approval.\n' +
     'Tasks with unmet `dependsOn` wait until all dependencies are accepted/closed.\n\n' +
     'Task files: `data/tasks/{task-id}/task.json` with version folders `v1/`, `v2/`, etc.\n\n' +
@@ -1060,7 +1060,7 @@ async function handle(pn, m, req, res) {
     const parentTp = path.join(ROOT, 'data/tasks', parentId, 'task.json');
     const parent = readJSON(parentTp);
     if (!parent) return E(res, 'Parent not found', 404);
-    if (parent.parentTaskId) return E(res, 'Cannot create subtask of a subtask (max 1 level deep)', 400);
+    // Unlimited nesting allowed - no depth limit
     const b = await parseBody(req);
     const subId = b.id || genId();
     const subDir = path.join(ROOT, 'data/tasks', subId);
@@ -1252,11 +1252,13 @@ async function handle(pn, m, req, res) {
       if (ai >= 0) aix.tasks[ai] = { id: id, title: actionResult.title, status: actionResult.status, assignedTo: actionResult.assignedTo, priority: actionResult.priority, type: actionResult.type || 'general', autopilot: actionResult.autopilot || false, parentTaskId: actionResult.parentTaskId || null };
       writeJSON(aip, aix);
 
-      // Auto-advance parent task when all subtasks are accepted/closed
+      // Auto-advance parent task when all subtasks are accepted/closed (recursive for deep nesting)
       if ((actionResult.status === 'accepted' || actionResult.status === 'closed') && actionResult.parentTaskId) {
-        var parentTp2 = path.join(ROOT, 'data/tasks', actionResult.parentTaskId, 'task.json');
-        var parentTask2 = readJSON(parentTp2);
-        if (parentTask2 && parentTask2.subtasks && parentTask2.subtasks.length > 0) {
+        var checkParentId = actionResult.parentTaskId;
+        while (checkParentId) {
+          var parentTp2 = path.join(ROOT, 'data/tasks', checkParentId, 'task.json');
+          var parentTask2 = readJSON(parentTp2);
+          if (!parentTask2 || !parentTask2.subtasks || parentTask2.subtasks.length === 0) break;
           var allDone = parentTask2.subtasks.every(function(sid) {
             var sub = readJSON(path.join(ROOT, 'data/tasks', sid, 'task.json'));
             return sub && (sub.status === 'accepted' || sub.status === 'closed');
@@ -1265,8 +1267,11 @@ async function handle(pn, m, req, res) {
             parentTask2.status = 'pending_approval';
             parentTask2.updatedAt = now;
             writeJSON(parentTp2, parentTask2);
-            var pi = aix.tasks.findIndex(function(x) { return x.id === actionResult.parentTaskId; });
+            var pi = aix.tasks.findIndex(function(x) { return x.id === checkParentId; });
             if (pi >= 0) { aix.tasks[pi].status = 'pending_approval'; writeJSON(aip, aix); }
+            checkParentId = parentTask2.parentTaskId;
+          } else {
+            break;
           }
         }
       }

@@ -10,27 +10,26 @@
 
 ### Status Flow
 ```
-Draft -> Working -> Pending -> Accepted -> Closed
-                      |
-                    Improve (side action)
+Working -> Pending -> Accepted -> Closed
+              |
+            Improve (side action)
 ```
 
 ### Status Meanings
-- **Draft** (`draft`): Task created, not yet started. Orchestrator creates and assigns it, then launches the agent.
-- **Working** (`in_progress`): Agent is actively working on the task.
+- **Working** (`in_progress`): Agent is actively working on the task. This is the starting state - when a task is created, the agent starts immediately.
 - **Pending** (`pending_approval`): Agent delivered work, waiting for owner review. Owner can: Accept or Improve.
-- **Accepted** (`accepted`): Owner accepted the deliverable. Result is final. Auto-closes or orchestrator closes.
+- **Accepted** (`accepted`): Owner accepted the deliverable. Result is final. Orchestrator closes immediately.
 - **Improve** (`revision_needed`): Owner sent feedback via Improve button. Agent must revise and resubmit to Pending.
 - **Closed** (`closed`): Fully complete, archived. Terminal state. No further work.
 - **Hold** (`hold`): Paused - do not work on until the owner releases it.
 - **Cancelled** (`cancelled`): Abandoned - no further action.
 
 ### Rules
-- When a task is created, the orchestrator launches the assigned agent immediately
+- There is NO draft status. When a task is created, the agent starts working immediately.
 - When the owner clicks Accept, the task moves to Accepted - deliverable is locked in
 - When the owner clicks Improve and adds feedback, the agent must revise and resubmit
 - When the owner marks a task as Closed, it is done forever. No agent should touch it.
-- Accepted tasks should be closed by the orchestrator (or auto-close)
+- Accepted tasks MUST be closed immediately by the orchestrator - never ask the owner
 
 ## Autopilot
 - Tasks with `autopilot: true` run the full lifecycle without human review
@@ -96,11 +95,30 @@ Draft -> Working -> Pending -> Accepted -> Closed
 - When reading files, use offset/limit for large files instead of reading the whole thing.
 - Do not repeat searches you already did. Cache results mentally within the conversation.
 
-## Round Table Reviews
-- Round tables must check that work is properly delegated, not silently done by the orchestrator
-- Review each agent's task load and progress
-- Flag any bottlenecks or unassigned work
-- Present items needing owner approval (Pending tasks)
-- Review knowledge base - list recent additions, flag stale docs
-- Launch agents for any tasks that need work
-- If a task has a blocker, log it on the task and flag it to the owner - do not silently skip it
+## Round Table Protocol
+
+Round tables are **execution-first**. The orchestrator acts before it reports. No task should sit idle without the owner knowing why.
+
+### Phase 1: Execute (do this BEFORE reporting)
+1. **Close accepted tasks** - immediately, no confirmation needed
+2. **Launch agents on revision_needed tasks** - owner already gave feedback, agent must act
+3. **Launch agents on draft tasks** that are ready (assigned, dependencies met)
+4. **Unblock stalled work** - if a task is in_progress with no progress logged for a long time, flag it
+
+### Phase 2: Surface blockers
+- Tasks stuck waiting on unmet dependencies - name the blocker
+- Tasks in_progress with no recent progress - may be stalled
+- Tasks that need owner input before they can proceed (pending_approval)
+- Agents with zero active tasks (available capacity)
+
+### Phase 3: Report
+- Brief status summary (not a wall of text)
+- What was just executed in Phase 1
+- What needs the owner's decision
+- Knowledge base review - flag stale docs (>30 days)
+
+### Rules
+- Never leave tasks sitting idle without surfacing them
+- The owner should never discover a stalled task by accident
+- Work is properly delegated, not silently done by the orchestrator
+- If a task has a blocker, log it on the task AND flag it to the owner

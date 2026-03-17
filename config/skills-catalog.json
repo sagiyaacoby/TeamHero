@@ -48,5 +48,19 @@
       { "key": "TRELLO_API_TOKEN", "label": "Trello API Token", "type": "secret", "required": true, "help": "Generate a token at https://trello.com/1/authorize?expiration=never&scope=read,write&response_type=token&key=YOUR_API_KEY" },
       { "key": "TRELLO_BOARD_ID", "label": "Default Board ID", "type": "text", "required": false, "help": "Optional. The default Trello board ID to operate on." }
     ]
+  },
+  {
+    "id": "remotion",
+    "name": "Remotion Video",
+    "description": "Create and render videos programmatically using React components. Build intros, demos, social clips, and promotional videos with code.",
+    "icon": "\ud83c\udfa5",
+    "type": "cli",
+    "packages": ["remotion", "@remotion/cli", "@remotion/bundler", "@remotion/renderer"],
+    "scripts": {
+      "render": "npx remotion render",
+      "preview": "npx remotion preview",
+      "status": "npx remotion --version"
+    },
+    "docs": "https://www.remotion.dev/docs"
   }
 ]

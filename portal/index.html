@@ -134,8 +134,8 @@
       <span class="subtitle">Agent Portal</span>
     </div>
     <div class="nav-sticky-top">
-      <a href="#" data-view="dashboard" class="nav-link active"><span class="icon">&#9632;</span> Dashboard</a>
-      <a href="#" data-view="chat" class="nav-link nav-chat"><span class="icon">&#9654;</span> Command Center</a>
+      <a href="#" data-view="chat" class="nav-link nav-chat active"><span class="icon">&#9654;</span> Command Center</a>
+      <a href="#" data-view="dashboard" class="nav-link"><span class="icon">&#9632;</span> Dashboard</a>
     </div>
     <ul class="nav-list" id="nav-list">
       <li class="nav-section">Work</li>
@@ -151,6 +151,8 @@
       <li><a href="#" data-view="profile" class="nav-link"><span class="icon">&#9679;</span> Profile</a></li>
       <li><a href="#" data-view="rules" class="nav-link"><span class="icon">&#9998;</span> Team Rules</a></li>
       <li><a href="#" data-view="settings" class="nav-link"><span class="icon">&#9881;</span> Settings</a></li>
+      <li class="nav-section">Support</li>
+      <li><a href="#" data-view="help" class="nav-link"><span class="icon">&#63;</span> Help</a></li>
     </ul>
     <div id="update-banner" class="update-banner hidden" onclick="App.navigate('settings')">
       <span class="update-dot"></span> Update Available
@@ -188,6 +190,14 @@
         </div>
       </header>
       <div id="terminal-container" class="terminal-container"></div>
+      <div class="paste-image-bar" id="paste-image-bar">
+        <button class="paste-image-btn" onclick="App.pasteImage()" title="Paste image from clipboard (Ctrl+V)">&#128203; Paste Image</button>
+        <div id="paste-preview-area" class="paste-preview-area hidden">
+          <img id="paste-preview-img" class="paste-preview" alt="preview">
+          <span id="paste-preview-path" class="paste-path"></span>
+        </div>
+        <button class="focus-terminal-btn" onclick="App.focusTerminal()" title="Focus terminal input">&#8595;</button>
+      </div>
     </section>
 
     <!-- Agent Detail (tabbed) -->
@@ -612,6 +622,15 @@
       <header class="view-header"><h2>Skills</h2></header>
       <p class="form-hint" style="margin-bottom:20px">Enable curated capabilities for your agents. Skills install dependencies and configure integrations automatically.</p>
       <div id="skills-grid" class="skills-grid"><div class="empty-state">Loading skills...</div></div>
+    </section>
+
+    <!-- Help -->
+    <section id="view-help" class="view">
+      <header class="view-header"><h2>Help</h2></header>
+      <div class="help-layout">
+        <div class="help-topics" id="help-topics"></div>
+        <div class="help-content" id="help-content"></div>
+      </div>
     </section>
 
   </main>

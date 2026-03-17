@@ -146,7 +146,11 @@
       document.getElementById('view-chat').classList.add('active');
       var navEl = document.querySelector('[data-view="chat"]');
       if (navEl) navEl.classList.add('active');
-      setTimeout(function() { initTerminal(); if (terminal) terminal.focus(); }, 100);
+      setTimeout(function() {
+        initTerminal();
+        if (fitAddon) try { fitAddon.fit(); } catch(e) {}
+        if (terminal) terminal.focus();
+      }, 50);
     } else {
       var el = document.getElementById('view-' + viewId);
       if (el) el.classList.add('active');
@@ -160,6 +164,7 @@
       if (viewId === 'media') loadMedia();
       if (viewId === 'skills') loadSkills();
       if (viewId === 'knowledge') loadKnowledge();
+      if (viewId === 'help') loadHelp(0);
     }
   }
 
@@ -308,16 +313,18 @@
 
     orchAgents.forEach(function(a) {
       var isActive = state.currentView === 'agent-detail' && state.currentAgentId === a.id;
-      var working = workingAgents[a.id] ? '<span class="agent-working-dot" title="Working on task"></span>' : '';
+      var dotClass = 'agent-dot' + (workingAgents[a.id] ? ' agent-dot-working' : '');
+      var dotTitle = workingAgents[a.id] ? 'Working on task' : 'Idle';
       html += '<a href="#" data-agent-id="' + a.id + '" class="nav-link nav-orchestrator' + (isActive ? ' active' : '') + '">' +
-        '<span class="icon">&#9733;</span> ' + escHtml(a.name) + working + '</a>';
+        '<span class="icon">&#9733;</span> ' + escHtml(a.name) + '<span class="' + dotClass + '" title="' + dotTitle + '"></span></a>';
     });
 
     subAgents.forEach(function(a) {
       var isActive = state.currentView === 'agent-detail' && state.currentAgentId === a.id;
-      var working = workingAgents[a.id] ? '<span class="agent-working-dot" title="Working on task"></span>' : '';
+      var dotClass = 'agent-dot' + (workingAgents[a.id] ? ' agent-dot-working' : '');
+      var dotTitle = workingAgents[a.id] ? 'Working on task' : 'Idle';
       html += '<a href="#" data-agent-id="' + a.id + '" class="nav-link' + (isActive ? ' active' : '') + '">' +
-        '<span class="icon">&#9670;</span> ' + escHtml(a.name) + working + '</a>';
+        '<span class="icon">&#9670;</span> ' + escHtml(a.name) + '<span class="' + dotClass + '" title="' + dotTitle + '"></span></a>';
     });
 
     container.innerHTML = html;
@@ -843,8 +850,11 @@
     html += '<textarea id="task-review-comments" placeholder="Write feedback for the agent..."></textarea>';
     html += '<div class="task-feedback-actions">';
     html += '<button class="btn btn-primary" onclick="App.reviewTask(\'improve\')">Send Feedback</button>';
+    html += '<button class="attach-image-btn" onclick="App.attachTaskImage()" title="Paste image from clipboard">&#128203; Attach Image</button>';
     html += '<button class="btn btn-secondary" onclick="App.toggleFeedback()">Cancel</button>';
-    html += '</div></div>';
+    html += '</div>';
+    html += '<div id="feedback-image-area"></div>';
+    html += '</div>';
 
     // Result display
     if (task.result && (current === 'done' || current === 'approved')) {
@@ -869,6 +879,110 @@
   function toggleFeedback() {
     var area = document.getElementById('task-feedback-area');
     if (area) area.classList.toggle('hidden');
+  }
+
+  // ── Clipboard Image Helpers ──────────────────────
+  async function readClipboardImage() {
+    try {
+      var items = await navigator.clipboard.read();
+      for (var i = 0; i < items.length; i++) {
+        var types = items[i].types;
+        for (var t = 0; t < types.length; t++) {
+          if (types[t] === 'image/png' || types[t] === 'image/jpeg') {
+            var blob = await items[i].getType(types[t]);
+            return blob;
+          }
+        }
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function blobToBase64(blob) {
+    // Compress image to fit within server body limit (5MB)
+    return new Promise(function(resolve, reject) {
+      var img = new Image();
+      img.onload = function() {
+        var canvas = document.createElement('canvas');
+        var maxDim = 1920;
+        var w = img.width, h = img.height;
+        if (w > maxDim || h > maxDim) {
+          var ratio = Math.min(maxDim / w, maxDim / h);
+          w = Math.round(w * ratio);
+          h = Math.round(h * ratio);
+        }
+        canvas.width = w;
+        canvas.height = h;
+        var ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        var dataUrl = canvas.toDataURL('image/png');
+        resolve(dataUrl.split(',')[1]);
+      };
+      img.onerror = reject;
+      img.src = URL.createObjectURL(blob);
+    });
+  }
+
+  async function pasteImage() {
+    var blob = await readClipboardImage();
+    if (!blob) {
+      toast('No image found in clipboard', 'error');
+      return;
+    }
+    try {
+      var b64 = await blobToBase64(blob);
+      var result = await api.post('/api/upload-image', { data: b64, destination: 'clipboard' });
+      var previewArea = document.getElementById('paste-preview-area');
+      var previewImg = document.getElementById('paste-preview-img');
+      var previewPath = document.getElementById('paste-preview-path');
+      if (previewArea && previewImg && previewPath) {
+        previewImg.src = URL.createObjectURL(blob);
+        previewPath.textContent = result.path;
+        previewArea.classList.remove('hidden');
+      }
+      toast('Image saved: ' + result.path);
+    } catch (e) {
+      toast('Failed to upload image: ' + e.message, 'error');
+    }
+  }
+
+  async function attachTaskImage() {
+    var taskId = state.currentTaskId;
+    if (!taskId) { toast('No task selected', 'error'); return; }
+    var blob = await readClipboardImage();
+    if (!blob) {
+      toast('No image found in clipboard', 'error');
+      return;
+    }
+    try {
+      var b64 = await blobToBase64(blob);
+      var result = await api.post('/api/upload-image', { data: b64, destination: 'task', taskId: taskId });
+      var area = document.getElementById('feedback-image-area');
+      if (area) {
+        var img = document.createElement('img');
+        img.src = URL.createObjectURL(blob);
+        img.className = 'feedback-image-preview';
+        area.innerHTML = '';
+        area.appendChild(img);
+        var pathSpan = document.createElement('span');
+        pathSpan.className = 'paste-path';
+        pathSpan.textContent = result.path;
+        pathSpan.style.display = 'block';
+        pathSpan.style.marginTop = '4px';
+        area.appendChild(pathSpan);
+      }
+      // Append path to feedback textarea
+      var textarea = document.getElementById('task-review-comments');
+      if (textarea) {
+        var sep = textarea.value.trim() ? '\n' : '';
+        textarea.value += sep + '[Attached image: ' + result.path + ']';
+      }
+      toast('Image attached: ' + result.path);
+    } catch (e) {
+      toast('Failed to upload image: ' + e.message, 'error');
+    }
   }
 
   async function changeTaskStatus(newStatus) {
@@ -2097,6 +2211,20 @@
   async function init() {
     connectWebSocket();
 
+    // Ctrl+V paste image in Command Center
+    document.addEventListener('paste', function(e) {
+      if (state.currentView !== 'chat') return;
+      var items = (e.clipboardData || {}).items;
+      if (!items) return;
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') === 0) {
+          e.preventDefault();
+          pasteImage();
+          return;
+        }
+      }
+    });
+
     try {
       var sys = await api.get('/api/system/status');
       if (!sys.initialized) {
@@ -2105,7 +2233,7 @@
       } else {
         updateSidebarHeader(sys.teamName);
         await loadSidebarAgents();
-        navigate('dashboard');
+        navigate('chat');
         // Check for updates silently on startup
         silentUpdateCheck();
         // Re-check every 30 minutes
@@ -2384,6 +2512,234 @@
     } catch(e) { toast('Failed to delete schedule', 'error'); }
   }
 
+  // ── Help Section ─────────────────────────────────────
+  var helpTopics = [
+    {
+      title: 'Getting Started',
+      icon: '&#9733;',
+      content: '<h2>Getting Started</h2>' +
+        '<p>TeamHero is an AI agent team management platform that follows a <strong>scrum-like methodology</strong> with structured review sessions called <strong>Round Tables</strong>.</p>' +
+        '<h3>How It Works</h3>' +
+        '<p>The <strong>Orchestrator</strong> is the brain of your team. It manages all agents, delegates tasks, runs round tables, and serves as your main point of contact through the Command Center.</p>' +
+        '<h3>Task Lifecycle</h3>' +
+        '<ol>' +
+        '<li><strong>Draft</strong> — Task is created but not yet reviewed</li>' +
+        '<li><strong>Pending Approval</strong> — Agent submitted work for your review</li>' +
+        '<li><strong>Approved</strong> — You approved the work; orchestrator will execute</li>' +
+        '<li><strong>Improve</strong> — You requested revisions with feedback</li>' +
+        '<li><strong>In Progress</strong> — Agent is actively working on it</li>' +
+        '<li><strong>Done</strong> — Task is complete</li>' +
+        '</ol>' +
+        '<h3>Your Role as Owner</h3>' +
+        '<p>You review and approve work, provide feedback, and guide the team through the Command Center. The orchestrator handles delegation and execution.</p>' +
+        '<button class="help-go-link" onclick="App.navigate(\'chat\')">Go to Command Center &#8594;</button>'
+    },
+    {
+      title: 'Round Tables',
+      icon: '&#9679;',
+      content: '<h2>Round Tables</h2>' +
+        '<p>Round Tables are <strong>structured review sessions</strong>, similar to sprint reviews or standups in agile methodology. They give you a complete overview of your team' + q + 's progress.</p>' +
+        '<h3>What Happens During a Round Table</h3>' +
+        '<ul>' +
+        '<li>The orchestrator scans <strong>all tasks</strong> and reviews each status</li>' +
+        '<li>Agent progress is summarized — what' + q + 's done, what' + q + 's pending</li>' +
+        '<li>All <strong>approved tasks are executed immediately</strong></li>' +
+        '<li>Blockers and issues are flagged for your attention</li>' +
+        '<li>The Knowledge Base is reviewed for stale or outdated documents</li>' +
+        '</ul>' +
+        '<h3>How to Trigger</h3>' +
+        '<p>Open the Command Center and type: <code>Run a round table</code></p>' +
+        '<p>You can also click the <strong>Run Round Table</strong> button on the Dashboard.</p>' +
+        '<button class="help-go-link" onclick="App.navigate(\'dashboard\')">Go to Dashboard &#8594;</button>'
+    },
+    {
+      title: 'Agents',
+      icon: '&#9632;',
+      content: '<h2>Agents</h2>' +
+        '<p>Agents are <strong>AI team members</strong>, each with a distinct role, personality, and set of capabilities. They execute tasks autonomously and submit work for your review.</p>' +
+        '<h3>Agent Properties</h3>' +
+        '<ul>' +
+        '<li><strong>Role</strong> — Their job title and area of expertise</li>' +
+        '<li><strong>Personality</strong> — Traits, tone, and communication style</li>' +
+        '<li><strong>Rules</strong> — Guidelines specific to this agent</li>' +
+        '<li><strong>Capabilities</strong> — Skills and tools they can use</li>' +
+        '</ul>' +
+        '<h3>Agent Memory</h3>' +
+        '<p>Each agent has two memory banks:</p>' +
+        '<ul>' +
+        '<li><strong>Short Memory</strong> — Current context, recent tasks, and active work. Cleared after round tables.</li>' +
+        '<li><strong>Long Memory</strong> — Persistent knowledge, preferences, and lessons learned.</li>' +
+        '</ul>' +
+        '<h3>Creating Agents</h3>' +
+        '<p>Create agents through the dashboard or ask the orchestrator in the Command Center: <code>Build me a team with a Content Writer and a Researcher</code></p>' +
+        '<button class="help-go-link" onclick="App.navigate(\'add-agent\')">Add New Agent &#8594;</button>'
+    },
+    {
+      title: 'Tasks',
+      icon: '&#9998;',
+      content: '<h2>Tasks</h2>' +
+        '<p>Tasks are <strong>work units</strong> assigned to agents. Each task tracks its status, version history, and feedback between you and the agent.</p>' +
+        '<h3>Status Pipeline</h3>' +
+        '<p>Click any status badge on a task to change it:</p>' +
+        '<ul>' +
+        '<li><strong>Draft</strong> — Created, awaiting initial work</li>' +
+        '<li><strong>Pending Approval</strong> — Agent submitted deliverable for review</li>' +
+        '<li><strong>Approved</strong> — You approved; orchestrator executes next steps</li>' +
+        '<li><strong>Improve</strong> — Request revisions with specific feedback</li>' +
+        '<li><strong>In Progress</strong> — Agent is actively working</li>' +
+        '<li><strong>Done</strong> — Complete</li>' +
+        '<li><strong>Hold</strong> — Paused, visible but not actively worked on</li>' +
+        '<li><strong>Cancelled</strong> — Abandoned</li>' +
+        '</ul>' +
+        '<h3>Feedback &amp; Improve</h3>' +
+        '<p>When reviewing a task, use the <strong>Improve</strong> action to send comments back to the agent. Comments are required — they tell the agent exactly what to change. Each revision creates a new version in the timeline.</p>' +
+        '<h3>Versions</h3>' +
+        '<p>Tasks track every submission as a version. You can see the full conversation history between you and the agent on the task detail page.</p>' +
+        '<button class="help-go-link" onclick="App.navigate(\'dashboard\')">View Tasks &#8594;</button>'
+    },
+    {
+      title: 'Knowledge Base',
+      icon: '&#9776;',
+      content: '<h2>Knowledge Base</h2>' +
+        '<p>The Knowledge Base is a <strong>library of research deliverables</strong> and reference documents created by your agents.</p>' +
+        '<h3>How It Works</h3>' +
+        '<ul>' +
+        '<li>When a research task is completed, it can be <strong>promoted to the Knowledge Base</strong></li>' +
+        '<li>Documents are categorized: Research, Analysis, Reference, or Guide</li>' +
+        '<li>Tag documents for easy discovery and filtering</li>' +
+        '</ul>' +
+        '<h3>Promoting Tasks</h3>' +
+        '<p>On any completed task, click the <strong>Promote to Knowledge Base</strong> button to save its deliverable as a knowledge document.</p>' +
+        '<h3>Staleness</h3>' +
+        '<p>Documents older than 30 days are flagged as stale during round tables for review or archival.</p>' +
+        '<button class="help-go-link" onclick="App.navigate(\'knowledge\')">Go to Knowledge Base &#8594;</button>'
+    },
+    {
+      title: 'Media Library',
+      icon: '&#9634;',
+      content: '<h2>Media Library</h2>' +
+        '<p>The Media Library stores <strong>files, images, and documents</strong> associated with your team' + q + 's work.</p>' +
+        '<h3>Features</h3>' +
+        '<ul>' +
+        '<li><strong>Thumbnails</strong> — Image files display visual previews</li>' +
+        '<li><strong>Preview</strong> — Click any file to preview it in the browser</li>' +
+        '<li><strong>Open in Folder</strong> — Quickly locate files on your system</li>' +
+        '<li><strong>Filter</strong> — Browse by type: Images, Documents, Video, or All</li>' +
+        '</ul>' +
+        '<p>Files are stored in the <code>data/media/</code> folder in your project directory.</p>' +
+        '<button class="help-go-link" onclick="App.navigate(\'media\')">Go to Media Library &#8594;</button>'
+    },
+    {
+      title: 'Skills & Connectors',
+      icon: '&#9670;',
+      content: '<h2>Skills &amp; Connectors</h2>' +
+        '<p>Skills are <strong>MCP (Model Context Protocol) integrations</strong> that give your agents the ability to interact with external tools and services.</p>' +
+        '<h3>How Skills Work</h3>' +
+        '<ul>' +
+        '<li>Each skill installs its dependencies and configures the integration automatically</li>' +
+        '<li>Enable or disable skills with a toggle switch</li>' +
+        '<li>Some skills require configuration (API keys, workspace IDs, etc.)</li>' +
+        '</ul>' +
+        '<h3>Available Connectors</h3>' +
+        '<p>Connectors include integrations like <strong>Trello</strong>, <strong>Gmail</strong>, <strong>Playwright</strong> (browser automation), and more. Check the Skills page for the full list of available integrations.</p>' +
+        '<button class="help-go-link" onclick="App.navigate(\'skills\')">Go to Skills &#8594;</button>'
+    },
+    {
+      title: 'Autopilot',
+      icon: '&#9654;',
+      content: '<h2>Autopilot</h2>' +
+        '<p>Autopilot lets you <strong>schedule recurring tasks</strong> that run automatically on a set interval.</p>' +
+        '<h3>How It Works</h3>' +
+        '<ul>' +
+        '<li>Create a schedule with a <strong>name</strong>, <strong>prompt</strong>, and <strong>interval</strong></li>' +
+        '<li>Assign it to a specific agent or let the orchestrator decide</li>' +
+        '<li>Set the interval in minutes, hours, or days</li>' +
+        '<li>Enable or disable schedules with the play/pause controls</li>' +
+        '</ul>' +
+        '<h3>Use Cases</h3>' +
+        '<ul>' +
+        '<li>Daily standups or round tables</li>' +
+        '<li>Periodic content generation</li>' +
+        '<li>Scheduled research updates</li>' +
+        '<li>Regular system health checks</li>' +
+        '</ul>' +
+        '<button class="help-go-link" onclick="App.navigate(\'settings\')">Go to Settings &#8594;</button>'
+    },
+    {
+      title: 'Settings',
+      icon: '&#9881;',
+      content: '<h2>Settings</h2>' +
+        '<p>Configure your TeamHero platform to match your workflow.</p>' +
+        '<h3>Owner Profile</h3>' +
+        '<p>Your profile tells agents about you — your name, role, expertise, and goals. Agents use this context to tailor their work.</p>' +
+        '<h3>Team Rules &amp; Security Rules</h3>' +
+        '<p>Define operational rules that apply to all agents, plus security guidelines for data protection and prompt injection prevention.</p>' +
+        '<h3>Permission Modes</h3>' +
+        '<ul>' +
+        '<li><strong>Autonomous</strong> — Claude operates freely, executing tasks without confirmation prompts</li>' +
+        '<li><strong>Supervised</strong> — Claude asks for confirmation before executing certain actions</li>' +
+        '</ul>' +
+        '<h3>Secrets &amp; API Keys</h3>' +
+        '<p>Store encrypted secrets (API keys, tokens) that are injected into Claude sessions. Protected with AES-256-GCM encryption and a master password.</p>' +
+        '<h3>Software Updates</h3>' +
+        '<p>Check for platform updates from GitHub. Updates only affect platform files — your agents, tasks, and data are never changed.</p>' +
+        '<button class="help-go-link" onclick="App.navigate(\'settings\')">Go to Settings &#8594;</button>'
+    },
+    {
+      title: 'Command Center',
+      icon: '&#9654;',
+      content: '<h2>Command Center</h2>' +
+        '<p>The Command Center is your <strong>terminal interface</strong> to the orchestrator. It' + q + 's where you give instructions, ask questions, and manage your team.</p>' +
+        '<h3>Common Commands</h3>' +
+        '<ul>' +
+        '<li><code>Run a round table</code> — Trigger a structured team review</li>' +
+        '<li><code>Create a task for [agent] to [description]</code> — Create and assign work</li>' +
+        '<li><code>Build me a team with [roles]</code> — Create multiple agents at once</li>' +
+        '<li><code>What is [agent] working on?</code> — Check agent status</li>' +
+        '<li><code>Summarize all pending tasks</code> — Get an overview</li>' +
+        '</ul>' +
+        '<h3>Tips</h3>' +
+        '<ul>' +
+        '<li>Be specific about what you want — the orchestrator will delegate to the right agent</li>' +
+        '<li>You can reference agents by name in your prompts</li>' +
+        '<li>The orchestrator remembers context within a session</li>' +
+        '</ul>' +
+        '<button class="help-go-link" onclick="App.navigate(\'chat\')">Go to Command Center &#8594;</button>'
+    }
+  ];
+
+  function loadHelp(topicIndex) {
+    var idx = topicIndex || 0;
+    var topicsEl = document.getElementById('help-topics');
+    var contentEl = document.getElementById('help-content');
+    if (!topicsEl || !contentEl) return;
+
+    // Build topics list
+    var html = '';
+    for (var i = 0; i < helpTopics.length; i++) {
+      html += '<div class="help-topic-item' + (i === idx ? ' active' : '') + '" onclick="App.selectHelpTopic(' + i + ')">' +
+        '<span class="help-topic-icon">' + helpTopics[i].icon + '</span>' +
+        helpTopics[i].title +
+        '</div>';
+    }
+    topicsEl.innerHTML = html;
+
+    // Load content
+    contentEl.innerHTML = helpTopics[idx].content;
+  }
+
+  function selectHelpTopic(index) {
+    var items = document.querySelectorAll('.help-topic-item');
+    items.forEach(function(item, i) {
+      item.classList.toggle('active', i === index);
+    });
+    var contentEl = document.getElementById('help-content');
+    if (contentEl && helpTopics[index]) {
+      contentEl.innerHTML = helpTopics[index].content;
+      contentEl.scrollTop = 0;
+    }
+  }
+
   window.App = {
     navigate: navigate,
     wizardNext: wizardNext,
@@ -2435,6 +2791,9 @@
     viewFile: viewFile,
     changeTaskStatus: changeTaskStatus,
     toggleFeedback: toggleFeedback,
+    pasteImage: pasteImage,
+    focusTerminal: function() { if (terminal) { terminal.scrollToBottom(); terminal.focus(); } },
+    attachTaskImage: attachTaskImage,
     promoteToKnowledge: promoteToKnowledge,
     filterKnowledge: filterKnowledge,
     openKnowledgeDoc: openKnowledgeDoc,
@@ -2447,6 +2806,7 @@
     toggleAutopilot: toggleAutopilot,
     editAutopilot: editAutopilot,
     deleteAutopilot: deleteAutopilot,
+    selectHelpTopic: selectHelpTopic,
   };
 
   init();

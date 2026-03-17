@@ -40,9 +40,24 @@ When the owner sets a task to `approved`, the orchestrator MUST ensure the assig
 When the owner sets a task to `revision_needed` (via Improve + feedback), the orchestrator MUST launch the agent with the feedback to revise.
 Tasks on "hold" remain visible but should not be actively worked on until the owner releases them.
 
+## Content & Social Media Rules
+- **Normalize all content** — avoid characters and patterns commonly associated with AI-generated text:
+  - Never use em dash (—) or en dash (–). Only use the regular hyphen (-).
+  - Do not use emojis unless they genuinely fit the situation. No decorative emoji sprinkles.
+  - Avoid AI cliches: "Let's dive in", "Here's the thing", "Game-changer", "Exciting news!", excessive exclamation marks.
+  - Write naturally, like a real person typing.
+- **Never post to social media without an image** — every post must have a visual (screenshot, generated image, or graphic)
+- Images are stored in `data/media/social-images/`
+- To generate images, use the owner's ChatGPT instance via Chrome browser (owner will open it manually)
+- When creating content tasks for social media, always include a companion image task or flag that an image is needed before posting
+
 ## Round Table Reviews
 - Round tables must check that work is properly delegated, not silently done by the orchestrator
 - Review each agent's task load and progress
 - Flag any bottlenecks or unassigned work
 - Present items needing owner approval
 - Review knowledge base — list recent additions, flag stale docs
+- **Execute all approved tasks immediately** — do not ask the owner for confirmation. Approved means go. Launch all assigned agents in parallel.
+- **Execute all `revision_needed` tasks immediately** — launch the assigned agent with the owner's feedback to revise.
+- If a task has a blocker, log it on the task and flag it to the owner — do not silently skip it
+- Update version references or stale details in task descriptions before launching agents

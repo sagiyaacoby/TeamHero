@@ -90,6 +90,16 @@ body {
   background: var(--green); margin-left: 6px; vertical-align: middle;
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
+/* Sidebar agent dot — always visible */
+.agent-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text-dim); margin-left: 6px; vertical-align: middle;
+  flex-shrink: 0;
+}
+.agent-dot.agent-dot-working {
+  background: var(--green);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
@@ -956,3 +966,115 @@ body {
   from { opacity: 0; transform: translateY(-8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* ── Help Section ─────────────────────────────────── */
+#view-help { padding: 0; }
+#view-help .view-header { padding: 16px 24px; margin-bottom: 0; }
+.help-layout {
+  display: flex; gap: 0; height: calc(100vh - 100px);
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+}
+.help-topics {
+  width: 220px; flex-shrink: 0;
+  background: var(--bg); border-right: 1px solid var(--border);
+  overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.help-topics::-webkit-scrollbar { width: 4px; }
+.help-topics::-webkit-scrollbar-track { background: transparent; }
+.help-topics::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.help-topic-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 16px; cursor: pointer;
+  color: var(--text-muted); font-size: 13px;
+  border-left: 3px solid transparent;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.help-topic-item:hover { color: var(--text); background: var(--hover-bg); }
+.help-topic-item.active {
+  color: #ffffff; background: var(--hover-bg);
+  border-left-color: var(--green);
+}
+.help-topic-icon { font-size: 15px; width: 20px; text-align: center; opacity: 0.6; flex-shrink: 0; }
+.help-topic-item.active .help-topic-icon { opacity: 1; }
+.help-content {
+  flex: 1; padding: 28px 32px;
+  overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.help-content::-webkit-scrollbar { width: 4px; }
+.help-content::-webkit-scrollbar-track { background: transparent; }
+.help-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.help-content h2 { font-size: 18px; font-weight: 600; color: #ffffff; margin: 0 0 16px; }
+.help-content h3 { font-size: 14px; font-weight: 600; color: var(--text); margin: 20px 0 8px; }
+.help-content p { font-size: 14px; line-height: 1.7; color: var(--text-muted); margin: 0 0 12px; }
+.help-content ul, .help-content ol { padding-left: 20px; margin: 0 0 12px; font-size: 14px; line-height: 1.8; color: var(--text-muted); }
+.help-content li { margin: 2px 0; }
+.help-content strong { color: var(--text); }
+.help-content code {
+  background: rgba(255,255,255,0.06); padding: 2px 6px;
+  border-radius: 3px; font-size: 12px; color: var(--accent);
+}
+.help-go-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 8px; padding: 6px 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--green); font-size: 13px; font-weight: 500;
+  cursor: pointer; background: transparent; transition: all 0.15s;
+  text-decoration: none; font-family: inherit;
+}
+.help-go-link:hover { border-color: var(--green); color: #ffffff; }
+
+@media (max-width: 768px) {
+  .help-layout { flex-direction: column; }
+  .help-topics { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
+  .help-content { max-height: none; }
+}
+
+/* ── Paste Image ─────────────────────────────────── */
+.paste-image-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 12px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  height: 28px; opacity: 0.4;
+  transition: opacity 0.15s;
+}
+.paste-image-bar:hover { opacity: 1; }
+.paste-image-btn {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-muted); font-size: 12px; padding: 4px 10px;
+  border-radius: var(--radius-sm); cursor: pointer;
+  transition: all 0.15s; white-space: nowrap;
+}
+.paste-image-btn:hover { border-color: var(--accent); color: var(--text); }
+.focus-terminal-btn {
+  margin-left: auto; background: transparent; border: 1px solid var(--border);
+  color: var(--text-muted); width: 28px; height: 22px; border-radius: var(--radius-sm);
+  cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.focus-terminal-btn:hover { border-color: var(--green); color: var(--green); }
+.paste-preview-area { display: flex; align-items: center; gap: 8px; }
+.paste-preview {
+  max-height: 48px; max-width: 80px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); object-fit: contain;
+}
+.paste-path {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 11px; color: var(--text-muted); user-select: all;
+  word-break: break-all;
+}
+.feedback-image-preview {
+  max-height: 60px; max-width: 100px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); object-fit: contain; margin-top: 6px;
+}
+.attach-image-btn {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-muted); font-size: 12px; padding: 4px 10px;
+  border-radius: var(--radius-sm); cursor: pointer;
+  transition: all 0.15s; white-space: nowrap;
+}
+.attach-image-btn:hover { border-color: var(--accent); color: var(--text); }

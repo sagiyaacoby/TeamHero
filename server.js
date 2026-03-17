@@ -138,7 +138,7 @@ function writeText(fp, c) { fs.mkdirSync(path.dirname(fp), { recursive: true });
 function parseBody(req) {
   return new Promise(function(resolve, reject) {
     let body = '';
-    req.on('data', function(ch) { body += ch; if (body.length > 5e6) { req.destroy(); reject(new Error('Too large')); } });
+    req.on('data', function(ch) { body += ch; if (body.length > 20e6) { req.destroy(); reject(new Error('Too large')); } });
     req.on('end', function() { try { resolve(JSON.parse(body)); } catch(e) { resolve(body); } });
   });
 }
@@ -372,6 +372,10 @@ function rebuildClaudeMd() {
     '- **Never expose secrets:** Environment variables containing API keys or tokens must never be echoed, logged, written to files, or included in any output. Use them only as pass-through in commands.\n' +
     '- **No destructive system commands:** Do not run commands that affect the OS, other processes, or network infrastructure (e.g. `rm -rf /`, `shutdown`, `format`, `kill`, `netsh`).\n' +
     '- **No external communications without approval:** Do not send emails, post to APIs, push to git, or make any external network calls unless the owner explicitly requests it.\n\n' +
+    '## Shell Environment\n\n' +
+    '- Only `node` is guaranteed to be available. Do not assume `python3`, `python`, or other runtimes are installed.\n' +
+    '- To parse JSON in shell commands, use `node -e` instead of `python3 -c`.\n' +
+    '- Example: `curl -s url | node -e "let d=\'\';process.stdin.on(\'data\',c=>d+=c);process.stdin.on(\'end\',()=>console.log(JSON.stringify(JSON.parse(d),null,2)))"`\n\n' +
     '## Round Table Protocol\n\n' +
     'A "round table" is a structured review session. When asked to run one:\n' +
     '1. Scan all tasks in `data/tasks/` \u2014 review each task\'s status\n' +
@@ -1294,6 +1298,27 @@ async function handle(pn, m, req, res) {
     rmDir(tempDir);
     fs.mkdirSync(tempDir, { recursive: true });
     return J(res, { ok: true, message: 'Temp folder cleaned' });
+  }
+
+  // UPLOAD IMAGE (clipboard paste)
+  if (pn === '/api/upload-image' && m === 'POST') {
+    var b = await parseBody(req);
+    if (!b.data) return E(res, 'data (base64) required');
+    var dest = b.destination || 'clipboard';
+    var ts = Date.now();
+    var relPath;
+    if (dest === 'task' && b.taskId) {
+      relPath = 'data/tasks/' + b.taskId + '/images/img-' + ts + '.png';
+    } else {
+      relPath = 'data/media/clipboard/clip-' + ts + '.png';
+    }
+    var absPath = safePath(relPath);
+    if (!absPath) return E(res, 'Invalid path', 403);
+    fs.mkdirSync(path.dirname(absPath), { recursive: true });
+    var buf = Buffer.from(b.data, 'base64');
+    fs.writeFileSync(absPath, buf);
+    broadcast('all');
+    return J(res, { ok: true, path: relPath });
   }
 
   // GENERIC FILE WRITE

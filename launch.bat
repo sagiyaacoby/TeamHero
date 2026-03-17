@@ -8,15 +8,18 @@ pause
 exit /b
 
 :MAIN
-title Agent Team Portal
+:: -- Derive unique server title from folder name (supports parallel teams) --
+for %%F in ("%~dp0.") do set "TEAM_FOLDER=%%~nxF"
+set "SERVER_TITLE=AgentPortalServer_%TEAM_FOLDER%"
+title Agent Team Portal - %TEAM_FOLDER%
 echo.
 echo  ===================================
-echo    Agent Team Portal
+echo    Agent Team Portal - %TEAM_FOLDER%
 echo  ===================================
 echo.
 
-:: -- Kill any orphaned server from a previous run --
-taskkill /f /fi "WINDOWTITLE eq AgentPortalServer" 1>NUL 2>NUL
+:: -- Kill any orphaned server from a previous run (same team only) --
+taskkill /f /fi "WINDOWTITLE eq %SERVER_TITLE%" 1>NUL 2>NUL
 
 :: -- Ensure directories exist --
 if not exist "config" mkdir config
@@ -111,7 +114,7 @@ echo  -----------------------------------
 echo.
 
 echo  Starting portal server...
-start "AgentPortalServer" /min node server.js
+start "%SERVER_TITLE%" /min node server.js
 timeout /t 3 /noq 1>NUL
 
 :: Read port from config/system.json
@@ -134,5 +137,5 @@ echo  Press any key to stop the server and exit...
 pause 1>NUL
 
 :CLEANUP
-taskkill /f /fi "WINDOWTITLE eq AgentPortalServer" 1>NUL 2>NUL
+taskkill /f /fi "WINDOWTITLE eq %SERVER_TITLE%" 1>NUL 2>NUL
 goto :EOF

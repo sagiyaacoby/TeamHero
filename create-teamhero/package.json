@@ -1,0 +1,23 @@
+{
+  "name": "create-teamhero",
+  "version": "2.4.1",
+  "description": "Create a new TeamHero agent team - multi-agent orchestration powered by Claude CLI",
+  "bin": {
+    "create-teamhero": "./index.js"
+  },
+  "keywords": ["ai", "agents", "claude", "orchestration", "teamhero", "multi-agent", "ai-team"],
+  "author": "Sagi Yaacoby (https://github.com/sagiyaacoby)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sagiyaacoby/TeamHero.git"
+  },
+  "homepage": "https://github.com/sagiyaacoby/TeamHero",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "index.js",
+    "template/"
+  ]
+}

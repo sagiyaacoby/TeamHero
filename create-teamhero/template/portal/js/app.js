@@ -871,14 +871,6 @@
     }
     html += '</div>';
 
-    // Prev/Next navigation buttons
-    if ((state.tasks || []).length > 1) {
-      html += '<div class="task-nav-buttons">';
-      html += '<button class="task-nav-btn" onclick="App.navigateTask(\'prev\')" title="Previous task (Left arrow)">&#8249; Prev</button>';
-      html += '<button class="task-nav-btn" onclick="App.navigateTask(\'next\')" title="Next task (Right arrow)">Next &#8250;</button>';
-      html += '</div>';
-    }
-
     html += '</div>';
 
     // Feedback area (hidden by default)
@@ -1248,34 +1240,6 @@
       navigate('dashboard');
     }
   }
-
-  // ── Task Prev/Next Navigation ─────────────────
-  function navigateTask(direction) {
-    var tasks = state.tasks || [];
-    if (tasks.length < 2) return;
-    var currentId = state.currentTaskId;
-    var idx = -1;
-    for (var i = 0; i < tasks.length; i++) {
-      if (tasks[i].id === currentId) { idx = i; break; }
-    }
-    if (idx === -1) return;
-    var nextIdx;
-    if (direction === 'prev') {
-      nextIdx = (idx - 1 + tasks.length) % tasks.length;
-    } else {
-      nextIdx = (idx + 1) % tasks.length;
-    }
-    openTask(tasks[nextIdx].id);
-  }
-
-  // Keyboard shortcuts for task navigation (left/right arrows)
-  document.addEventListener('keydown', function(e) {
-    if (state.currentView !== 'task-detail') return;
-    var tag = (e.target.tagName || '').toLowerCase();
-    if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return;
-    if (e.key === 'ArrowLeft') { e.preventDefault(); navigateTask('prev'); }
-    else if (e.key === 'ArrowRight') { e.preventDefault(); navigateTask('next'); }
-  });
 
   // ── Media Filter ──────────────────────────────
   function filterMedia(filter) {
@@ -2871,7 +2835,6 @@
     editAutopilot: editAutopilot,
     deleteAutopilot: deleteAutopilot,
     selectHelpTopic: selectHelpTopic,
-    navigateTask: navigateTask,
   };
 
   init();

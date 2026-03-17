@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Team Portal</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+</head>
+<body>
+
+  <!-- Setup Wizard Overlay -->
+  <div id="wizard-overlay" class="wizard-overlay hidden">
+    <div class="wizard-container">
+      <div class="wizard-progress">
+        <div class="wizard-progress-bar" id="wizard-progress-bar"></div>
+      </div>
+
+      <!-- Step 1: Welcome -->
+      <div class="wizard-step active" data-step="1">
+        <div class="wizard-icon">&#9881;</div>
+        <h1>Welcome to Your Agent Team</h1>
+        <p class="wizard-desc">Set up your multi-agent orchestration system in just a few steps. You'll create your profile, name your team, and configure your first agent.</p>
+        <div class="wizard-actions">
+          <button class="btn btn-primary btn-lg" onclick="App.wizardNext()">Get Started</button>
+        </div>
+      </div>
+
+      <!-- Step 2: Profile -->
+      <div class="wizard-step" data-step="2">
+        <h2>Your Profile</h2>
+        <p class="wizard-desc">Tell your agents about yourself so they can tailor their work to your needs.</p>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="wiz-name" placeholder="Your name">
+          </div>
+          <div class="form-group">
+            <label>Role</label>
+            <input type="text" id="wiz-role" placeholder="e.g. Founder, Content Manager, Developer">
+          </div>
+          <div class="form-group full-width">
+            <label>Expertise</label>
+            <input type="text" id="wiz-expertise" placeholder="e.g. Marketing, AI, Web Development">
+          </div>
+          <div class="form-group full-width">
+            <label>Goals</label>
+            <textarea id="wiz-goals" rows="2" placeholder="What do you want your team to help you achieve?"></textarea>
+          </div>
+          <div class="form-group full-width">
+            <label>Target Audience</label>
+            <input type="text" id="wiz-audience" placeholder="Who are you trying to reach?">
+          </div>
+          <div class="form-group full-width">
+            <label>Brand Voice</label>
+            <input type="text" id="wiz-voice" placeholder="e.g. Professional, casual, technical, friendly">
+          </div>
+        </div>
+        <div class="wizard-actions">
+          <button class="btn btn-secondary" onclick="App.wizardBack()">Back</button>
+          <button class="btn btn-primary" onclick="App.wizardNext()">Next</button>
+        </div>
+      </div>
+
+      <!-- Step 3: Team -->
+      <div class="wizard-step" data-step="3">
+        <h2>Team Setup</h2>
+        <p class="wizard-desc">Name your agent team. This becomes the identity of your orchestration system.</p>
+        <div class="form-grid">
+          <div class="form-group full-width">
+            <label>Team Name</label>
+            <input type="text" id="wiz-team-name" placeholder="e.g. Content Squad, Research Lab, Dev Team">
+          </div>
+          <div class="form-group full-width">
+            <label>Description</label>
+            <textarea id="wiz-team-desc" rows="2" placeholder="What does this team do?"></textarea>
+          </div>
+        </div>
+        <div class="wizard-actions">
+          <button class="btn btn-secondary" onclick="App.wizardBack()">Back</button>
+          <button class="btn btn-primary" onclick="App.wizardNext()">Next</button>
+        </div>
+      </div>
+
+      <!-- Step 4: Name Your Orchestrator -->
+      <div class="wizard-step" data-step="4">
+        <div class="wizard-icon" style="color:var(--gold)">&#9733;</div>
+        <h2>Your Orchestrator</h2>
+        <p class="wizard-desc">The orchestrator is the brain of your team. It coordinates all agents, manages tasks, and serves as your main point of contact. Give it a name and personality.</p>
+        <div class="form-grid">
+          <div class="form-group full-width">
+            <label>Orchestrator Name</label>
+            <input type="text" id="wiz-orch-name" placeholder="e.g. Commander, Atlas, Chief" value="Orchestrator">
+          </div>
+          <div class="form-group full-width">
+            <label>Personality Traits (comma-separated)</label>
+            <input type="text" id="wiz-orch-traits" placeholder="e.g. strategic, organized, decisive" value="strategic, organized, decisive">
+          </div>
+          <div class="form-group full-width">
+            <label>Tone</label>
+            <input type="text" id="wiz-orch-tone" placeholder="e.g. professional and efficient" value="professional and efficient">
+          </div>
+        </div>
+        <div class="wizard-actions">
+          <button class="btn btn-secondary" onclick="App.wizardBack()">Back</button>
+          <button class="btn btn-primary" onclick="App.wizardNext()">Next</button>
+        </div>
+      </div>
+
+      <!-- Step 5: Done -->
+      <div class="wizard-step" data-step="5">
+        <div class="wizard-icon">&#10003;</div>
+        <h1>You're All Set!</h1>
+        <div id="wizard-summary" class="wizard-summary"></div>
+        <div style="background:rgba(210,153,34,0.1);border:1px solid var(--yellow);border-radius:8px;padding:16px;margin:16px 0;font-size:13px;line-height:1.6;">
+          <strong style="color:var(--yellow);">&#9733; Next Step:</strong>
+          Head to the <strong>Command Center</strong> and ask your orchestrator to build your team. For example: <em>"Build me a team with a Content Writer and a Researcher"</em>
+        </div>
+        <div class="wizard-actions">
+          <button class="btn btn-primary btn-lg" onclick="App.wizardFinish()">Go to Command Center</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <nav id="sidebar">
+    <div class="sidebar-header" id="sidebar-header">
+      <h1>&#9881; Team</h1>
+      <span class="subtitle">Agent Portal</span>
+    </div>
+    <div class="nav-sticky-top">
+      <a href="#" data-view="chat" class="nav-link nav-chat active"><span class="icon">&#9654;</span> Command Center</a>
+      <a href="#" data-view="dashboard" class="nav-link"><span class="icon">&#9632;</span> Dashboard</a>
+    </div>
+    <ul class="nav-list" id="nav-list">
+      <li class="nav-section">Work</li>
+      <li id="nav-agents-list"></li>
+      <li><a href="#" data-view="add-agent" class="nav-link nav-add"><span class="icon">+</span> Add Agent</a></li>
+      <li class="nav-section">Knowledge</li>
+      <li><a href="#" data-view="knowledge" class="nav-link"><span class="icon">&#9776;</span> Knowledge Base</a></li>
+      <li class="nav-section">Media</li>
+      <li><a href="#" data-view="media" class="nav-link"><span class="icon">&#9634;</span> Media Library</a></li>
+      <li class="nav-section">Skills</li>
+      <li><a href="#" data-view="skills" class="nav-link"><span class="icon">&#9670;</span> Skills</a></li>
+      <li class="nav-section">Settings</li>
+      <li><a href="#" data-view="profile" class="nav-link"><span class="icon">&#9679;</span> Profile</a></li>
+      <li><a href="#" data-view="rules" class="nav-link"><span class="icon">&#9998;</span> Team Rules</a></li>
+      <li><a href="#" data-view="settings" class="nav-link"><span class="icon">&#9881;</span> Settings</a></li>
+      <li class="nav-section">Support</li>
+      <li><a href="#" data-view="help" class="nav-link"><span class="icon">&#63;</span> Help</a></li>
+    </ul>
+    <div id="update-banner" class="update-banner hidden" onclick="App.navigate('settings')">
+      <span class="update-dot"></span> Update Available
+    </div>
+    <div class="sidebar-footer"><span class="status-dot online"></span> System Active</div>
+  </nav>
+
+  <!-- Main Content -->
+  <main id="main-content">
+
+    <!-- Dashboard -->
+    <section id="view-dashboard" class="view active">
+      <header class="view-header"><h2>Dashboard</h2><div class="header-actions"><button class="btn btn-secondary" onclick="App.openAddTask()">+ Add Task</button><button id="btn-round-table" class="btn btn-primary" onclick="App.runRoundTable()">Run Round Table</button></div></header>
+      <div class="stats-row">
+        <div class="stat-card clickable-stat" data-filter="all" onclick="App.filterTasks('all','dashboard')"><div class="stat-value" id="stat-total">0</div><div class="stat-label">All</div></div>
+        <div class="stat-card clickable-stat" data-filter="pending_approval" onclick="App.filterTasks('pending_approval','dashboard')"><div class="stat-value" id="stat-pending">0</div><div class="stat-label">Pending</div></div>
+        <div class="stat-card clickable-stat" data-filter="approved" onclick="App.filterTasks('approved','dashboard')"><div class="stat-value" id="stat-approved">0</div><div class="stat-label">Approved</div></div>
+        <div class="stat-card clickable-stat" data-filter="in_progress" onclick="App.filterTasks('in_progress','dashboard')"><div class="stat-value" id="stat-active-tasks">0</div><div class="stat-label">In Progress</div></div>
+        <div class="stat-card clickable-stat" data-filter="done" onclick="App.filterTasks('done','dashboard')"><div class="stat-value" id="stat-done">0</div><div class="stat-label">Done</div></div>
+        <div class="stat-card"><div class="stat-value" id="stat-agents">0</div><div class="stat-label">Agents</div></div>
+      </div>
+      <div class="panel"><h3 id="dashboard-tasks-title">All Tasks</h3>
+        <div id="dashboard-tasks" class="task-list"><div class="empty-state">No tasks yet</div></div>
+      </div>
+      <div class="panel"><h3>Last Round Table</h3><div id="last-round-table" class="round-table-summary"><div class="empty-state">No round tables yet</div></div></div>
+    </section>
+
+    <!-- Command Center (Terminal) -->
+    <section id="view-chat" class="view view-chat-fullscreen">
+      <header class="view-header">
+        <h2>Command Center</h2>
+        <div class="header-actions">
+          <button class="btn btn-secondary btn-sm" onclick="App.runRoundTable()" title="Run a round table review">&#9679; Round Table</button>
+          <span id="chat-status" class="chat-status disconnected">Disconnected</span>
+          <button class="btn btn-secondary" onclick="App.restartTerminal()">Restart</button>
+        </div>
+      </header>
+      <div id="terminal-container" class="terminal-container"></div>
+      <div class="paste-image-bar" id="paste-image-bar">
+        <button class="paste-image-btn" onclick="App.pasteImage()" title="Paste image from clipboard (Ctrl+V)">&#128203; Paste Image</button>
+        <div id="paste-preview-area" class="paste-preview-area hidden">
+          <img id="paste-preview-img" class="paste-preview" alt="preview">
+          <span id="paste-preview-path" class="paste-path"></span>
+        </div>
+        <button class="focus-terminal-btn" onclick="App.focusTerminal()" title="Focus terminal input">&#9660; Focus</button>
+      </div>
+    </section>
+
+    <!-- Agent Detail (tabbed) -->
+    <section id="view-agent-detail" class="view">
+      <header class="view-header">
+        <h2 id="agent-detail-title">Agent</h2>
+        <div class="header-actions" id="agent-detail-actions">
+          <button class="btn btn-secondary" onclick="App.editAgent()">Edit</button>
+          <button class="btn btn-cancel" id="agent-delete-btn" onclick="App.deleteAgent()">Delete</button>
+        </div>
+      </header>
+      <div class="agent-status-bar">
+        <span class="badge badge-active" id="agent-detail-status">Active</span>
+        <span class="agent-role" id="agent-detail-role">Role</span>
+      </div>
+      <div class="agent-tabs">
+        <button class="tab-btn active" data-tab="tasks" onclick="App.switchAgentTab('tasks')">Tasks</button>
+        <button class="tab-btn" data-tab="profile" onclick="App.switchAgentTab('profile')">Profile</button>
+        <button class="tab-btn" data-tab="memory" onclick="App.switchAgentTab('memory')">Memory</button>
+      </div>
+      <div id="agent-tab-tasks" class="agent-tab active">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div class="agent-tasks-summary" id="agent-tasks-summary"></div>
+          <button class="btn btn-secondary" onclick="App.openAddTask(App.state.currentAgentId)" style="font-size:12px;padding:4px 12px;white-space:nowrap">+ Add Task</button>
+        </div>
+        <div id="agent-tasks-list" class="task-list"></div>
+      </div>
+      <div id="agent-tab-profile" class="agent-tab">
+        <div class="panel"><h3>Mission</h3><p id="agent-detail-mission" class="content-text"></p></div>
+        <div class="panel"><h3>Description</h3><p id="agent-detail-desc" class="content-text"></p></div>
+        <div class="panel"><h3>Personality</h3>
+          <div class="detail-grid">
+            <div><strong>Traits:</strong> <span id="agent-detail-traits"></span></div>
+            <div><strong>Tone:</strong> <span id="agent-detail-tone"></span></div>
+            <div><strong>Style:</strong> <span id="agent-detail-style"></span></div>
+          </div>
+        </div>
+        <div class="panel"><h3>Rules</h3><ul id="agent-detail-rules" class="rules-list"></ul></div>
+        <div class="panel"><h3>Capabilities</h3><p id="agent-detail-caps" class="content-text"></p></div>
+      </div>
+      <div id="agent-tab-memory" class="agent-tab">
+        <div class="two-col">
+          <div class="panel">
+            <h3>Short Memory <button class="btn-inline" onclick="App.clearShortMemory()">Clear</button> <button class="btn-inline" id="short-mem-edit-btn" onclick="App.toggleMemoryEdit('short')">Edit</button></h3>
+            <pre id="agent-detail-short-mem" class="memory-content">Empty</pre>
+            <div id="short-mem-editor" class="hidden">
+              <textarea id="short-mem-textarea" class="md-editor" rows="8"></textarea>
+              <div class="form-actions">
+                <button class="btn btn-secondary" onclick="App.toggleMemoryEdit('short')">Cancel</button>
+                <button class="btn btn-primary" onclick="App.saveMemory('short')">Save</button>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>Long Memory <button class="btn-inline" id="long-mem-edit-btn" onclick="App.toggleMemoryEdit('long')">Edit</button></h3>
+            <pre id="agent-detail-long-mem" class="memory-content">Empty</pre>
+            <div id="long-mem-editor" class="hidden">
+              <textarea id="long-mem-textarea" class="md-editor" rows="8"></textarea>
+              <div class="form-actions">
+                <button class="btn btn-secondary" onclick="App.toggleMemoryEdit('long')">Cancel</button>
+                <button class="btn btn-primary" onclick="App.saveMemory('long')">Save</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Task Detail -->
+    <section id="view-task-detail" class="view">
+      <header class="view-header">
+        <button class="btn btn-secondary" onclick="App.navigateBack()">&#8592; Back</button>
+        <h2 id="task-detail-title">Task</h2>
+      </header>
+      <div class="task-detail-meta">
+        <span class="badge" id="task-detail-status">Status</span>
+        <span class="badge" id="task-detail-priority">Priority</span>
+        <span class="badge badge-type" id="task-detail-type" style="display:none">general</span>
+        <span id="task-detail-agent"></span>
+        <span id="task-detail-date"></span>
+        <span id="task-detail-tags"></span>
+      </div>
+      <div id="task-session" class="task-session"></div>
+      <div id="task-promote-bar" class="promote-bar hidden">
+        <button class="btn btn-secondary" onclick="App.promoteToKnowledge()">Promote to Knowledge Base</button>
+      </div>
+      <div id="task-knowledge-link" class="knowledge-link hidden"></div>
+    </section>
+    <!-- Add/Edit Agent -->
+    <section id="view-add-agent" class="view">
+      <header class="view-header"><h2 id="agent-form-title">Add New Agent</h2></header>
+      <div class="panel">
+        <h3>Start from Template</h3>
+        <div class="template-picker" id="page-template-picker"></div>
+      </div>
+      <div class="panel">
+        <h3>Agent Details</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="af-name" placeholder="Agent name">
+          </div>
+          <div class="form-group">
+            <label>Role</label>
+            <input type="text" id="af-role" placeholder="e.g. Content Creator">
+          </div>
+          <div class="form-group full-width">
+            <label>Mission</label>
+            <textarea id="af-mission" rows="2" placeholder="Primary objective"></textarea>
+          </div>
+          <div class="form-group full-width">
+            <label>Description</label>
+            <textarea id="af-desc" rows="2" placeholder="What does this agent do?"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Personality Traits (comma-separated)</label>
+            <input type="text" id="af-traits" placeholder="e.g. creative, analytical">
+          </div>
+          <div class="form-group">
+            <label>Tone</label>
+            <input type="text" id="af-tone" placeholder="e.g. professional, casual">
+          </div>
+          <div class="form-group full-width">
+            <label>Style</label>
+            <input type="text" id="af-style" placeholder="e.g. clear and concise">
+          </div>
+          <div class="form-group full-width">
+            <label>Rules (one per line)</label>
+            <textarea id="af-rules" rows="4" placeholder="Enter agent-specific rules, one per line"></textarea>
+          </div>
+          <div class="form-group full-width">
+            <label>Capabilities (comma-separated)</label>
+            <input type="text" id="af-caps" placeholder="e.g. writing, research, analysis">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-secondary" onclick="App.navigate('dashboard')">Cancel</button>
+          <button class="btn btn-primary" id="af-submit" onclick="App.saveAgent()">Create Agent</button>
+        </div>
+      </div>
+    </section>
+
+
+
+    <!-- Media Library -->
+    <section id="view-media" class="view">
+      <header class="view-header"><h2>Media Library</h2></header>
+      <div class="filter-bar">
+        <button class="filter-btn active" data-filter="all" onclick="App.filterMedia('all')">All</button>
+        <button class="filter-btn" data-filter="image" onclick="App.filterMedia('image')">Images</button>
+        <button class="filter-btn" data-filter="document" onclick="App.filterMedia('document')">Documents</button>
+        <button class="filter-btn" data-filter="video" onclick="App.filterMedia('video')">Video</button>
+      </div>
+      <div id="media-grid" class="media-grid"><div class="empty-state">No media files yet</div></div>
+    </section>
+
+    <!-- Profile Editor -->
+    <section id="view-profile" class="view">
+      <header class="view-header"><h2>Owner Profile</h2></header>
+      <div class="panel">
+        <div class="form-grid">
+          <div class="form-group"><label>Name</label><input type="text" id="pf-name"></div>
+          <div class="form-group"><label>Role</label><input type="text" id="pf-role"></div>
+          <div class="form-group full-width"><label>Expertise</label><input type="text" id="pf-expertise"></div>
+          <div class="form-group full-width"><label>Goals</label><textarea id="pf-goals" rows="3"></textarea></div>
+          <div class="form-group full-width"><label>Target Audience</label><input type="text" id="pf-audience"></div>
+          <div class="form-group full-width"><label>Brand Voice</label><input type="text" id="pf-voice"></div>
+          <div class="form-group full-width"><label>Communication Style</label><input type="text" id="pf-comm-style"></div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" onclick="App.saveProfile()">Save Profile</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Rules Editor -->
+    <section id="view-rules" class="view">
+      <header class="view-header"><h2>Team Rules</h2></header>
+      <div class="panel">
+        <h3>Team Rules</h3>
+        <p class="form-hint">Operational rules that apply to all agents. Use markdown formatting.</p>
+        <textarea id="rules-team" class="md-editor" rows="12"></textarea>
+        <div class="form-actions"><button class="btn btn-primary" onclick="App.saveRules('team')">Save Team Rules</button></div>
+      </div>
+      <div class="panel">
+        <h3>Security Rules</h3>
+        <p class="form-hint">Security guidelines for data protection and prompt injection prevention.</p>
+        <textarea id="rules-security" class="md-editor" rows="12"></textarea>
+        <div class="form-actions"><button class="btn btn-primary" onclick="App.saveRules('security')">Save Security Rules</button></div>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section id="view-settings" class="view">
+      <header class="view-header"><h2>Settings</h2></header>
+      <div class="panel">
+        <h3>System Info</h3>
+        <div class="settings-group">
+          <div class="setting-item"><span class="setting-label">Team Name</span><span id="settings-team-name">-</span></div>
+          <div class="setting-item"><span class="setting-label">Version</span><span id="settings-version">1.0.0</span></div>
+          <div class="setting-item"><span class="setting-label">Agents</span><span id="settings-agent-count">0</span></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Claude Account</h3>
+        <p class="form-hint">Claude CLI powers the Command Center. Connect your account to enable AI features.</p>
+        <div class="settings-group">
+          <div class="setting-item">
+            <span class="setting-label">CLI Status</span>
+            <span id="claude-installed" class="badge badge-inactive">Checking...</span>
+          </div>
+          <div class="setting-item">
+            <span class="setting-label">Version</span>
+            <span id="claude-version">-</span>
+          </div>
+          <div class="setting-item">
+            <span class="setting-label">Connection</span>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button class="btn btn-secondary" onclick="App.checkClaudeStatus()" style="font-size:12px;padding:4px 12px;">Check Status</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Claude Permission Mode</h3>
+        <p class="form-hint">Controls how Claude operates in the Command Center.</p>
+        <div class="settings-group">
+          <div class="setting-item">
+            <span class="setting-label">Mode</span>
+            <select id="permission-mode-select" onchange="App.savePermissionMode()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:var(--text);font-size:13px;">
+              <option value="autonomous">Autonomous</option>
+              <option value="supervised">Supervised</option>
+            </select>
+          </div>
+          <div class="setting-item" style="flex-direction:column;align-items:flex-start;gap:6px">
+            <span id="permission-mode-desc" class="form-hint" style="margin:0"></span>
+          </div>
+        </div>
+      </div>
+      <div class="panel" id="secrets-panel">
+        <h3>Secrets & API Keys</h3>
+        <p class="form-hint">Encrypted secrets injected as environment variables into Claude sessions. AES-256-GCM encrypted at rest.</p>
+        <div class="settings-group" id="secrets-status-group">
+          <div class="setting-item">
+            <span class="setting-label">Status</span>
+            <span id="secrets-status-badge" class="badge badge-inactive">Checking...</span>
+          </div>
+        </div>
+        <div id="secrets-unlock-form" class="hidden" style="margin-top:12px">
+          <div class="form-grid">
+            <div class="form-group full-width">
+              <label>Master Password</label>
+              <input type="password" id="secrets-master-password" placeholder="Enter master password" onkeydown="if(event.key==='Enter')App.unlockSecrets()">
+            </div>
+          </div>
+          <div class="form-actions"><button class="btn btn-primary" onclick="App.unlockSecrets()">Unlock</button></div>
+        </div>
+        <div id="secrets-setup-form" class="hidden" style="margin-top:12px">
+          <p class="form-hint">Create a master password to encrypt your secrets vault. You'll need this password each time the server starts.</p>
+          <div class="form-grid">
+            <div class="form-group full-width">
+              <label>Create Master Password</label>
+              <input type="password" id="secrets-new-master-password" placeholder="Choose a master password">
+            </div>
+            <div class="form-group full-width">
+              <label>Confirm Password</label>
+              <input type="password" id="secrets-confirm-master-password" placeholder="Confirm password">
+            </div>
+          </div>
+          <div class="form-actions"><button class="btn btn-primary" onclick="App.initializeSecrets()">Create Vault</button></div>
+        </div>
+        <div id="secrets-list-container" class="hidden" style="margin-top:12px">
+          <div class="settings-group" id="secrets-list"></div>
+          <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-secondary" onclick="App.showAddSecret()">+ Add Secret</button>
+            <button class="btn btn-secondary" onclick="App.changeSecretsPassword()">Change Password</button>
+            <button class="btn btn-cancel" onclick="App.lockSecrets()" style="margin-left:auto">Lock</button>
+          </div>
+        </div>
+        <div id="secrets-add-form" class="hidden" style="margin-top:12px">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Name (ENV_VAR format)</label>
+              <input type="text" id="secret-add-name" placeholder="e.g. OPENAI_API_KEY" style="text-transform:uppercase">
+            </div>
+            <div class="form-group">
+              <label>Value</label>
+              <input type="password" id="secret-add-value" placeholder="Secret value">
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-secondary" onclick="App.cancelAddSecret()">Cancel</button>
+            <button class="btn btn-primary" onclick="App.saveSecret()">Save Secret</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel" id="update-panel">
+        <h3>Software Updates</h3>
+        <p class="form-hint">Check for platform updates from GitHub releases. Updates only affect platform files — your agents, tasks, and project data are never changed.</p>
+        <div class="settings-group">
+          <div class="setting-item">
+            <span class="setting-label">Current Version</span>
+            <span id="update-current-version">-</span>
+          </div>
+          <div class="setting-item">
+            <span class="setting-label">Latest Version</span>
+            <span id="update-latest-version">-</span>
+          </div>
+          <div class="setting-item">
+            <span class="setting-label">Status</span>
+            <span id="update-status" class="badge badge-active">Up to date</span>
+          </div>
+          <div id="update-release-info" class="hidden" style="margin-top:8px">
+            <div id="update-release-name" style="font-weight:600;margin-bottom:4px"></div>
+            <div id="update-release-notes" class="update-changes"></div>
+            <a id="update-release-url" href="#" target="_blank" style="font-size:12px;color:var(--accent);display:inline-block;margin-top:6px">View on GitHub</a>
+          </div>
+          <div class="setting-item" style="margin-top:8px">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button class="btn btn-secondary" onclick="App.checkForUpdates()">Check for Updates</button>
+              <button class="btn btn-primary hidden" id="update-upgrade-btn" onclick="App.performUpgrade()">Upgrade Now</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="settings-section-header">
+          <h3>Autopilot</h3>
+          <button class="btn btn-secondary" onclick="App.openAutopilotForm()">+ Add Schedule</button>
+        </div>
+        <div id="autopilot-list"></div>
+        <div id="autopilot-form" class="hidden">
+          <div class="form-grid" style="margin-top:12px">
+            <div class="form-group full-width">
+              <label>Name</label>
+              <input type="text" id="ap-name" placeholder="e.g. Daily standup">
+            </div>
+            <div class="form-group full-width">
+              <label>Prompt</label>
+              <textarea id="ap-prompt" rows="3" placeholder="The prompt to send to the terminal..."></textarea>
+            </div>
+            <div class="form-group">
+              <label>Agent</label>
+              <select id="ap-agent"></select>
+            </div>
+            <div class="form-group">
+              <label>Interval</label>
+              <div style="display:flex;gap:8px">
+                <input type="number" id="ap-interval" min="1" value="60" style="width:80px">
+                <select id="ap-interval-unit">
+                  <option value="minutes">Minutes</option>
+                  <option value="hours">Hours</option>
+                  <option value="days">Days</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-secondary" onclick="App.cancelAutopilotForm()">Cancel</button>
+            <button class="btn btn-primary" onclick="App.saveAutopilot()">Save</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Actions</h3>
+        <div class="settings-group">
+          <div class="setting-item">
+            <span class="setting-label">Temp workspace: <span id="temp-status">-</span></span>
+            <button class="btn btn-secondary" onclick="App.cleanupTemp()">Clean Temp</button>
+          </div>
+          <div class="setting-item">
+            <span class="setting-label">Rebuild CLAUDE.md context file</span>
+            <button class="btn btn-secondary" onclick="App.rebuildContext()">Rebuild</button>
+          </div>
+          <div class="setting-item">
+            <span class="setting-label">Delete all sub-agents (keeps orchestrator)</span>
+            <button class="btn btn-cancel" onclick="App.resetAgents()">Reset Agents</button>
+          </div>
+          <div class="setting-item">
+            <span class="setting-label">Reset system (requires restart)</span>
+            <button class="btn btn-cancel" onclick="App.resetSystem()">Reset</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Knowledge Base -->
+    <section id="view-knowledge" class="view">
+      <header class="view-header"><h2>Knowledge Base</h2></header>
+      <div class="filter-bar" id="knowledge-filter-bar">
+        <button class="filter-btn active" data-filter="all" onclick="App.filterKnowledge('all')">All</button>
+        <button class="filter-btn" data-filter="research" onclick="App.filterKnowledge('research')">Research</button>
+        <button class="filter-btn" data-filter="analysis" onclick="App.filterKnowledge('analysis')">Analysis</button>
+        <button class="filter-btn" data-filter="reference" onclick="App.filterKnowledge('reference')">Reference</button>
+        <button class="filter-btn" data-filter="guide" onclick="App.filterKnowledge('guide')">Guides</button>
+      </div>
+      <div id="knowledge-grid" class="knowledge-grid"><div class="empty-state">No knowledge documents yet</div></div>
+    </section>
+
+    <!-- Knowledge Detail -->
+    <section id="view-knowledge-detail" class="view">
+      <header class="view-header">
+        <button class="btn btn-secondary" onclick="App.navigate('knowledge')">&#8592; Back</button>
+        <h2 id="knowledge-detail-title">Document</h2>
+        <div class="header-actions">
+          <button class="btn btn-cancel" onclick="App.deleteKnowledgeDoc()">Delete</button>
+        </div>
+      </header>
+      <div class="knowledge-detail-meta" id="knowledge-detail-meta"></div>
+      <div class="panel" id="knowledge-summary-panel" style="display:none">
+        <h3>Summary</h3>
+        <p id="knowledge-detail-summary" class="content-text"></p>
+      </div>
+      <div class="panel">
+        <h3>Content</h3>
+        <div id="knowledge-detail-content" class="version-content"></div>
+      </div>
+    </section>
+
+    <!-- Skills -->
+    <section id="view-skills" class="view">
+      <header class="view-header"><h2>Skills</h2></header>
+      <p class="form-hint" style="margin-bottom:20px">Enable curated capabilities for your agents. Skills install dependencies and configure integrations automatically.</p>
+      <div id="skills-grid" class="skills-grid"><div class="empty-state">Loading skills...</div></div>
+    </section>
+
+    <!-- Help -->
+    <section id="view-help" class="view">
+      <header class="view-header"><h2>Help</h2></header>
+      <div class="help-layout">
+        <div class="help-topics" id="help-topics"></div>
+        <div class="help-content" id="help-content"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Add Task Modal -->
+  <div id="add-task-modal" class="modal-overlay hidden" onclick="if(event.target===this)App.closeAddTask()">
+    <div class="modal-box">
+      <h3>Add Task</h3>
+      <div class="form-grid">
+        <div class="form-group full-width">
+          <label>What needs to be done?</label>
+          <input type="text" id="add-task-title" placeholder="e.g. Write a blog post about AI trends" autofocus>
+        </div>
+        <div class="form-group full-width">
+          <label>Details (optional)</label>
+          <textarea id="add-task-desc" rows="3" placeholder="Any extra context or requirements..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Assign to</label>
+          <select id="add-task-agent">
+            <option value="">Auto (orchestrator decides)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Type</label>
+          <select id="add-task-type">
+            <option value="general">General</option>
+            <option value="research">Research</option>
+            <option value="development">Development</option>
+            <option value="content">Content</option>
+            <option value="review">Review</option>
+            <option value="operations">Operations</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Priority</label>
+          <select id="add-task-priority">
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+            <option value="high">High</option>
+            <option value="urgent">Urgent</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-secondary" onclick="App.closeAddTask()">Cancel</button>
+        <button class="btn btn-primary" onclick="App.submitAddTask()">Create Task</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Media Preview Modal -->
+  <div id="media-preview-modal" class="modal-overlay hidden" onclick="if(event.target===this)App.closeMediaPreview()">
+    <div class="modal-box" style="max-width:800px">
+      <div id="media-preview-content"></div>
+      <div class="form-actions">
+        <button class="btn btn-secondary" onclick="App.openMediaFolder()">Open in Folder</button>
+        <button class="btn btn-secondary" onclick="App.closeMediaPreview()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirmation Modal -->
+  <div id="confirm-modal" class="confirm-overlay hidden">
+    <div class="confirm-box">
+      <div class="confirm-icon" id="confirm-icon">&#9888;</div>
+      <h3 id="confirm-title">Are you sure?</h3>
+      <p id="confirm-message"></p>
+      <div id="confirm-input-wrap" class="hidden">
+        <input type="text" id="confirm-input" class="input" placeholder="" autocomplete="off">
+        <p class="confirm-hint" id="confirm-hint"></p>
+      </div>
+      <div class="confirm-actions">
+        <button class="btn btn-secondary" id="confirm-cancel-btn">Cancel</button>
+        <button class="btn btn-cancel" id="confirm-ok-btn" disabled>Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

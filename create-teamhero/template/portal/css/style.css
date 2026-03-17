@@ -668,22 +668,6 @@ body {
 .status-step-active[onclick*="'hold'"] { color: var(--yellow); border-color: var(--yellow); background: rgba(212,169,74,0.08); }
 .status-step-active[onclick*="'cancelled'"] { color: var(--red); border-color: var(--red); background: rgba(224,96,96,0.08); }
 
-/* ── Task Prev/Next Navigation ────────────────── */
-.task-nav-buttons {
-  display: flex; align-items: center; gap: 8px;
-  margin-top: 12px; justify-content: flex-end;
-}
-.task-nav-btn {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 5px 12px; border-radius: var(--radius-sm);
-  background: transparent; border: 1px solid var(--border);
-  color: var(--text-muted); font-size: 12px; font-weight: 500;
-  cursor: pointer; transition: all 0.15s ease; font-family: inherit;
-}
-.task-nav-btn:hover {
-  color: var(--text); border-color: var(--text-muted); background: var(--hover-bg);
-}
-
 /* ── Task Feedback Area ───────────────────────── */
 .task-feedback-area {
   margin-top: 12px; padding: 16px; border-radius: var(--radius);

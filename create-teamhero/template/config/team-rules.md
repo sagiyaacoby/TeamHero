@@ -24,12 +24,6 @@
 - The orchestrator must verify task status before launching any agent - skip tasks that are not `approved` or `revision_needed`
 - Violating these rules corrupts the review pipeline and undermines owner control
 
-### STRICT: Never re-submit already-approved work
-- If a task already has a deliverable in v1 and the owner approved it, the agent must NOT set it back to `pending_approval`
-- Owner approval means the deliverable is accepted. The agent should set the task to `done` after execution (or proceed to publish if applicable)
-- Only set to `pending_approval` when submitting NEW work the owner has not seen yet
-- Re-submitting approved work for re-approval wastes the owner's time and breaks trust
-
 ## Knowledge Pipeline
 - When completing research tasks, promote deliverables to Knowledge Base via `POST /api/tasks/{id}/promote`
 - Knowledge documents should have clear titles, categories, and tags for discoverability

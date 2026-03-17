@@ -846,7 +846,85 @@ body {
 /* ── Tag Badges ────────────────────────────────── */
 .tag-badge {
   display: inline-block; padding: 1px 6px; border-radius: var(--radius-sm);
-  font-size: 10px; font-weight: 500; color: var(--purple); margin-right: 4px;
+  font-size: 10px; font-weight: 500; margin-right: 4px;
+}
+.tag-badge-removable {
+  cursor: pointer; display: inline-flex; align-items: center; gap: 3px;
+}
+.tag-badge-removable .tag-remove {
+  font-size: 12px; line-height: 1; opacity: 0.6; font-weight: 400;
+}
+.tag-badge-removable:hover .tag-remove { opacity: 1; }
+
+/* ── Tag Input ────────────────────────────────── */
+.tag-input-wrap {
+  display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 4px 8px; min-height: 34px; cursor: text;
+}
+.tag-input-wrap:focus-within { border-color: var(--focus-border); }
+.tag-input-field {
+  border: none; background: transparent; color: var(--text);
+  font-size: 13px; outline: none; flex: 1; min-width: 80px; padding: 2px 0;
+}
+.tag-input-field::placeholder { color: var(--text-dim); }
+.tag-autocomplete {
+  position: absolute; left: 0; right: 0; top: 100%;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); max-height: 140px; overflow-y: auto;
+  z-index: 20; display: none;
+}
+.tag-autocomplete.open { display: block; }
+.tag-autocomplete-item {
+  padding: 5px 10px; font-size: 12px; cursor: pointer; color: var(--text-muted);
+}
+.tag-autocomplete-item:hover, .tag-autocomplete-item.active {
+  background: var(--hover-bg); color: var(--text);
+}
+.tag-input-container { position: relative; }
+
+/* ── Tag Filter Bar ────────────────────────────── */
+.tag-filter-bar {
+  display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; align-items: center;
+}
+.tag-filter-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 500;
+  cursor: pointer; transition: all 0.15s; border: 1px solid transparent;
+}
+.tag-filter-chip:hover { opacity: 0.85; }
+.tag-filter-chip.active { border-color: rgba(255,255,255,0.3); box-shadow: 0 0 4px rgba(255,255,255,0.1); }
+.tag-filter-chip .chip-x {
+  font-size: 12px; line-height: 1; opacity: 0; margin-left: 2px;
+}
+.tag-filter-chip.active .chip-x { opacity: 0.7; }
+.tag-filter-chip.active:hover .chip-x { opacity: 1; }
+.tag-filter-clear {
+  font-size: 11px; color: var(--text-dim); cursor: pointer;
+  padding: 3px 8px; border: none; background: none;
+}
+.tag-filter-clear:hover { color: var(--text); }
+
+/* Tag pills on task cards */
+.task-tags { display: inline-flex; gap: 3px; margin-left: 4px; flex-shrink: 0; }
+.task-tag-pill {
+  display: inline-block; padding: 0 5px; border-radius: 8px;
+  font-size: 9px; font-weight: 500; line-height: 16px; white-space: nowrap;
+}
+.task-time-ago {
+  font-size: 11px; color: var(--text-dim); white-space: nowrap;
+}
+.task-due {
+  font-size: 11px; color: var(--text-muted); white-space: nowrap;
+}
+.task-due-overdue {
+  font-size: 11px; color: var(--red); font-weight: 600; white-space: nowrap;
+}
+.task-due-detail {
+  color: var(--text-muted);
+}
+.task-detail-meta {
+  font-size: 13px; color: var(--text-muted); line-height: 1.6;
 }
 
 /* ── Version Deliverable & Result ────────────── */
@@ -939,7 +1017,21 @@ body {
 .modal-overlay.hidden { display: none; }
 .modal-box {
   background: var(--bg-surface); border: 1px solid var(--border);
-  border-radius: var(--radius-lg); padding: 28px; width: 480px; max-width: 90vw;
+  border-radius: var(--radius-lg); padding: 28px; width: 500px; max-width: 90vw;
+  max-height: 85vh; overflow-y: auto;
+}
+.add-task-advanced {
+  border-top: 1px solid var(--border); padding-top: 12px; margin-top: 4px;
+}
+.modal-box .custom-select-dropdown {
+  z-index: 100;
+}
+.form-group input[type="date"] {
+  cursor: pointer;
+}
+.form-group input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
 }
 .modal-box h3 { margin: 0 0 16px; font-size: 17px; font-weight: 600; color: var(--text); }
 

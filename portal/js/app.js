@@ -27,6 +27,21 @@
   var PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
   var q = String.fromCharCode(39);
 
+  function timeAgo(dateString) {
+    if (!dateString) return '';
+    var diff = Date.now() - new Date(dateString).getTime();
+    if (diff < 0) return 'just now';
+    var mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    var hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs + 'h ago';
+    var days = Math.floor(hrs / 24);
+    if (days < 30) return days + 'd ago';
+    var months = Math.floor(days / 30);
+    return months + 'mo ago';
+  }
+
   // ── API Client ─────────────────────────────────────
   const api = {
     async get(url) {
@@ -279,7 +294,7 @@
       if (v === 'rules') loadRulesEditor();
     }
     if (scope === 'all' || scope === 'secrets') {
-      if (v === 'settings') loadSecretsStatus();
+      if (v === 'settings') { loadSecretsStatus(); loadCredentialsStatus(); }
     }
     if (scope === 'all' || scope === 'skills') {
       if (v === 'skills') loadSkills();
@@ -393,7 +408,7 @@
         else if (t.status === 'accepted') accepted++;
         else if (t.status === 'closed' || t.status === 'done') closed++;
       });
-      document.getElementById('stat-total').textContent = state.tasks.filter(function(t) { return !t.parentTaskId; }).length;
+      document.getElementById('stat-total').textContent = state.tasks.filter(function(t) { return !t.parentTaskId && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled'; }).length;
       document.getElementById('stat-working').textContent = working;
       document.getElementById('stat-pending').textContent = pending;
       document.getElementById('stat-accepted').textContent = accepted;
@@ -506,10 +521,10 @@
       else if (t.status === 'closed' || t.status === 'done') closed++;
     });
     var af = state.agentTaskFilter;
-    var total = tasks.length;
+    var total = tasks.filter(function(t) { return t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled'; }).length;
     summaryEl.innerHTML =
       '<span class="badge badge-pending_approval clickable-badge' + (af === 'pending_approval' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'pending_approval\',\'agent\')">' + pending + ' Pending</span> ' +
-      '<span class="badge badge-all clickable-badge' + (af === 'all' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'all\',\'agent\')">' + total + ' All</span> ' +
+      '<span class="badge badge-all clickable-badge' + (af === 'all' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'all\',\'agent\')">' + total + ' Active</span> ' +
       '<span class="badge badge-in_progress clickable-badge' + (af === 'in_progress' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'in_progress\',\'agent\')">' + working + ' Working</span> ' +
       '<span class="badge badge-accepted clickable-badge' + (af === 'accepted' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'accepted\',\'agent\')">' + accepted + ' Accepted</span> ' +
       '<span class="badge badge-closed clickable-badge' + (af === 'closed' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'closed\',\'agent\')">' + closed + ' Closed</span>';
@@ -524,7 +539,7 @@
 
     var filtered;
     if (filter === 'all') {
-      filtered = tasks.filter(function(t) { return !t.parentTaskId; });
+      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled'; });
     } else if (filter === 'in_progress') {
       filtered = tasks.filter(function(t) { return !t.parentTaskId && (t.status === 'in_progress' || t.status === 'draft' || t.status === 'revision_needed'); });
     } else if (filter === 'closed') {
@@ -534,6 +549,17 @@
       filtered = tasks.filter(function(t) { return t.status === 'pending_approval'; });
     } else {
       filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === filter; });
+    }
+
+    // Apply tag filters
+    var tagFilters = context === 'dashboard' ? state.dashboardTagFilters : state.agentTagFilters;
+    if (tagFilters && tagFilters.length > 0) {
+      filtered = filtered.filter(function(t) {
+        if (!t.tags || t.tags.length === 0) return false;
+        return tagFilters.every(function(tf) {
+          return t.tags.some(function(tag) { return tag.toLowerCase() === tf.toLowerCase(); });
+        });
+      });
     }
 
     var statusOrder = { pending_approval: 0, revision_needed: 1, in_progress: 2, draft: 3, accepted: 4, hold: 5, closed: 6, done: 7 };
@@ -579,6 +605,7 @@
     } else {
       renderListView(listEl, filtered, context);
     }
+    renderTagFilterBar(context);
   }
 
   function renderListView(listEl, filtered, context) {
@@ -985,12 +1012,27 @@
     var depthStyle = isSubtask && depth ? ' style="padding-left:' + (16 + depth * 16) + 'px;margin-left:' + (depth * 12) + 'px"' : '';
     var statusLabel = STATUS_LABELS[t.status] || (t.status || 'draft').replace(/_/g, ' ');
 
+    var tagPills = '';
+    if (t.tags && t.tags.length > 0) {
+      tagPills = t.tags.map(function(tag) { return renderTagPill(tag); }).join('');
+    }
+    var dueDateHtml = '';
+    if (t.dueDate) {
+      var dueDate = new Date(t.dueDate);
+      var now = new Date();
+      now.setHours(0, 0, 0, 0);
+      var isOverdue = dueDate < now && t.status !== 'closed' && t.status !== 'done' && t.status !== 'accepted';
+      dueDateHtml = '<span class="task-due' + (isOverdue ? ' task-due-overdue' : '') + '" title="Due: ' + dueDate.toLocaleDateString() + '">' + dueDate.toLocaleDateString() + '</span>';
+    }
+    var timeAgoHtml = t.createdAt ? '<span class="task-time-ago">' + timeAgo(t.createdAt) + '</span>' : '';
+
     return '<div class="task-item' + subtaskClass + '"' + depthStyle + ' onclick="App.openTask(' + q + t.id + q + ')">' +
-      '<span class="task-title">' + outputIcon + autopilotIcon + escHtml(t.title) + '</span>' +
+      '<span class="task-title">' + outputIcon + autopilotIcon + escHtml(t.title) + tagPills + '</span>' +
       '<span class="task-meta">' +
         '<span class="badge ' + priorityClass + '">' + escHtml(t.priority || 'medium') + '</span>' +
         '<span class="badge ' + statusClass + '">' + escHtml(statusLabel) + workingDot + '</span>' +
         (agentName ? '<span>' + escHtml(agentName) + '</span>' : '') +
+        dueDateHtml + timeAgoHtml +
       '</span></div>';
   }
 
@@ -1030,24 +1072,70 @@
   // ── Add Task Modal ────────────────────────────
   function openAddTask(preselectedAgent) {
     var modal = document.getElementById('add-task-modal');
-    var agentSelect = document.getElementById('add-task-agent');
-    // Populate agent dropdown
-    agentSelect.innerHTML = '<option value="">Auto (orchestrator decides)</option>';
-    state.agents.forEach(function(a) {
-      if (a.isOrchestrator) return;
-      var opt = document.createElement('option');
-      opt.value = a.id;
-      opt.textContent = a.name + ' — ' + a.role;
-      agentSelect.appendChild(opt);
-    });
-    if (preselectedAgent) agentSelect.value = preselectedAgent;
+    // Populate agent custom-select
+    var agentOpts = document.getElementById('add-task-agent-options');
+    if (agentOpts) {
+      var agentHtml = '<div class="custom-select-option selected" data-value="">Auto (orchestrator decides)</div>';
+      state.agents.forEach(function(a) {
+        if (a.isOrchestrator) return;
+        agentHtml += '<div class="custom-select-option" data-value="' + a.id + '">' + escHtml(a.name + ' - ' + a.role) + '</div>';
+      });
+      agentOpts.innerHTML = agentHtml;
+    }
+    // Reset agent
+    setCustomSelect('add-task-agent-select', preselectedAgent || '', preselectedAgent ? (function() {
+      var a = state.agents.find(function(ag) { return ag.id === preselectedAgent; });
+      return a ? a.name + ' - ' + a.role : 'Auto (orchestrator decides)';
+    })() : 'Auto (orchestrator decides)');
+    // Reset type and priority
+    setCustomSelect('add-task-type-select', 'general', 'General');
+    setCustomSelect('add-task-priority-select', 'medium', 'Medium');
     // Reset fields
     document.getElementById('add-task-title').value = '';
     document.getElementById('add-task-desc').value = '';
-    document.getElementById('add-task-priority').value = 'medium';
-    document.getElementById('add-task-type').value = 'general';
     document.getElementById('add-task-autopilot').checked = false;
+    // Reset due date
+    var dueDateInput = document.getElementById('add-task-duedate');
+    if (dueDateInput) dueDateInput.value = '';
+    // Hide advanced section
+    var advSection = document.getElementById('add-task-advanced');
+    if (advSection) advSection.classList.add('hidden');
+    // Populate parent task custom-select
+    var parentOpts = document.getElementById('add-task-parent-options');
+    if (parentOpts) {
+      var parentHtml = '<div class="custom-select-option selected" data-value="">None</div>';
+      (state.cachedDashboardTasks || state.tasks || []).forEach(function(t) {
+        if (t.status === 'closed' || t.status === 'done' || t.status === 'cancelled') return;
+        parentHtml += '<div class="custom-select-option" data-value="' + t.id + '">' + escHtml(t.title.substring(0, 40)) + '</div>';
+      });
+      parentOpts.innerHTML = parentHtml;
+    }
+    setCustomSelect('add-task-parent-select', '', 'None');
+    // Initialize depends-on chip input
+    state._addTaskDeps = [];
+    state._addTaskDepsList = (state.cachedDashboardTasks || state.tasks || []).filter(function(t) {
+      return t.status !== 'cancelled';
+    });
+    renderDepsChips();
+    var depsInput = document.getElementById('add-task-depends-input');
+    if (depsInput) {
+      var newInput = depsInput.cloneNode(true);
+      depsInput.parentNode.replaceChild(newInput, depsInput);
+      depsInput = newInput;
+      depsInput.addEventListener('input', function() { showDepsAutocomplete(depsInput.value.trim()); });
+      depsInput.addEventListener('blur', function() {
+        setTimeout(function() { document.getElementById('add-task-depends-autocomplete').classList.remove('open'); }, 150);
+      });
+      depsInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Backspace' && !depsInput.value && state._addTaskDeps.length > 0) {
+          state._addTaskDeps.pop();
+          renderDepsChips();
+        }
+      });
+    }
     modal.classList.remove('hidden');
+    // Init tag input
+    initTagInput('add-task-tag-container', []);
     setTimeout(function() { document.getElementById('add-task-title').focus(); }, 100);
   }
 
@@ -1065,15 +1153,31 @@
 
     try {
       var autopilot = document.getElementById('add-task-autopilot').checked;
-      await api.post('/api/tasks', {
+      var tags = getTagInputTags('add-task-tag-container');
+      var dueDate = (document.getElementById('add-task-duedate') || {}).value || '';
+      var parentId = (document.getElementById('add-task-parent') || {}).value || '';
+      var dependsOn = (state._addTaskDeps || []).slice();
+
+      var taskBody = {
         title: title,
         description: desc || title,
         assignedTo: agent || 'orchestrator',
         status: 'draft',
         priority: priority,
         type: type,
-        autopilot: autopilot
-      });
+        autopilot: autopilot,
+        tags: tags
+      };
+      if (dueDate) taskBody.dueDate = dueDate;
+      if (dependsOn.length > 0) taskBody.dependsOn = dependsOn;
+
+      if (parentId) {
+        // Create as subtask
+        taskBody.parentTaskId = parentId;
+        await api.post('/api/tasks/' + parentId + '/subtasks', taskBody);
+      } else {
+        await api.post('/api/tasks', taskBody);
+      }
       closeAddTask();
       toast('Task created! The orchestrator will refine it.', 'success');
     } catch(e) {
@@ -1122,11 +1226,20 @@
         if (found) agentName = found.name;
       }
       document.getElementById('task-detail-agent').textContent = agentName;
-      document.getElementById('task-detail-date').textContent = task.updatedAt ? new Date(task.updatedAt).toLocaleDateString() : '-';
+      var dateHtml = '';
+      if (task.createdAt) dateHtml += 'Created: ' + new Date(task.createdAt).toLocaleString() + ' (' + timeAgo(task.createdAt) + ')';
+      if (task.updatedAt && task.updatedAt !== task.createdAt) dateHtml += ' | Updated: ' + new Date(task.updatedAt).toLocaleString() + ' (' + timeAgo(task.updatedAt) + ')';
+      if (task.dueDate) {
+        var dueDate = new Date(task.dueDate);
+        var today = new Date(); today.setHours(0, 0, 0, 0);
+        var isOverdue = dueDate < today && task.status !== 'closed' && task.status !== 'done' && task.status !== 'accepted';
+        dateHtml += ' | <span class="' + (isOverdue ? 'task-due-overdue' : 'task-due-detail') + '">Due: ' + dueDate.toLocaleDateString() + '</span>';
+      }
+      document.getElementById('task-detail-date').innerHTML = dateHtml || '-';
 
       var tagsEl = document.getElementById('task-detail-tags');
       if (task.tags && task.tags.length > 0) {
-        tagsEl.innerHTML = task.tags.map(function(tag) { return '<span class="tag-badge">' + escHtml(tag) + '</span>'; }).join('');
+        tagsEl.innerHTML = task.tags.map(function(tag) { return renderTagBadge(tag); }).join('');
       } else {
         tagsEl.innerHTML = '';
       }
@@ -1467,6 +1580,11 @@
         previewImg.src = URL.createObjectURL(blob);
         previewPath.textContent = result.path;
         previewArea.classList.remove('hidden');
+      }
+      // Send image path to CLI so the orchestrator can see it
+      if (termWs && termWs.readyState === 1) {
+        var absPath = result.absPath || result.path;
+        termWs.send(JSON.stringify({ type: 'input', data: 'I pasted an image, see it at: ' + absPath + '\r' }));
       }
       toast('Image saved: ' + result.path);
     } catch (e) {
@@ -2018,6 +2136,7 @@
     loadPermissionMode();
     checkForUpdates();
     loadSecretsStatus();
+    loadCredentialsStatus();
     loadTempStatus();
   }
 
@@ -2272,6 +2391,115 @@
       await api.post('/api/secrets/change-password', { currentPassword: current, newPassword: newPw });
       toast('Master password changed');
     } catch(e) { toast('Failed to change password. Check current password.', 'error'); }
+  }
+
+  // ── Credentials Manager ──────────────────────────────
+  async function loadCredentialsStatus() {
+    var lockedMsg = document.getElementById('credentials-locked-msg');
+    var listContainer = document.getElementById('credentials-list-container');
+    var addForm = document.getElementById('credentials-add-form');
+    if (!lockedMsg) return;
+
+    lockedMsg.classList.add('hidden');
+    if (listContainer) listContainer.classList.add('hidden');
+    if (addForm) addForm.classList.add('hidden');
+
+    try {
+      var status = await api.get('/api/secrets/status');
+      if (!status.exists || status.locked) {
+        lockedMsg.classList.remove('hidden');
+      } else {
+        if (listContainer) listContainer.classList.remove('hidden');
+        loadCredentialsList();
+      }
+    } catch(e) {
+      lockedMsg.classList.remove('hidden');
+    }
+  }
+
+  async function loadCredentialsList() {
+    var listEl = document.getElementById('credentials-list');
+    if (!listEl) return;
+    try {
+      var data = await api.get('/api/credentials');
+      if (!data.credentials || data.credentials.length === 0) {
+        listEl.innerHTML = '<div class="empty-state">No credentials stored</div>';
+        return;
+      }
+      listEl.innerHTML = data.credentials.map(function(c) {
+        return '<div class="secret-item">' +
+          '<span class="secret-name">' + escHtml(c.service) + '</span>' +
+          '<span class="secret-value">' + escHtml(c.username) + ' / ' + escHtml(c.maskedPassword) + '</span>' +
+          '<span class="secret-actions">' +
+            '<button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="App.editCredential(' + q + c.service + q + ')">Edit</button>' +
+            '<button class="btn btn-cancel" style="font-size:11px;padding:3px 8px" onclick="App.deleteCredential(' + q + c.service + q + ')">Delete</button>' +
+          '</span>' +
+        '</div>';
+      }).join('');
+    } catch(e) {
+      listEl.innerHTML = '<div class="empty-state">Failed to load credentials</div>';
+    }
+  }
+
+  var editingCredentialService = null;
+
+  function showAddCredential() {
+    editingCredentialService = null;
+    var addForm = document.getElementById('credentials-add-form');
+    if (addForm) addForm.classList.remove('hidden');
+    document.getElementById('credential-add-service').value = '';
+    document.getElementById('credential-add-service').disabled = false;
+    document.getElementById('credential-add-username').value = '';
+    document.getElementById('credential-add-password').value = '';
+  }
+
+  function cancelAddCredential() {
+    document.getElementById('credentials-add-form').classList.add('hidden');
+    editingCredentialService = null;
+  }
+
+  async function saveCredential() {
+    var serviceEl = document.getElementById('credential-add-service');
+    var usernameEl = document.getElementById('credential-add-username');
+    var passwordEl = document.getElementById('credential-add-password');
+    var service = serviceEl.value.trim();
+    var username = usernameEl.value.trim();
+    var password = passwordEl.value;
+    if (!service || !username || !password) { toast('All fields are required', 'error'); return; }
+
+    try {
+      if (editingCredentialService) {
+        await api.put('/api/credentials/' + encodeURIComponent(editingCredentialService), { username: username, password: password });
+        toast('Credential updated');
+      } else {
+        await api.post('/api/credentials', { service: service, username: username, password: password });
+        toast('Credential saved');
+      }
+      document.getElementById('credentials-add-form').classList.add('hidden');
+      editingCredentialService = null;
+      loadCredentialsList();
+    } catch(e) { toast(e.message || 'Failed to save credential', 'error'); }
+  }
+
+  function editCredential(service) {
+    editingCredentialService = service;
+    var serviceEl = document.getElementById('credential-add-service');
+    serviceEl.value = service;
+    serviceEl.disabled = true;
+    document.getElementById('credential-add-username').value = '';
+    document.getElementById('credential-add-password').value = '';
+    document.getElementById('credential-add-username').placeholder = 'Enter new username';
+    document.getElementById('credential-add-password').placeholder = 'Enter new password';
+    document.getElementById('credentials-add-form').classList.remove('hidden');
+  }
+
+  async function deleteCredential(service) {
+    if (!confirm('Delete credential for "' + service + '"? This cannot be undone.')) return;
+    try {
+      await api.del('/api/credentials/' + encodeURIComponent(service));
+      toast('Credential deleted');
+      loadCredentialsList();
+    } catch(e) { toast('Failed to delete credential', 'error'); }
   }
 
   // ── Software Updates ─────────────────────────────────
@@ -2758,6 +2986,304 @@
       .replace(/(data\/[^\s<&]+\.(md|txt|json|html|pdf|png|jpg|jpeg|gif|svg|mp4|csv))/gi, function(match) {
         return '<a href="#" onclick="App.viewFile(\'' + match.replace(/'/g, "\\'") + '\');return false;" style="color:var(--accent)">' + match + '</a>';
       });
+  }
+
+  // ── Depends-On Chip Input ───────────────────────────
+  function renderDepsChips() {
+    var wrap = document.getElementById('add-task-depends-wrap');
+    if (!wrap) return;
+    var input = wrap.querySelector('.tag-input-field');
+    wrap.querySelectorAll('.tag-badge-removable').forEach(function(el) { el.remove(); });
+    (state._addTaskDeps || []).forEach(function(depId) {
+      var task = (state._addTaskDepsList || []).find(function(t) { return t.id === depId; });
+      var label = task ? task.title.substring(0, 30) + (task.title.length > 30 ? '...' : '') : depId;
+      var span = document.createElement('span');
+      span.className = 'tag-badge tag-badge-removable';
+      span.style.color = 'var(--accent)';
+      span.innerHTML = escHtml(label) + '<span class="tag-remove">x</span>';
+      span.onclick = function() {
+        state._addTaskDeps = state._addTaskDeps.filter(function(d) { return d !== depId; });
+        renderDepsChips();
+      };
+      wrap.insertBefore(span, input);
+    });
+  }
+
+  function showDepsAutocomplete(query) {
+    var ac = document.getElementById('add-task-depends-autocomplete');
+    if (!ac) return;
+    var selected = state._addTaskDeps || [];
+    var matches = (state._addTaskDepsList || []).filter(function(t) {
+      if (selected.indexOf(t.id) !== -1) return false;
+      if (!query) return true;
+      return t.title.toLowerCase().indexOf(query.toLowerCase()) !== -1;
+    });
+    if (matches.length === 0) { ac.classList.remove('open'); return; }
+    ac.innerHTML = matches.slice(0, 8).map(function(t) {
+      return '<div class="tag-autocomplete-item" onmousedown="App.selectDep(\'' + t.id + '\')">' + escHtml(t.title.substring(0, 50)) + '</div>';
+    }).join('');
+    ac.classList.add('open');
+  }
+
+  function selectDep(taskId) {
+    if (state._addTaskDeps.indexOf(taskId) === -1) {
+      state._addTaskDeps.push(taskId);
+      renderDepsChips();
+    }
+    var input = document.getElementById('add-task-depends-input');
+    if (input) input.value = '';
+    var ac = document.getElementById('add-task-depends-autocomplete');
+    if (ac) ac.classList.remove('open');
+  }
+
+  // ── Tag System ──────────────────────────────────────
+  var TAG_COLORS = [
+    { bg: 'rgba(110,180,230,0.18)', text: '#7ec8f0' },
+    { bg: 'rgba(180,130,220,0.18)', text: '#c0a0e8' },
+    { bg: 'rgba(130,200,150,0.18)', text: '#a0d8a8' },
+    { bg: 'rgba(220,170,90,0.18)', text: '#d8b060' },
+    { bg: 'rgba(220,120,120,0.18)', text: '#e09090' },
+    { bg: 'rgba(120,200,200,0.18)', text: '#90d0d0' },
+    { bg: 'rgba(200,160,120,0.18)', text: '#c8a878' },
+    { bg: 'rgba(160,180,220,0.18)', text: '#a8b8e0' },
+    { bg: 'rgba(220,160,180,0.18)', text: '#e0a0b8' },
+    { bg: 'rgba(180,200,100,0.18)', text: '#b8c870' },
+    { bg: 'rgba(200,140,200,0.18)', text: '#d090d0' },
+    { bg: 'rgba(140,190,180,0.18)', text: '#98c8b8' },
+  ];
+
+  function hashTagColor(tag) {
+    var hash = 0;
+    for (var i = 0; i < tag.length; i++) {
+      hash = ((hash << 5) - hash) + tag.charCodeAt(i);
+      hash |= 0;
+    }
+    return TAG_COLORS[Math.abs(hash) % TAG_COLORS.length];
+  }
+
+  function renderTagPill(tag) {
+    var c = hashTagColor(tag);
+    return '<span class="task-tag-pill" style="background:' + c.bg + ';color:' + c.text + '">' + escHtml(tag) + '</span>';
+  }
+
+  function renderTagBadge(tag) {
+    var c = hashTagColor(tag);
+    return '<span class="tag-badge" style="color:' + c.text + '">' + escHtml(tag) + '</span>';
+  }
+
+  function renderRemovableTag(tag, containerId) {
+    var c = hashTagColor(tag);
+    return '<span class="tag-badge tag-badge-removable" style="color:' + c.text + '" onclick="App.removeTag(\'' + escHtml(containerId) + '\',\'' + escHtml(tag).replace(/'/g, "\\'") + '\')">' +
+      escHtml(tag) + '<span class="tag-remove">x</span></span>';
+  }
+
+  // Collect all unique tags across tasks
+  function getAllUsedTags() {
+    var tagSet = {};
+    (state.tasks || []).forEach(function(t) {
+      (t.tags || []).forEach(function(tag) { tagSet[tag] = true; });
+    });
+    // Also check cached detail tasks which have full tag data
+    (state.cachedDashboardTasks || []).forEach(function(t) {
+      (t.tags || []).forEach(function(tag) { tagSet[tag] = true; });
+    });
+    (state.cachedAgentTasks || []).forEach(function(t) {
+      (t.tags || []).forEach(function(tag) { tagSet[tag] = true; });
+    });
+    return Object.keys(tagSet).sort();
+  }
+
+  // Tag input state per container
+  var tagInputState = {};
+
+  function initTagInput(containerId, initialTags) {
+    tagInputState[containerId] = { tags: (initialTags || []).slice() };
+    renderTagInputTags(containerId);
+    var input = document.querySelector('#' + containerId + ' .tag-input-field');
+    var autocomplete = document.querySelector('#' + containerId + ' .tag-autocomplete');
+    if (!input || !autocomplete) return;
+
+    // Remove old listeners by replacing node
+    var newInput = input.cloneNode(true);
+    input.parentNode.replaceChild(newInput, input);
+    input = newInput;
+
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.key === ',') {
+        e.preventDefault();
+        addTagFromInput(containerId);
+      }
+      if (e.key === 'Backspace' && !input.value) {
+        var tags = tagInputState[containerId].tags;
+        if (tags.length > 0) {
+          tags.pop();
+          renderTagInputTags(containerId);
+        }
+      }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        navigateAutocomplete(containerId, e.key === 'ArrowDown' ? 1 : -1);
+      }
+    });
+    input.addEventListener('input', function() {
+      showTagAutocomplete(containerId, input.value.trim());
+    });
+    input.addEventListener('blur', function() {
+      setTimeout(function() { autocomplete.classList.remove('open'); }, 150);
+    });
+    input.addEventListener('focus', function() {
+      if (input.value.trim()) showTagAutocomplete(containerId, input.value.trim());
+    });
+  }
+
+  function addTagFromInput(containerId) {
+    var input = document.querySelector('#' + containerId + ' .tag-input-field');
+    var autocomplete = document.querySelector('#' + containerId + ' .tag-autocomplete');
+    if (!input) return;
+
+    // Check if there's an active autocomplete item
+    var activeItem = autocomplete ? autocomplete.querySelector('.tag-autocomplete-item.active') : null;
+    var val = activeItem ? activeItem.textContent.trim() : input.value.replace(/,/g, '').trim();
+    if (!val) return;
+
+    var tags = tagInputState[containerId].tags;
+    var lower = val.toLowerCase();
+    if (!tags.some(function(t) { return t.toLowerCase() === lower; })) {
+      tags.push(val);
+      renderTagInputTags(containerId);
+    }
+    input.value = '';
+    if (autocomplete) autocomplete.classList.remove('open');
+  }
+
+  function removeTag(containerId, tag) {
+    var tags = tagInputState[containerId].tags;
+    tagInputState[containerId].tags = tags.filter(function(t) { return t !== tag; });
+    renderTagInputTags(containerId);
+  }
+
+  function renderTagInputTags(containerId) {
+    var wrap = document.querySelector('#' + containerId + ' .tag-input-wrap');
+    if (!wrap) return;
+    var input = wrap.querySelector('.tag-input-field');
+    // Remove old tag badges
+    wrap.querySelectorAll('.tag-badge-removable').forEach(function(el) { el.remove(); });
+    var tags = tagInputState[containerId].tags;
+    tags.forEach(function(tag) {
+      var span = document.createElement('span');
+      span.innerHTML = renderRemovableTag(tag, containerId);
+      wrap.insertBefore(span.firstChild, input);
+    });
+  }
+
+  function showTagAutocomplete(containerId, query) {
+    var autocomplete = document.querySelector('#' + containerId + ' .tag-autocomplete');
+    if (!autocomplete) return;
+    var allTags = getAllUsedTags();
+    var currentTags = tagInputState[containerId].tags;
+    var filtered = allTags.filter(function(tag) {
+      if (currentTags.some(function(t) { return t.toLowerCase() === tag.toLowerCase(); })) return false;
+      if (!query) return true;
+      return tag.toLowerCase().indexOf(query.toLowerCase()) !== -1;
+    });
+    if (filtered.length === 0 || !query) {
+      autocomplete.classList.remove('open');
+      return;
+    }
+    autocomplete.innerHTML = filtered.slice(0, 8).map(function(tag) {
+      var c = hashTagColor(tag);
+      return '<div class="tag-autocomplete-item" style="color:' + c.text + '" onmousedown="App.selectAutoTag(\'' + escHtml(containerId) + '\',\'' + escHtml(tag).replace(/'/g, "\\'") + '\')">' + escHtml(tag) + '</div>';
+    }).join('');
+    autocomplete.classList.add('open');
+  }
+
+  function selectAutoTag(containerId, tag) {
+    var tags = tagInputState[containerId].tags;
+    var lower = tag.toLowerCase();
+    if (!tags.some(function(t) { return t.toLowerCase() === lower; })) {
+      tags.push(tag);
+      renderTagInputTags(containerId);
+    }
+    var input = document.querySelector('#' + containerId + ' .tag-input-field');
+    if (input) input.value = '';
+    var autocomplete = document.querySelector('#' + containerId + ' .tag-autocomplete');
+    if (autocomplete) autocomplete.classList.remove('open');
+  }
+
+  function navigateAutocomplete(containerId, dir) {
+    var autocomplete = document.querySelector('#' + containerId + ' .tag-autocomplete');
+    if (!autocomplete || !autocomplete.classList.contains('open')) return;
+    var items = autocomplete.querySelectorAll('.tag-autocomplete-item');
+    if (items.length === 0) return;
+    var current = autocomplete.querySelector('.tag-autocomplete-item.active');
+    var idx = -1;
+    if (current) {
+      items.forEach(function(item, i) { if (item === current) idx = i; });
+      current.classList.remove('active');
+    }
+    idx += dir;
+    if (idx < 0) idx = items.length - 1;
+    if (idx >= items.length) idx = 0;
+    items[idx].classList.add('active');
+  }
+
+  function getTagInputTags(containerId) {
+    return tagInputState[containerId] ? tagInputState[containerId].tags.slice() : [];
+  }
+
+  // Tag filter state
+  state.dashboardTagFilters = [];
+  state.agentTagFilters = [];
+
+  function renderTagFilterBar(context) {
+    var barId = context === 'dashboard' ? 'dashboard-tag-filter' : 'agent-tag-filter';
+    var bar = document.getElementById(barId);
+    if (!bar) return;
+
+    var tasks = context === 'dashboard' ? state.cachedDashboardTasks : state.cachedAgentTasks;
+    var tagCounts = {};
+    (tasks || []).forEach(function(t) {
+      (t.tags || []).forEach(function(tag) {
+        tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+      });
+    });
+    var tagNames = Object.keys(tagCounts).sort();
+    if (tagNames.length === 0) { bar.innerHTML = ''; return; }
+
+    var activeFilters = context === 'dashboard' ? state.dashboardTagFilters : state.agentTagFilters;
+    var html = '';
+    tagNames.forEach(function(tag) {
+      var c = hashTagColor(tag);
+      var isActive = activeFilters.indexOf(tag) !== -1;
+      html += '<span class="tag-filter-chip' + (isActive ? ' active' : '') + '" style="background:' + c.bg + ';color:' + c.text + '" onclick="App.toggleTagFilter(\'' + escHtml(tag).replace(/'/g, "\\'") + '\',\'' + context + '\')">' +
+        escHtml(tag) + '<span class="chip-x">x</span></span>';
+    });
+    if (activeFilters.length > 0) {
+      html += '<button class="tag-filter-clear" onclick="App.clearTagFilters(\'' + context + '\')">Clear filters</button>';
+    }
+    bar.innerHTML = html;
+  }
+
+  function toggleTagFilter(tag, context) {
+    var filters = context === 'dashboard' ? state.dashboardTagFilters : state.agentTagFilters;
+    var idx = filters.indexOf(tag);
+    if (idx !== -1) {
+      filters.splice(idx, 1);
+    } else {
+      filters.push(tag);
+    }
+    renderTagFilterBar(context);
+    renderFilteredTasks(context);
+  }
+
+  function clearTagFilters(context) {
+    if (context === 'dashboard') {
+      state.dashboardTagFilters = [];
+    } else {
+      state.agentTagFilters = [];
+    }
+    renderTagFilterBar(context);
+    renderFilteredTasks(context);
   }
 
   // ── Init ───────────────────────────────────────────
@@ -3548,6 +4074,11 @@
     editSecret: editSecret,
     deleteSecret: deleteSecret,
     changeSecretsPassword: changeSecretsPassword,
+    showAddCredential: showAddCredential,
+    cancelAddCredential: cancelAddCredential,
+    saveCredential: saveCredential,
+    editCredential: editCredential,
+    deleteCredential: deleteCredential,
     checkForUpdates: checkForUpdates,
     performUpgrade: performUpgrade,
     checkClaudeStatus: checkClaudeStatus,
@@ -3580,6 +4111,11 @@
     setViewMode: setViewMode,
     toggleFlowExpand: toggleFlowExpand,
     toggleHierarchyExpand: toggleHierarchyExpand,
+    removeTag: removeTag,
+    selectAutoTag: selectAutoTag,
+    toggleTagFilter: toggleTagFilter,
+    clearTagFilters: clearTagFilters,
+    selectDep: selectDep,
   };
 
   init();

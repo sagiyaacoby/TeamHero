@@ -189,11 +189,20 @@ function saveSecretsFile() {
 function scrubSecrets(text) {
   if (!secretsCache) return text;
   var result = text;
-  var keys = Object.keys(secretsCache);
+  var keys = Object.keys(secretsCache).filter(function(k) { return k !== '_credentials'; });
   for (var i = 0; i < keys.length; i++) {
     var val = secretsCache[keys[i]];
     if (val && val.length >= 4) {
       var escaped = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      result = result.replace(new RegExp(escaped, 'g'), '[REDACTED]');
+    }
+  }
+  // Also scrub credential passwords
+  var creds = getCredentials();
+  for (var ci = 0; ci < creds.length; ci++) {
+    var pw = creds[ci].password;
+    if (pw && pw.length >= 4) {
+      var escaped = pw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       result = result.replace(new RegExp(escaped, 'g'), '[REDACTED]');
     }
   }
@@ -207,8 +216,24 @@ function maskValue(val) {
 }
 
 function getSecretNames() {
-  if (secretsCache) return Object.keys(secretsCache);
+  if (secretsCache) return Object.keys(secretsCache).filter(function(k) { return k !== '_credentials'; });
   return [];
+}
+
+function getCredentials() {
+  if (!secretsCache) return [];
+  return secretsCache._credentials || [];
+}
+
+function getCredentialEnvNames() {
+  var creds = getCredentials();
+  var names = [];
+  for (var i = 0; i < creds.length; i++) {
+    var prefix = creds[i].service.toUpperCase().replace(/[\s\-]+/g, '_').replace(/[^A-Z0-9_]/g, '');
+    names.push(prefix + '_USERNAME');
+    names.push(prefix + '_PASSWORD');
+  }
+  return names;
 }
 
 // ── WebSocket Client Tracking + Broadcast ────────────────
@@ -267,6 +292,7 @@ function rebuildClaudeMd() {
   const ownerMd = readText(path.join(ROOT, 'profile/owner.md')) || '';
   const teamR = readText(path.join(ROOT, 'config/team-rules.md')) || '';
   const secR = readText(path.join(ROOT, 'config/security-rules.md')) || '';
+  const capsMd = readText(path.join(ROOT, 'config/capabilities.md')) || '';
   const tn = sys.teamName || 'Multi-Agent Team';
 
   var orchAgents = reg.agents.filter(function(a) { return a.isOrchestrator; });
@@ -427,12 +453,15 @@ function rebuildClaudeMd() {
     '- Organize by purpose: `temp/screenshots/`, `temp/downloads/`, etc.\n' +
     '- Files in `temp/` are disposable \u2014 they may be cleaned at any time\n' +
     '- Never store deliverables in `temp/` \u2014 use `data/tasks/{id}/v{n}/` instead\n\n' +
+    (capsMd ? '## Capabilities\n\n' + capsMd + '\n\n' : '') +
     '## Available Secrets\n\n' +
     'These environment variables are injected into your session when secrets are unlocked:\n\n' +
     (function() {
       var names = getSecretNames();
-      if (names.length === 0) return '_No secrets configured. Add them via dashboard Settings > Secrets & API Keys._\n';
-      return names.map(function(n) { return '- `$' + n + '`'; }).join('\n') + '\n\n' +
+      var credNames = getCredentialEnvNames();
+      var allNames = names.concat(credNames);
+      if (allNames.length === 0) return '_No secrets configured. Add them via dashboard Settings > Secrets & API Keys._\n';
+      return allNames.map(function(n) { return '- `$' + n + '`'; }).join('\n') + '\n\n' +
         'Use these as environment variables in commands (e.g. `$OPENAI_API_KEY`). Never echo or output their values.\n';
     })();
 
@@ -711,8 +740,15 @@ function createTermSession(sessionId, socket) {
   });
   // Inject decrypted secrets as environment variables
   if (secretsCache) {
-    var skeys = Object.keys(secretsCache);
+    var skeys = getSecretNames();
     for (var si = 0; si < skeys.length; si++) { envVars[skeys[si]] = secretsCache[skeys[si]]; }
+    // Inject credentials as SERVICE_USERNAME / SERVICE_PASSWORD
+    var creds = getCredentials();
+    for (var ci = 0; ci < creds.length; ci++) {
+      var prefix = creds[ci].service.toUpperCase().replace(/[\s\-]+/g, '_').replace(/[^A-Z0-9_]/g, '');
+      envVars[prefix + '_USERNAME'] = creds[ci].username;
+      envVars[prefix + '_PASSWORD'] = creds[ci].password;
+    }
   }
 
   var term = pty.spawn(shell, shellArgs, {
@@ -948,6 +984,7 @@ async function handle(pn, m, req, res) {
       parentTaskId: b.parentTaskId || null,
       subtasks: Array.isArray(b.subtasks) ? b.subtasks : [],
       dependsOn: Array.isArray(b.dependsOn) ? b.dependsOn : [],
+      dueDate: b.dueDate || null,
       progressLog: [],
       createdAt: now, updatedAt: now
     };
@@ -1078,6 +1115,7 @@ async function handle(pn, m, req, res) {
       parentTaskId: parentId,
       subtasks: [],
       dependsOn: Array.isArray(b.dependsOn) ? b.dependsOn : [],
+      dueDate: b.dueDate || null,
       progressLog: [],
       createdAt: now, updatedAt: now
     };
@@ -1454,7 +1492,7 @@ async function handle(pn, m, req, res) {
     if (dest === 'task' && b.taskId) {
       relPath = 'data/tasks/' + b.taskId + '/images/img-' + ts + '.png';
     } else {
-      relPath = 'data/media/clipboard/clip-' + ts + '.png';
+      relPath = 'temp/clipboard/clip-' + ts + '.png';
     }
     var absPath = safePath(relPath);
     if (!absPath) return E(res, 'Invalid path', 403);
@@ -1462,7 +1500,7 @@ async function handle(pn, m, req, res) {
     var buf = Buffer.from(b.data, 'base64');
     fs.writeFileSync(absPath, buf);
     broadcast('all');
-    return J(res, { ok: true, path: relPath });
+    return J(res, { ok: true, path: relPath, absPath: absPath });
   }
 
   // GENERIC FILE WRITE
@@ -1495,7 +1533,7 @@ async function handle(pn, m, req, res) {
   // SECRETS
   if (pn === '/api/secrets/status' && m === 'GET') {
     var exists = fs.existsSync(getSecretsFilePath());
-    return J(res, { locked: secretsCache === null, count: secretsCache ? Object.keys(secretsCache).length : 0, exists: exists });
+    return J(res, { locked: secretsCache === null, count: secretsCache ? getSecretNames().length : 0, exists: exists });
   }
   if (pn === '/api/secrets/unlock' && m === 'POST') {
     var b = await parseBody(req);
@@ -1537,7 +1575,7 @@ async function handle(pn, m, req, res) {
 
   if (pn === '/api/secrets' && m === 'GET') {
     if (!secretsCache) return E(res, 'Secrets are locked', 403);
-    var list = Object.keys(secretsCache).map(function(name) { return { name: name, maskedValue: maskValue(secretsCache[name]) }; });
+    var list = getSecretNames().map(function(name) { return { name: name, maskedValue: maskValue(secretsCache[name]) }; });
     return J(res, { secrets: list });
   }
   if (pn === '/api/secrets' && m === 'POST') {
@@ -1574,7 +1612,69 @@ async function handle(pn, m, req, res) {
     var name = sm[1];
     delete secretsCache[name];
     saveSecretsFile();
-    if (Object.keys(secretsCache).length === 0) {
+    if (getSecretNames().length === 0 && getCredentials().length === 0) {
+      try { fs.unlinkSync(getSecretsFilePath()); } catch(e) {}
+      secretsCache = null; masterKeyCache = null; secretsSalt = null;
+    }
+    rebuildClaudeMd();
+    broadcast('secrets');
+    return J(res, { ok: true });
+  }
+
+  // CREDENTIALS
+  if (pn === '/api/credentials' && m === 'GET') {
+    if (!secretsCache) return E(res, 'Vault is locked', 403);
+    var creds = getCredentials();
+    var list = creds.map(function(c) { return { service: c.service, username: c.username, maskedPassword: maskValue(c.password) }; });
+    return J(res, { credentials: list });
+  }
+  if (pn === '/api/credentials' && m === 'POST') {
+    if (!secretsCache) return E(res, 'Vault is locked', 403);
+    var b = await parseBody(req);
+    if (!b.service || !b.username || !b.password) return E(res, 'service, username, and password required');
+    var creds = getCredentials();
+    for (var ci = 0; ci < creds.length; ci++) {
+      if (creds[ci].service.toLowerCase() === b.service.trim().toLowerCase()) return E(res, 'Credential for this service already exists');
+    }
+    creds.push({ service: b.service.trim(), username: b.username, password: b.password });
+    secretsCache._credentials = creds;
+    saveSecretsFile();
+    rebuildClaudeMd();
+    broadcast('secrets');
+    return J(res, { ok: true });
+  }
+  var cm = pn.match(/^\/api\/credentials\/(.+)$/);
+  if (cm && m === 'PUT') {
+    if (!secretsCache) return E(res, 'Vault is locked', 403);
+    var serviceName = decodeURIComponent(cm[1]);
+    var b = await parseBody(req);
+    var creds = getCredentials();
+    var found = false;
+    for (var ci = 0; ci < creds.length; ci++) {
+      if (creds[ci].service.toLowerCase() === serviceName.toLowerCase()) {
+        if (b.username !== undefined) creds[ci].username = b.username;
+        if (b.password !== undefined) creds[ci].password = b.password;
+        found = true;
+        break;
+      }
+    }
+    if (!found) return E(res, 'Credential not found', 404);
+    secretsCache._credentials = creds;
+    saveSecretsFile();
+    rebuildClaudeMd();
+    broadcast('secrets');
+    return J(res, { ok: true });
+  }
+  if (cm && m === 'DELETE') {
+    if (!secretsCache) return E(res, 'Vault is locked', 403);
+    var serviceName = decodeURIComponent(cm[1]);
+    var creds = getCredentials();
+    var newCreds = creds.filter(function(c) { return c.service.toLowerCase() !== serviceName.toLowerCase(); });
+    if (newCreds.length === creds.length) return E(res, 'Credential not found', 404);
+    secretsCache._credentials = newCreds;
+    if (newCreds.length === 0) delete secretsCache._credentials;
+    saveSecretsFile();
+    if (getSecretNames().length === 0 && getCredentials().length === 0) {
       try { fs.unlinkSync(getSecretsFilePath()); } catch(e) {}
       secretsCache = null; masterKeyCache = null; secretsSalt = null;
     }

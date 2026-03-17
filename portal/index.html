@@ -173,7 +173,7 @@
       <header class="view-header"><h2>Dashboard</h2><div class="header-actions"><button class="btn btn-secondary" onclick="App.openAddTask()">+ Add Task</button><button id="btn-round-table" class="btn btn-primary" onclick="App.runRoundTable()">Run Round Table</button></div></header>
       <div class="stats-row">
         <div class="stat-card clickable-stat" data-filter="pending_approval" onclick="App.filterTasks('pending_approval','dashboard')"><div class="stat-value" id="stat-pending">0</div><div class="stat-label">Pending</div></div>
-        <div class="stat-card clickable-stat" data-filter="all" onclick="App.filterTasks('all','dashboard')"><div class="stat-value" id="stat-total">0</div><div class="stat-label">All</div></div>
+        <div class="stat-card clickable-stat" data-filter="all" onclick="App.filterTasks('all','dashboard')"><div class="stat-value" id="stat-total">0</div><div class="stat-label">Active</div></div>
         <div class="stat-card clickable-stat" data-filter="in_progress" onclick="App.filterTasks('in_progress','dashboard')"><div class="stat-value" id="stat-working">0</div><div class="stat-label">Working</div></div>
         <div class="stat-card clickable-stat" data-filter="accepted" onclick="App.filterTasks('accepted','dashboard')"><div class="stat-value" id="stat-accepted">0</div><div class="stat-label">Accepted</div></div>
         <div class="stat-card clickable-stat" data-filter="closed" onclick="App.filterTasks('closed','dashboard')"><div class="stat-value" id="stat-closed">0</div><div class="stat-label">Closed</div></div>
@@ -185,6 +185,7 @@
           <button class="view-mode-btn" data-view="flow" onclick="App.setViewMode('flow','dashboard')">Flow</button>
           <button class="view-mode-btn" data-view="hierarchy" onclick="App.setViewMode('hierarchy','dashboard')">Tree</button>
         </span></h3>
+        <div id="dashboard-tag-filter" class="tag-filter-bar"></div>
         <div id="dashboard-tasks" class="task-list"><div class="empty-state">No tasks yet</div></div>
       </div>
       <div class="panel round-table-panel"><h3><span class="rt-icon"></span>Last Round Table</h3><div id="last-round-table" class="round-table-summary"><div class="empty-state">No round tables yet</div></div></div>
@@ -300,6 +301,7 @@
             <button class="btn btn-secondary" onclick="App.openAddTask(App.state.currentAgentId)" style="font-size:12px;padding:4px 12px;white-space:nowrap">+ Add Task</button>
           </div>
         </div>
+        <div id="agent-tag-filter" class="tag-filter-bar"></div>
         <div id="agent-tasks-list" class="task-list"></div>
       </div>
       <div id="agent-tab-profile" class="agent-tab">
@@ -571,6 +573,39 @@
           </div>
         </div>
       </div>
+      <div class="panel" id="credentials-panel">
+        <h3>Credentials</h3>
+        <p class="form-hint">Service credentials (username/password) injected as environment variables. Stored in the same encrypted vault.</p>
+        <div id="credentials-locked-msg" class="hidden">
+          <div class="empty-state">Unlock vault to manage credentials</div>
+        </div>
+        <div id="credentials-list-container" class="hidden" style="margin-top:12px">
+          <div class="settings-group" id="credentials-list"></div>
+          <div style="margin-top:12px">
+            <button class="btn btn-secondary" onclick="App.showAddCredential()">+ Add Credential</button>
+          </div>
+        </div>
+        <div id="credentials-add-form" class="hidden" style="margin-top:12px">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Service Name</label>
+              <input type="text" id="credential-add-service" placeholder="e.g. GitHub">
+            </div>
+            <div class="form-group">
+              <label>Username</label>
+              <input type="text" id="credential-add-username" placeholder="Username or email">
+            </div>
+            <div class="form-group full-width">
+              <label>Password</label>
+              <input type="password" id="credential-add-password" placeholder="Password or token">
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-secondary" onclick="App.cancelAddCredential()">Cancel</button>
+            <button class="btn btn-primary" onclick="App.saveCredential()">Save Credential</button>
+          </div>
+        </div>
+      </div>
       <div class="panel" id="update-panel">
         <h3>Software Updates</h3>
         <p class="form-hint">Check for platform updates from GitHub releases. Updates only affect platform files — your agents, tasks, and project data are never changed.</p>
@@ -686,37 +721,85 @@
         </div>
         <div class="form-group full-width">
           <label>Details (optional)</label>
-          <textarea id="add-task-desc" rows="3" placeholder="Any extra context or requirements..."></textarea>
+          <textarea id="add-task-desc" rows="2" placeholder="Any extra context or requirements..."></textarea>
         </div>
         <div class="form-group">
           <label>Assign to</label>
-          <select id="add-task-agent">
-            <option value="">Auto (orchestrator decides)</option>
-          </select>
+          <div class="custom-select" id="add-task-agent-select" data-target="add-task-agent">
+            <div class="custom-select-trigger">Auto (orchestrator decides)</div>
+            <div class="custom-select-dropdown" id="add-task-agent-options">
+              <div class="custom-select-option selected" data-value="">Auto (orchestrator decides)</div>
+            </div>
+          </div>
+          <input type="hidden" id="add-task-agent" value="">
         </div>
         <div class="form-group">
           <label>Type</label>
-          <select id="add-task-type">
-            <option value="general">General</option>
-            <option value="research">Research</option>
-            <option value="development">Development</option>
-            <option value="content">Content</option>
-            <option value="review">Review</option>
-            <option value="operations">Operations</option>
-          </select>
+          <div class="custom-select" id="add-task-type-select" data-target="add-task-type">
+            <div class="custom-select-trigger">General</div>
+            <div class="custom-select-dropdown">
+              <div class="custom-select-option selected" data-value="general">General</div>
+              <div class="custom-select-option" data-value="research">Research</div>
+              <div class="custom-select-option" data-value="development">Development</div>
+              <div class="custom-select-option" data-value="content">Content</div>
+              <div class="custom-select-option" data-value="review">Review</div>
+              <div class="custom-select-option" data-value="operations">Operations</div>
+            </div>
+          </div>
+          <input type="hidden" id="add-task-type" value="general">
         </div>
         <div class="form-group">
           <label>Priority</label>
-          <select id="add-task-priority">
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-            <option value="high">High</option>
-            <option value="urgent">Urgent</option>
-          </select>
+          <div class="custom-select" id="add-task-priority-select" data-target="add-task-priority">
+            <div class="custom-select-trigger">Medium</div>
+            <div class="custom-select-dropdown">
+              <div class="custom-select-option" data-value="low">Low</div>
+              <div class="custom-select-option selected" data-value="medium">Medium</div>
+              <div class="custom-select-option" data-value="high">High</div>
+              <div class="custom-select-option" data-value="urgent">Urgent</div>
+            </div>
+          </div>
+          <input type="hidden" id="add-task-priority" value="medium">
         </div>
-        <div class="form-group" style="display:flex;align-items:center;gap:8px;padding-top:20px">
-          <input type="checkbox" id="add-task-autopilot" style="width:auto">
-          <label for="add-task-autopilot" style="margin:0;cursor:pointer">Autopilot (no owner review)</label>
+        <div class="form-group">
+          <label>Due Date</label>
+          <input type="date" id="add-task-duedate">
+        </div>
+        <div class="form-group full-width">
+          <label>Tags</label>
+          <div class="tag-input-container" id="add-task-tag-container">
+            <div class="tag-input-wrap" id="add-task-tag-wrap" onclick="this.querySelector('.tag-input-field').focus()">
+              <input type="text" class="tag-input-field" id="add-task-tag-input" placeholder="Type a tag and press Enter..." autocomplete="off">
+            </div>
+            <div class="tag-autocomplete" id="add-task-tag-autocomplete"></div>
+          </div>
+        </div>
+        <div class="form-group full-width add-task-advanced hidden" id="add-task-advanced">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Parent Task</label>
+              <div class="custom-select" id="add-task-parent-select" data-target="add-task-parent">
+                <div class="custom-select-trigger">None</div>
+                <div class="custom-select-dropdown" id="add-task-parent-options">
+                  <div class="custom-select-option selected" data-value="">None</div>
+                </div>
+              </div>
+              <input type="hidden" id="add-task-parent" value="">
+            </div>
+            <div class="form-group" style="position:relative">
+              <label>Depends On</label>
+              <div id="add-task-depends-wrap" class="tag-input-wrap" onclick="this.querySelector('input').focus()">
+                <input type="text" class="tag-input-field" id="add-task-depends-input" placeholder="Search tasks..." autocomplete="off">
+              </div>
+              <div class="tag-autocomplete" id="add-task-depends-autocomplete"></div>
+            </div>
+          </div>
+        </div>
+        <div class="form-group full-width" style="display:flex;align-items:center;gap:16px;padding-top:4px">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text-muted)">
+            <input type="checkbox" id="add-task-autopilot" style="width:auto"> Autopilot
+          </label>
+          <a href="#" onclick="document.getElementById('add-task-advanced').classList.toggle('hidden');this.textContent=this.textContent==='+ Advanced'?'- Advanced':'+ Advanced';return false" style="font-size:12px;color:var(--text-dim);text-decoration:none">+ Advanced</a>
         </div>
       </div>
       <div class="form-actions">

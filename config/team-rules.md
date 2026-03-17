@@ -1,34 +1,69 @@
 # Team Rules
 
 ## Delegation & Task Tracking
-- The orchestrator MUST delegate work to agents via tasks — never do the actual work itself
+- The orchestrator MUST delegate work to agents via tasks - never do the actual work itself
 - All work must be tracked as tasks in the dashboard so the owner has full visibility
 - Create tasks via `POST /api/tasks` with the appropriate agent assigned
-- Task status lifecycle (main flow): `draft` → `pending_approval` → `approved` → `in_progress` → `done`
-- Side statuses: `revision_needed` (agent must revise based on owner feedback), `hold`, `cancelled`
-- The owner can freely change status via the dashboard — these are lightweight changes with no timeline entry
 - The orchestrator's role is: plan, delegate, coordinate, track, and present results to the owner
 
-## Agent Autonomy & Execution Guards
+## Task Lifecycle
+
+### Status Flow
+```
+Draft -> Working -> Pending -> Accepted -> Closed
+                      |
+                    Improve (side action)
+```
+
+### Status Meanings
+- **Draft** (`draft`): Task created, not yet started. Orchestrator creates and assigns it, then launches the agent.
+- **Working** (`in_progress`): Agent is actively working on the task.
+- **Pending** (`pending_approval`): Agent delivered work, waiting for owner review. Owner can: Accept or Improve.
+- **Accepted** (`accepted`): Owner accepted the deliverable. Result is final. Auto-closes or orchestrator closes.
+- **Improve** (`revision_needed`): Owner sent feedback via Improve button. Agent must revise and resubmit to Pending.
+- **Closed** (`closed`): Fully complete, archived. Terminal state. No further work.
+- **Hold** (`hold`): Paused - do not work on until the owner releases it.
+- **Cancelled** (`cancelled`): Abandoned - no further action.
+
+### Rules
+- When a task is created, the orchestrator launches the assigned agent immediately
+- When the owner clicks Accept, the task moves to Accepted - deliverable is locked in
+- When the owner clicks Improve and adds feedback, the agent must revise and resubmit
+- When the owner marks a task as Closed, it is done forever. No agent should touch it.
+- Accepted tasks should be closed by the orchestrator (or auto-close)
+
+## Autopilot
+- Tasks with `autopilot: true` run the full lifecycle without human review
+- Agent delivers work, orchestrator auto-accepts, auto-closes
+- No owner in the loop - full automation
+- Owner can toggle autopilot off at any time to re-enable human review
+- Progress is still logged for audit
+
+## Collaboration / Subtasks
+- Parent tasks can have subtasks assigned to different agents
+- Subtask fields: `parentTaskId`, `subtasks[]`, `dependsOn[]`
+- Max 1 level deep (no subtasks of subtasks)
+- When all subtasks reach Accepted or Closed, the parent auto-advances to Pending
+- Tasks with `dependsOn` wait until all dependencies are Accepted/Closed before starting
+- Create subtasks via `POST /api/tasks/{parentId}/subtasks`
+
+## Agent Execution Guards
 - Each agent owns their assigned tasks and executes the work
-- Agents update task status as they progress
+- Agents update task status as they progress (Working -> Pending)
 - Agents write deliverables into task version folders (data/tasks/{id}/v1/, v2/, etc.)
 - When work is complete, agents set status to `pending_approval` for owner review
 - When status is `revision_needed`, the agent MUST read the owner's feedback comments and submit a new revision
 
 ### STRICT: When agents may execute work
-- Agents may ONLY begin work on a task when its status is **`approved`** or **`revision_needed`**
-- An agent must NEVER work on a task in `draft`, `pending_approval`, `hold`, `done`, or `cancelled` status
-- An agent must NEVER create a new version (v2, v3, etc.) unless the owner has explicitly approved or sent revision feedback
-- If a task is `pending_approval`, it means the owner has NOT reviewed it yet - the agent must wait, no exceptions
-- The orchestrator must verify task status before launching any agent - skip tasks that are not `approved` or `revision_needed`
-- Violating these rules corrupts the review pipeline and undermines owner control
+- Agents may ONLY begin work on a task when the orchestrator launches them
+- An agent must NEVER work on a task in `draft`, `pending_approval`, `accepted`, `hold`, `closed`, or `cancelled` status
+- An agent must NEVER create a new version (v2, v3...) unless the owner has explicitly sent revision feedback
+- If a task is `pending_approval`, the owner has NOT reviewed it yet - the agent must wait
+- The orchestrator must verify task status before launching any agent
 
-### STRICT: Never re-submit already-approved work
-- If a task already has a deliverable in v1 and the owner approved it, the agent must NOT set it back to `pending_approval`
-- Owner approval means the deliverable is accepted. The agent should set the task to `done` after execution (or proceed to publish if applicable)
+### STRICT: Never re-submit already-accepted work
+- If a task status is `accepted` or `closed`, the agent must not touch it
 - Only set to `pending_approval` when submitting NEW work the owner has not seen yet
-- Re-submitting approved work for re-approval wastes the owner's time and breaks trust
 
 ## Knowledge Pipeline
 - When completing research tasks, promote deliverables to Knowledge Base via `POST /api/tasks/{id}/promote`
@@ -40,28 +75,14 @@
 - Progress entries help the owner track work between round tables
 - Log meaningful milestones, not every minor step
 
-## Task Status Meanings & Rules
-- **draft**: Task created, not yet ready for work
-- **pending_approval**: Agent submitted work, waiting for owner review
-- **approved**: Owner approved — orchestrator MUST launch the assigned agent to begin execution
-- **revision_needed**: Owner sent feedback — agent must revise and resubmit. Orchestrator should launch the agent with the feedback
-- **in_progress**: Agent is actively working on the task
-- **done**: Task complete, no further action needed
-- **hold**: Paused — do not work on until the owner releases it
-- **cancelled**: Abandoned — no further action
-
-When the owner sets a task to `approved`, the orchestrator MUST ensure the assigned agent begins executing it.
-When the owner sets a task to `revision_needed` (via Improve + feedback), the orchestrator MUST launch the agent with the feedback to revise.
-Tasks on "hold" remain visible but should not be actively worked on until the owner releases them.
-
 ## Content & Social Media Rules
-- **Normalize all content** — avoid characters and patterns commonly associated with AI-generated text:
-  - Never use em dash (—) or en dash (–). Only use the regular hyphen (-).
+- **Normalize all content** - avoid characters and patterns commonly associated with AI-generated text:
+  - Never use em dash or en dash. Only use the regular hyphen (-).
   - Do not use emojis unless they genuinely fit the situation. No decorative emoji sprinkles.
   - Avoid AI cliches: "Let's dive in", "Here's the thing", "Game-changer", "Exciting news!", excessive exclamation marks.
   - Write naturally, like a real person typing.
-- **Always log the published URL** — after posting content anywhere (LinkedIn, Reddit, Dev.to, HN, Twitter/X, etc.), the agent MUST add the live URL to the task via progress log (`POST /api/tasks/{id}/progress`) so the owner can find it later, even after the task is done
-- **Never post to social media without an image** — every post must have a visual (screenshot, generated image, or graphic)
+- **Always log the published URL** - after posting content anywhere (LinkedIn, Reddit, Dev.to, HN, Twitter/X, etc.), the agent MUST add the live URL to the task via progress log (`POST /api/tasks/{id}/progress`) so the owner can find it later, even after the task is closed
+- **Never post to social media without an image** - every post must have a visual (screenshot, generated image, or graphic)
 - Images are stored in `data/media/social-images/`
 - To generate images, use the owner's ChatGPT instance via Chrome browser (owner will open it manually)
 - When creating content tasks for social media, always include a companion image task or flag that an image is needed before posting
@@ -79,9 +100,7 @@ Tasks on "hold" remain visible but should not be actively worked on until the ow
 - Round tables must check that work is properly delegated, not silently done by the orchestrator
 - Review each agent's task load and progress
 - Flag any bottlenecks or unassigned work
-- Present items needing owner approval
-- Review knowledge base — list recent additions, flag stale docs
-- **Execute all approved tasks immediately** — do not ask the owner for confirmation. Approved means go. Launch all assigned agents in parallel.
-- **Execute all `revision_needed` tasks immediately** — launch the assigned agent with the owner's feedback to revise.
-- If a task has a blocker, log it on the task and flag it to the owner — do not silently skip it
-- Update version references or stale details in task descriptions before launching agents
+- Present items needing owner approval (Pending tasks)
+- Review knowledge base - list recent additions, flag stale docs
+- Launch agents for any tasks that need work
+- If a task has a blocker, log it on the task and flag it to the owner - do not silently skip it

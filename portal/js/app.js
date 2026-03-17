@@ -376,19 +376,22 @@
       renderSidebarAgents();
 
       document.getElementById('stat-agents').textContent = state.agents.length;
-      var pending = 0, approved = 0, active = 0, done = 0, hold = 0;
+      var draft = 0, working = 0, pending = 0, accepted = 0, closed = 0;
+      // Only count top-level tasks (not subtasks) in stats
       state.tasks.forEach(function(t) {
-        if (t.status === 'pending_approval') pending++;
-        else if (t.status === 'approved') approved++;
-        else if (t.status === 'in_progress' || t.status === 'draft' || t.status === 'revision_needed') active++;
-        else if (t.status === 'done') done++;
-        else if (t.status === 'hold') hold++;
+        if (t.parentTaskId) return;
+        if (t.status === 'draft') draft++;
+        else if (t.status === 'in_progress' || t.status === 'revision_needed') working++;
+        else if (t.status === 'pending_approval') pending++;
+        else if (t.status === 'accepted') accepted++;
+        else if (t.status === 'closed' || t.status === 'done') closed++;
       });
-      document.getElementById('stat-total').textContent = state.tasks.length;
+      document.getElementById('stat-total').textContent = state.tasks.filter(function(t) { return !t.parentTaskId; }).length;
+      document.getElementById('stat-draft').textContent = draft;
+      document.getElementById('stat-working').textContent = working;
       document.getElementById('stat-pending').textContent = pending;
-      document.getElementById('stat-approved').textContent = approved;
-      document.getElementById('stat-active-tasks').textContent = active;
-      document.getElementById('stat-done').textContent = done;
+      document.getElementById('stat-accepted').textContent = accepted;
+      document.getElementById('stat-closed').textContent = closed;
       // Highlight active filter stat card
       document.querySelectorAll('.stat-card[data-filter]').forEach(function(card) {
         card.classList.toggle('stat-card-active', card.dataset.filter === state.dashboardTaskFilter);
@@ -399,7 +402,7 @@
         return api.get('/api/tasks/' + t.id).catch(function() { return Object.assign({priority:'medium'}, t); });
       }));
 
-      var statusOrder = { pending_approval: 0, in_progress: 1, draft: 2, approved: 3, revision_needed: 4, hold: 5, done: 6 };
+      var statusOrder = { pending_approval: 0, revision_needed: 1, in_progress: 2, draft: 3, accepted: 4, hold: 5, closed: 6, done: 7, cancelled: 8 };
       fullTasks.sort(function(a, b) {
         var sa = statusOrder[a.status] !== undefined ? statusOrder[a.status] : 9;
         var sb = statusOrder[b.status] !== undefined ? statusOrder[b.status] : 9;
@@ -489,21 +492,21 @@
     var summaryEl = document.getElementById('agent-tasks-summary');
     if (!summaryEl) return;
 
-    var pending = 0, approved = 0, active = 0, done = 0;
+    var working = 0, pending = 0, accepted = 0, closed = 0;
     tasks.forEach(function(t) {
-      if (t.status === 'pending_approval') pending++;
-      else if (t.status === 'approved') approved++;
-      else if (t.status === 'in_progress' || t.status === 'draft' || t.status === 'revision_needed') active++;
-      else if (t.status === 'done') done++;
+      if (t.status === 'in_progress' || t.status === 'draft' || t.status === 'revision_needed') working++;
+      else if (t.status === 'pending_approval') pending++;
+      else if (t.status === 'accepted') accepted++;
+      else if (t.status === 'closed' || t.status === 'done') closed++;
     });
     var af = state.agentTaskFilter;
     var total = tasks.length;
     summaryEl.innerHTML =
       '<span class="badge badge-all clickable-badge' + (af === 'all' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'all\',\'agent\')">' + total + ' All</span> ' +
+      '<span class="badge badge-in_progress clickable-badge' + (af === 'in_progress' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'in_progress\',\'agent\')">' + working + ' Working</span> ' +
       '<span class="badge badge-pending_approval clickable-badge' + (af === 'pending_approval' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'pending_approval\',\'agent\')">' + pending + ' Pending</span> ' +
-      '<span class="badge badge-approved clickable-badge' + (af === 'approved' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'approved\',\'agent\')">' + approved + ' Approved</span> ' +
-      '<span class="badge badge-in_progress clickable-badge' + (af === 'in_progress' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'in_progress\',\'agent\')">' + active + ' In Progress</span> ' +
-      '<span class="badge badge-done clickable-badge' + (af === 'done' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'done\',\'agent\')">' + done + ' Done</span>';
+      '<span class="badge badge-accepted clickable-badge' + (af === 'accepted' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'accepted\',\'agent\')">' + accepted + ' Accepted</span> ' +
+      '<span class="badge badge-closed clickable-badge' + (af === 'closed' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'closed\',\'agent\')">' + closed + ' Closed</span>';
 
     state.cachedAgentTasks = tasks;
     renderFilteredTasks('agent');
@@ -515,18 +518,20 @@
     var listEl = document.getElementById(context === 'dashboard' ? 'dashboard-tasks' : 'agent-tasks-list');
     if (!listEl) return;
 
-    // Filter tasks
+    // Filter tasks - hide subtasks from main list (they appear under parents)
     var filtered;
     if (filter === 'all') {
-      filtered = tasks.slice();
+      filtered = tasks.filter(function(t) { return !t.parentTaskId; });
     } else if (filter === 'in_progress') {
-      filtered = tasks.filter(function(t) { return t.status === 'in_progress' || t.status === 'draft' || t.status === 'revision_needed'; });
+      filtered = tasks.filter(function(t) { return !t.parentTaskId && (t.status === 'in_progress' || t.status === 'draft' || t.status === 'revision_needed'); });
+    } else if (filter === 'closed') {
+      filtered = tasks.filter(function(t) { return !t.parentTaskId && (t.status === 'closed' || t.status === 'done'); });
     } else {
-      filtered = tasks.filter(function(t) { return t.status === filter; });
+      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === filter; });
     }
 
     // Sort
-    var statusOrder = { pending_approval: 0, approved: 1, in_progress: 2, draft: 3, revision_needed: 4, done: 5 };
+    var statusOrder = { pending_approval: 0, revision_needed: 1, in_progress: 2, draft: 3, accepted: 4, hold: 5, closed: 6, done: 7 };
     filtered.sort(function(a, b) {
       var sa = statusOrder[a.status] !== undefined ? statusOrder[a.status] : 9;
       var sb = statusOrder[b.status] !== undefined ? statusOrder[b.status] : 9;
@@ -541,29 +546,51 @@
       return;
     }
 
-    listEl.innerHTML = filtered.map(function(t) {
-      var statusClass = 'badge-' + (t.status || 'draft');
-      var priorityClass = 'badge-' + (t.priority || 'medium');
-      var agentName = '';
-      if (context === 'dashboard' && t.assignedTo) {
-        var found = state.agents.find(function(a) { return a.id === t.assignedTo; });
-        agentName = found ? found.name : t.assignedTo;
+    var html = '';
+    filtered.forEach(function(t) {
+      html += renderTaskCard(t, context);
+      // Render subtasks inline under parent
+      if (t.subtasks && t.subtasks.length > 0) {
+        var allTasks = context === 'dashboard' ? state.cachedDashboardTasks : state.cachedAgentTasks;
+        t.subtasks.forEach(function(sid) {
+          var sub = allTasks.find(function(st) { return st.id === sid; });
+          if (sub) html += renderTaskCard(sub, context, true);
+        });
       }
-      // Output indicator — check if task has deliverable content or knowledge doc
-      var hasOutput = t.knowledgeDocId || t.hasDeliverable;
-      var outputIcon = hasOutput ? '<span class="task-output-icon" title="Has output">&#128196;</span>' : '';
+    });
+    listEl.innerHTML = html;
+  }
 
-      var isWorking = t.status === 'in_progress';
-      var workingDot = isWorking ? '<span class="agent-working-dot" title="In progress"></span>' : '';
+  var STATUS_LABELS = {
+    draft: 'draft', in_progress: 'working', pending_approval: 'pending',
+    accepted: 'accepted', closed: 'closed', done: 'closed',
+    revision_needed: 'improve', hold: 'hold', cancelled: 'cancelled',
+    approved: 'execute'
+  };
 
-      return '<div class="task-item" onclick="App.openTask(' + q + t.id + q + ')">' +
-        '<span class="task-title">' + outputIcon + escHtml(t.title) + '</span>' +
-        '<span class="task-meta">' +
-          '<span class="badge ' + priorityClass + '">' + escHtml(t.priority || 'medium') + '</span>' +
-          '<span class="badge ' + statusClass + '">' + escHtml((t.status || 'draft').replace(/_/g, ' ')) + workingDot + '</span>' +
-          (agentName ? '<span>' + escHtml(agentName) + '</span>' : '') +
-        '</span></div>';
-    }).join('');
+  function renderTaskCard(t, context, isSubtask) {
+    var statusClass = 'badge-' + (t.status || 'draft');
+    var priorityClass = 'badge-' + (t.priority || 'medium');
+    var agentName = '';
+    if (context === 'dashboard' && t.assignedTo) {
+      var found = state.agents.find(function(a) { return a.id === t.assignedTo; });
+      agentName = found ? found.name : t.assignedTo;
+    }
+    var hasOutput = t.knowledgeDocId || t.hasDeliverable;
+    var outputIcon = hasOutput ? '<span class="task-output-icon" title="Has output">&#128196;</span>' : '';
+    var isWorking = t.status === 'in_progress';
+    var workingDot = isWorking ? '<span class="agent-working-dot" title="Working"></span>' : '';
+    var autopilotIcon = t.autopilot ? '<span class="autopilot-badge" title="Autopilot">&#9881;</span>' : '';
+    var subtaskClass = isSubtask ? ' subtask-item' : '';
+    var statusLabel = STATUS_LABELS[t.status] || (t.status || 'draft').replace(/_/g, ' ');
+
+    return '<div class="task-item' + subtaskClass + '" onclick="App.openTask(' + q + t.id + q + ')">' +
+      '<span class="task-title">' + outputIcon + autopilotIcon + escHtml(t.title) + '</span>' +
+      '<span class="task-meta">' +
+        '<span class="badge ' + priorityClass + '">' + escHtml(t.priority || 'medium') + '</span>' +
+        '<span class="badge ' + statusClass + '">' + escHtml(statusLabel) + workingDot + '</span>' +
+        (agentName ? '<span>' + escHtml(agentName) + '</span>' : '') +
+      '</span></div>';
   }
 
   function filterTasks(filter, context) {
@@ -576,7 +603,7 @@
       // Update panel title
       var titleEl = document.getElementById('dashboard-tasks-title');
       if (titleEl) {
-        var labels = { all: 'All Tasks', pending_approval: 'Pending Approval', approved: 'Approved', revision_needed: 'Improve', in_progress: 'In Progress', done: 'Done' };
+        var labels = { all: 'All Tasks', draft: 'Draft', pending_approval: 'Pending Review', in_progress: 'Working', accepted: 'Accepted', closed: 'Closed', revision_needed: 'Improve' };
         titleEl.textContent = labels[filter] || filter.replace(/_/g, ' ');
       }
     } else {
@@ -612,6 +639,7 @@
     document.getElementById('add-task-desc').value = '';
     document.getElementById('add-task-priority').value = 'medium';
     document.getElementById('add-task-type').value = 'general';
+    document.getElementById('add-task-autopilot').checked = false;
     modal.classList.remove('hidden');
     setTimeout(function() { document.getElementById('add-task-title').focus(); }, 100);
   }
@@ -629,13 +657,15 @@
     var type = document.getElementById('add-task-type').value;
 
     try {
+      var autopilot = document.getElementById('add-task-autopilot').checked;
       await api.post('/api/tasks', {
         title: title,
         description: desc || title,
         assignedTo: agent || 'orchestrator',
         status: 'draft',
         priority: priority,
-        type: type
+        type: type,
+        autopilot: autopilot
       });
       closeAddTask();
       toast('Task created! The orchestrator will refine it.', 'success');
@@ -665,12 +695,15 @@
       document.getElementById('task-detail-title').textContent = task.title || 'Untitled';
 
       var statusEl = document.getElementById('task-detail-status');
-      if (task.status === 'approved') {
-        statusEl.innerHTML = 'Executing <span class="agent-working-dot"></span>';
+      var displayStatus = task.status || 'draft';
+      if (displayStatus === 'done') displayStatus = 'closed';
+      var statusLabel = STATUS_LABELS[displayStatus] || displayStatus.replace(/_/g, ' ');
+      if (displayStatus === 'in_progress') {
+        statusEl.innerHTML = escHtml(statusLabel) + ' <span class="agent-working-dot"></span>';
       } else {
-        statusEl.textContent = (task.status || 'draft').replace(/_/g, ' ');
+        statusEl.textContent = statusLabel;
       }
-      statusEl.className = 'badge badge-' + (task.status || 'draft');
+      statusEl.className = 'badge badge-' + displayStatus;
 
       var priorityEl = document.getElementById('task-detail-priority');
       priorityEl.textContent = task.priority || 'medium';
@@ -707,7 +740,7 @@
         promoteBar.classList.add('hidden');
         knowledgeLink.innerHTML = '&#128218; <a onclick="App.openKnowledgeDoc(\'' + task.knowledgeDocId + '\')">View in Knowledge Base</a>';
         knowledgeLink.classList.remove('hidden');
-      } else if (task.status === 'approved' || task.status === 'done') {
+      } else if (task.status === 'accepted' || task.status === 'closed' || task.status === 'done') {
         promoteBar.classList.remove('hidden');
         knowledgeLink.classList.add('hidden');
       } else {
@@ -760,7 +793,7 @@
     if (versions.length > 0) {
       versions.forEach(function(v, idx) {
         var isLatest = idx === versions.length - 1;
-        var isApproved = v.decision === 'approve' || v.decision === 'approved';
+        var isApproved = v.decision === 'approve' || v.decision === 'approved' || v.decision === 'accepted';
         var isImproved = v.decision === 'improve';
 
         // Version header
@@ -800,11 +833,11 @@
 
         // Owner feedback (shown after version if decision/comments were given)
         if (v.decision || v.comments) {
-          var fbClass = v.decision === 'improve' ? 'session-feedback-improve' : v.decision === 'approved' ? 'session-feedback-approved' : v.decision === 'done' ? 'session-feedback-done' : '';
+          var fbClass = v.decision === 'improve' ? 'session-feedback-improve' : (v.decision === 'approved' || v.decision === 'accepted') ? 'session-feedback-approved' : (v.decision === 'done' || v.decision === 'closed') ? 'session-feedback-done' : '';
           html += '<div class="session-feedback ' + fbClass + '">';
           html += '<div class="session-feedback-label">Owner Feedback';
           if (v.decision) {
-            var decisionLabels = { approved: 'Approve & Execute', improve: 'Improve', done: 'Done', hold: 'Hold', cancelled: 'Cancelled' };
+            var decisionLabels = { accepted: 'Accepted', approved: 'Execute', improve: 'Improve', done: 'Closed', closed: 'Closed', hold: 'Hold', cancelled: 'Cancelled' };
             html += ' <span class="badge badge-' + (v.decision) + '">' + (decisionLabels[v.decision] || v.decision) + '</span>';
           }
           html += '</div>';
@@ -826,20 +859,30 @@
 
   function buildStatusPipeline(task) {
     var current = task.status || 'draft';
+    // Map legacy 'done' to 'closed' for display
+    if (current === 'done') current = 'closed';
+
     var steps = [
       { key: 'draft',            label: 'Draft',     icon: '&#9998;'  },
-      { key: 'pending_approval', label: 'Pending',   icon: '&#9679;'  },
-      { key: 'approved',         label: 'Approved',  icon: '&#9654;'  },
-      { key: 'revision_needed',  label: 'Improve',   icon: '&#9999;', needsFeedback: true },
       { key: 'in_progress',      label: 'Working',   icon: '&#9881;'  },
-      { key: 'done',             label: 'Done',      icon: '&#10003;' }
+      { key: 'pending_approval', label: 'Pending',   icon: '&#9679;'  },
+      { key: 'accepted',         label: 'Accepted',  icon: '&#10003;', action: 'accept' },
+      { key: 'closed',           label: 'Closed',    icon: '&#9632;', action: 'close'  }
     ];
     var sideStates = [
-      { key: 'hold',      label: 'Hold',   icon: '&#9208;' },
-      { key: 'cancelled', label: 'Cancel', icon: '&#10007;' }
+      { key: 'improve',   label: 'Improve', icon: '&#9999;', needsFeedback: true },
+      { key: 'hold',      label: 'Hold',    icon: '&#9208;' },
+      { key: 'cancelled', label: 'Cancel',  icon: '&#10007;' }
     ];
 
     var html = '<div class="status-pipeline">';
+
+    // Autopilot toggle
+    html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
+    html += '<button class="autopilot-toggle' + (task.autopilot ? ' active' : '') + '" onclick="App.toggleTaskAutopilot()" title="Toggle autopilot mode">';
+    html += '&#9881; Autopilot ' + (task.autopilot ? 'ON' : 'OFF');
+    html += '</button>';
+    html += '</div>';
 
     // Main flow
     html += '<div class="status-pipeline-row">';
@@ -850,8 +893,9 @@
       var cls = 'status-step';
       if (isActive) cls += ' status-step-active';
       else if (isPast) cls += ' status-step-past';
-      var onclick = s.needsFeedback ? 'App.toggleFeedback()' : 'App.changeTaskStatus(\'' + s.key + '\')';
-      html += '<button class="' + cls + '" onclick="' + onclick + '" title="' + (s.needsFeedback ? 'Send feedback for revision' : 'Set to ' + s.label) + '">';
+
+      var onclick = s.action ? 'App.changeTaskStatus(\'' + s.action + '\')' : 'App.changeTaskStatus(\'' + s.key + '\')';
+      html += '<button class="' + cls + '" onclick="' + onclick + '" title="Set to ' + s.label + '">';
       html += '<span class="status-step-icon">' + s.icon + '</span>';
       html += '<span class="status-step-label">' + s.label + '</span>';
       html += '</button>';
@@ -859,19 +903,21 @@
     }
     html += '</div>';
 
-    // Side states (hold, cancel) + improve
+    // Side states (improve, hold, cancel)
     html += '<div class="status-pipeline-side">';
     for (var j = 0; j < sideStates.length; j++) {
       var ss = sideStates[j];
-      var isActiveSide = ss.key === current;
-      html += '<button class="status-step status-step-side' + (isActiveSide ? ' status-step-active' : '') + '" onclick="App.changeTaskStatus(\'' + ss.key + '\')" title="Set to ' + ss.label + '">';
+      var isActiveSide = (ss.key === 'improve' && current === 'revision_needed') || ss.key === current;
+      if (ss.needsFeedback) {
+        html += '<button class="status-step status-step-side' + (isActiveSide ? ' status-step-active' : '') + '" onclick="App.toggleFeedback()" title="Send feedback for revision">';
+      } else {
+        html += '<button class="status-step status-step-side' + (isActiveSide ? ' status-step-active' : '') + '" onclick="App.changeTaskStatus(\'' + ss.key + '\')" title="Set to ' + ss.label + '">';
+      }
       html += '<span class="status-step-icon">' + ss.icon + '</span>';
       html += '<span class="status-step-label">' + ss.label + '</span>';
       html += '</button>';
     }
-    html += '</div>';
-
-    // Prev/Next navigation buttons
+    // Prev/Next navigation buttons inside the pipeline row
     if ((state.tasks || []).length > 1) {
       html += '<div class="task-nav-buttons">';
       html += '<button class="task-nav-btn" onclick="App.navigateTask(\'prev\')" title="Previous task (Left arrow)">&#8249; Prev</button>';
@@ -879,6 +925,7 @@
       html += '</div>';
     }
 
+    html += '</div>';
     html += '</div>';
 
     // Feedback area (hidden by default)
@@ -892,12 +939,34 @@
     html += '<div id="feedback-image-area"></div>';
     html += '</div>';
 
-    // Result display
-    if (task.result && (current === 'done' || current === 'approved')) {
-      html += '<div class="session-outcome' + (current === 'approved' ? ' session-outcome-executing' : '') + '">';
-      if (current === 'approved') {
-        html += '<span class="session-outcome-icon">&#9654;</span><span>Executing</span><span class="agent-working-dot"></span>';
+    // Subtask section (for parent tasks)
+    if (task.subtasks && task.subtasks.length > 0) {
+      html += '<div class="subtask-section">';
+      html += '<div class="subtask-section-title">Subtasks</div>';
+      task.subtasks.forEach(function(sid) {
+        var sub = state.tasks.find(function(t) { return t.id === sid; });
+        if (sub) {
+          var subStatus = STATUS_LABELS[sub.status] || sub.status;
+          html += '<div class="task-item subtask-item" onclick="App.openTask(\'' + sid + '\')">';
+          html += '<span class="task-title">' + escHtml(sub.title) + '</span>';
+          html += '<span class="task-meta"><span class="badge badge-' + sub.status + '">' + escHtml(subStatus) + '</span></span>';
+          html += '</div>';
+        }
+      });
+      html += '</div>';
+    }
+
+    // Parent breadcrumb (for subtasks)
+    if (task.parentTaskId) {
+      var parent = state.tasks.find(function(t) { return t.id === task.parentTaskId; });
+      if (parent) {
+        html += '<div class="parent-breadcrumb" onclick="App.openTask(\'' + task.parentTaskId + '\')">&#8592; Parent: ' + escHtml(parent.title) + '</div>';
       }
+    }
+
+    // Result display
+    if (task.result && (current === 'closed' || current === 'accepted')) {
+      html += '<div class="session-outcome">';
       html += '<div class="session-outcome-result">' + linkifyText(escHtml(task.result)).replace(/\n/g, '<br>') + '</div>';
       html += '</div>';
     }
@@ -915,6 +984,20 @@
   function toggleFeedback() {
     var area = document.getElementById('task-feedback-area');
     if (area) area.classList.toggle('hidden');
+  }
+
+  async function toggleTaskAutopilot() {
+    var id = state.currentTaskId;
+    if (!id) return;
+    try {
+      var task = await api.get('/api/tasks/' + id);
+      var newVal = !task.autopilot;
+      await api.put('/api/tasks/' + id, { autopilot: newVal });
+      toast('Autopilot ' + (newVal ? 'enabled' : 'disabled'));
+      await openTask(id);
+    } catch(e) {
+      toast('Failed: ' + e.message, 'error');
+    }
   }
 
   // ── Clipboard Image Helpers ──────────────────────
@@ -1024,15 +1107,18 @@
   async function changeTaskStatus(newStatus) {
     var id = state.currentTaskId;
     if (!id) return;
-    // All pipeline clicks are lightweight — just update status, no timeline entry.
-    // Only Feedback (improve via reviewTask) writes to the version timeline.
     try {
-      await api.put('/api/tasks/' + id, { status: newStatus });
+      // Actions that go through the action handler (write version timeline)
+      var actionStatuses = { accept: true, close: true };
+      if (actionStatuses[newStatus]) {
+        await api.put('/api/tasks/' + id, { action: newStatus });
+      } else {
+        await api.put('/api/tasks/' + id, { status: newStatus });
+      }
       var labels = {
-        draft: 'Set to draft', pending_approval: 'Pending approval',
-        approved: 'Approved for execution', revision_needed: 'Revision requested',
-        in_progress: 'In progress', done: 'Task completed',
-        hold: 'Task on hold', cancelled: 'Task cancelled'
+        draft: 'Set to draft', pending_approval: 'Pending review',
+        in_progress: 'Working', accept: 'Accepted',
+        close: 'Closed', hold: 'On hold', cancelled: 'Cancelled'
       };
       toast(labels[newStatus] || 'Status updated');
       await openTask(id);
@@ -1252,20 +1338,27 @@
   // ── Task Prev/Next Navigation ─────────────────
   function navigateTask(direction) {
     var tasks = state.tasks || [];
-    if (tasks.length < 2) return;
+    // Filter to pending_approval tasks only for quick review flow
+    var pending = tasks.filter(function(t) { return t.status === 'pending_approval'; });
+    var list = pending.length > 1 ? pending : tasks;
+    if (list.length < 2) return;
     var currentId = state.currentTaskId;
     var idx = -1;
-    for (var i = 0; i < tasks.length; i++) {
-      if (tasks[i].id === currentId) { idx = i; break; }
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === currentId) { idx = i; break; }
     }
-    if (idx === -1) return;
+    // If current task not in pending list, jump to first pending
+    if (idx === -1) {
+      openTask(list[0].id);
+      return;
+    }
     var nextIdx;
     if (direction === 'prev') {
-      nextIdx = (idx - 1 + tasks.length) % tasks.length;
+      nextIdx = (idx - 1 + list.length) % list.length;
     } else {
-      nextIdx = (idx + 1) % tasks.length;
+      nextIdx = (idx + 1) % list.length;
     }
-    openTask(tasks[nextIdx].id);
+    openTask(list[nextIdx].id);
   }
 
   // Keyboard shortcuts for task navigation (left/right arrows)
@@ -2589,10 +2682,10 @@
         '<ol>' +
         '<li><strong>Draft</strong> — Task is created but not yet reviewed</li>' +
         '<li><strong>Pending Approval</strong> — Agent submitted work for your review</li>' +
-        '<li><strong>Approved</strong> — You approved the work; orchestrator will execute</li>' +
+        '<li><strong>Execute</strong> — You sent the task for agent execution</li>' +
         '<li><strong>Improve</strong> — You requested revisions with feedback</li>' +
         '<li><strong>In Progress</strong> — Agent is actively working on it</li>' +
-        '<li><strong>Done</strong> — Task is complete</li>' +
+        '<li><strong>Closed</strong> — Task is finished, no further work needed</li>' +
         '</ol>' +
         '<h3>Your Role as Owner</h3>' +
         '<p>You review and approve work, provide feedback, and guide the team through the Command Center. The orchestrator handles delegation and execution.</p>' +
@@ -2648,10 +2741,10 @@
         '<ul>' +
         '<li><strong>Draft</strong> — Created, awaiting initial work</li>' +
         '<li><strong>Pending Approval</strong> — Agent submitted deliverable for review</li>' +
-        '<li><strong>Approved</strong> — You approved; orchestrator executes next steps</li>' +
+        '<li><strong>Execute</strong> — You sent the task for agent execution</li>' +
         '<li><strong>Improve</strong> — Request revisions with specific feedback</li>' +
         '<li><strong>In Progress</strong> — Agent is actively working</li>' +
-        '<li><strong>Done</strong> — Complete</li>' +
+        '<li><strong>Closed</strong> — Finished, no further work needed</li>' +
         '<li><strong>Hold</strong> — Paused, visible but not actively worked on</li>' +
         '<li><strong>Cancelled</strong> — Abandoned</li>' +
         '</ul>' +
@@ -2872,6 +2965,7 @@
     deleteAutopilot: deleteAutopilot,
     selectHelpTopic: selectHelpTopic,
     navigateTask: navigateTask,
+    toggleTaskAutopilot: toggleTaskAutopilot,
   };
 
   init();

@@ -168,10 +168,11 @@
       <header class="view-header"><h2>Dashboard</h2><div class="header-actions"><button class="btn btn-secondary" onclick="App.openAddTask()">+ Add Task</button><button id="btn-round-table" class="btn btn-primary" onclick="App.runRoundTable()">Run Round Table</button></div></header>
       <div class="stats-row">
         <div class="stat-card clickable-stat" data-filter="all" onclick="App.filterTasks('all','dashboard')"><div class="stat-value" id="stat-total">0</div><div class="stat-label">All</div></div>
+        <div class="stat-card clickable-stat" data-filter="draft" onclick="App.filterTasks('draft','dashboard')"><div class="stat-value" id="stat-draft">0</div><div class="stat-label">Draft</div></div>
+        <div class="stat-card clickable-stat" data-filter="in_progress" onclick="App.filterTasks('in_progress','dashboard')"><div class="stat-value" id="stat-working">0</div><div class="stat-label">Working</div></div>
         <div class="stat-card clickable-stat" data-filter="pending_approval" onclick="App.filterTasks('pending_approval','dashboard')"><div class="stat-value" id="stat-pending">0</div><div class="stat-label">Pending</div></div>
-        <div class="stat-card clickable-stat" data-filter="approved" onclick="App.filterTasks('approved','dashboard')"><div class="stat-value" id="stat-approved">0</div><div class="stat-label">Approved</div></div>
-        <div class="stat-card clickable-stat" data-filter="in_progress" onclick="App.filterTasks('in_progress','dashboard')"><div class="stat-value" id="stat-active-tasks">0</div><div class="stat-label">In Progress</div></div>
-        <div class="stat-card clickable-stat" data-filter="done" onclick="App.filterTasks('done','dashboard')"><div class="stat-value" id="stat-done">0</div><div class="stat-label">Done</div></div>
+        <div class="stat-card clickable-stat" data-filter="accepted" onclick="App.filterTasks('accepted','dashboard')"><div class="stat-value" id="stat-accepted">0</div><div class="stat-label">Accepted</div></div>
+        <div class="stat-card clickable-stat" data-filter="closed" onclick="App.filterTasks('closed','dashboard')"><div class="stat-value" id="stat-closed">0</div><div class="stat-label">Closed</div></div>
         <div class="stat-card"><div class="stat-value" id="stat-agents">0</div><div class="stat-label">Agents</div></div>
       </div>
       <div class="panel"><h3 id="dashboard-tasks-title">All Tasks</h3>
@@ -674,6 +675,10 @@
             <option value="high">High</option>
             <option value="urgent">Urgent</option>
           </select>
+        </div>
+        <div class="form-group" style="display:flex;align-items:center;gap:8px;padding-top:20px">
+          <input type="checkbox" id="add-task-autopilot" style="width:auto">
+          <label for="add-task-autopilot" style="margin:0;cursor:pointer">Autopilot (no owner review)</label>
         </div>
       </div>
       <div class="form-actions">

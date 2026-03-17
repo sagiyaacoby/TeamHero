@@ -320,9 +320,12 @@ function rebuildClaudeMd() {
     '### Tasks\n' +
     '- **List tasks:** `GET /api/tasks`\n' +
     '- **Get task:** `GET /api/tasks/{id}`\n' +
-    '- **Create task:** `POST /api/tasks` with `{"title","description","assignedTo","status":"draft","priority":"medium","type":"general"}`\n' +
+    '- **Create task:** `POST /api/tasks` with `{"title","description","assignedTo","status":"draft","priority":"medium","type":"general","autopilot":false}`\n' +
     '  - Supported types: `general`, `research`, `development`, `content`, `review`, `operations`\n' +
-    '- **Update task:** `PUT /api/tasks/{id}` with JSON body (partial update, e.g. `{"status":"done"}`)\n' +
+    '  - Optional: `parentTaskId`, `dependsOn: []` for subtask/dependency relationships\n' +
+    '- **Update task:** `PUT /api/tasks/{id}` with JSON body (partial update, e.g. `{"status":"closed"}`)\n' +
+    '  - Actions: `{"action":"accept"}`, `{"action":"close"}`, `{"action":"improve","comments":"..."}`, `{"action":"hold"}`, `{"action":"cancel"}`\n' +
+    '- **Create subtask:** `POST /api/tasks/{parentId}/subtasks` with task body (auto-links to parent)\n' +
     '- **Log progress:** `POST /api/tasks/{id}/progress` with `{"message":"...","agentId":"..."}`\n' +
     '- **Get progress:** `GET /api/tasks/{id}/progress`\n' +
     '- **Promote to knowledge:** `POST /api/tasks/{id}/promote` — copies deliverable to Knowledge Base\n\n' +
@@ -386,8 +389,23 @@ function rebuildClaudeMd() {
     '6. Update each agent\'s short-memory with round table outcomes\n' +
     '7. Clear completed items from short-memory\n\n' +
     '## Task Lifecycle\n\n' +
-    'Tasks flow through: `draft` \u2192 `in_progress` \u2192 `pending_approval` \u2192 `approved` / `revision_needed` / `hold` \u2192 `done`\n\n' +
-    'When a task is approved, the orchestrator MUST ensure the assigned agent begins executing it. Follow up by setting the task to `in_progress` and confirming the agent is working on it.\n\n' +
+    'Tasks flow through: `draft` \u2192 `in_progress` (Working) \u2192 `pending_approval` (Pending) \u2192 `accepted` \u2192 `closed`\n\n' +
+    'Side statuses: `revision_needed` (Improve - owner sent feedback), `hold`, `cancelled`\n\n' +
+    '### Status meanings\n' +
+    '- **draft**: Task created, not started. Orchestrator launches agent to begin work.\n' +
+    '- **in_progress** (Working): Agent is actively working.\n' +
+    '- **pending_approval** (Pending): Agent delivered, waiting for owner review. Owner can Accept or Improve.\n' +
+    '- **accepted**: Owner liked the result. Deliverable is final. Auto-closes or orchestrator closes.\n' +
+    '- **revision_needed** (Improve): Owner sent feedback. Agent must revise and resubmit to Pending.\n' +
+    '- **closed**: Fully complete, archived. Terminal state.\n' +
+    '- **hold**: Paused.\n' +
+    '- **cancelled**: Abandoned.\n\n' +
+    '### Autopilot\n' +
+    'Tasks with `autopilot: true` run the full lifecycle without human review. Agent delivers, orchestrator auto-accepts, auto-closes.\n\n' +
+    '### Subtasks\n' +
+    'Parent tasks can have subtasks (`parentTaskId`, `subtasks[]`, `dependsOn[]`). Max 1 level deep.\n' +
+    'When all subtasks reach accepted/closed, parent auto-advances to pending_approval.\n' +
+    'Tasks with unmet `dependsOn` wait until all dependencies are accepted/closed.\n\n' +
     'Task files: `data/tasks/{task-id}/task.json` with version folders `v1/`, `v2/`, etc.\n\n' +
     '## File Structure Reference\n\n' +
     '- `config/system.json` \u2014 System configuration\n' +
@@ -447,6 +465,14 @@ function rebuildAgentMd(aid, a) {
     '- **Style:** ' + (p.style || 'not specified') + '\n\n' +
     '## Rules\n' + ((a.rules||[]).map(function(r){return '- '+r;}).join('\n') || '_No specific rules._') + '\n\n' +
     '## Capabilities\n' + ((a.capabilities||[]).join(', ') || '_No capabilities defined._') + '\n\n' +
+    (a.isOrchestrator ? '' :
+    '## Task Workflow (MANDATORY)\n' +
+    '- When starting work, set task status to `in_progress` (Working).\n' +
+    '- When deliverable is ready, set task status to `pending_approval` (Pending) for owner review.\n' +
+    '- NEVER touch tasks with status `accepted`, `closed`, `hold`, or `cancelled`.\n' +
+    '- If status is `revision_needed` (Improve): read owner feedback comments, revise, then set back to `pending_approval`.\n' +
+    '- NEVER create a new version (v2, v3...) unless the owner explicitly sent revision feedback.\n' +
+    '- If a task has `autopilot: true`, the orchestrator handles acceptance automatically.\n\n') +
     '## Memory\n' +
     '- Short-term context: `agents/' + aid + '/short-memory.md`\n' +
     '- Long-term knowledge: `agents/' + aid + '/long-memory.md`\n' +
@@ -918,6 +944,10 @@ async function handle(pn, m, req, res) {
       channel: b.channel || '', version: 1,
       tags: Array.isArray(b.tags) ? b.tags : [],
       brief: b.brief || '',
+      autopilot: b.autopilot || false,
+      parentTaskId: b.parentTaskId || null,
+      subtasks: Array.isArray(b.subtasks) ? b.subtasks : [],
+      dependsOn: Array.isArray(b.dependsOn) ? b.dependsOn : [],
       progressLog: [],
       createdAt: now, updatedAt: now
     };
@@ -930,8 +960,19 @@ async function handle(pn, m, req, res) {
     });
     const ip = path.join(ROOT, 'data/tasks/_index.json');
     const ix = readJSON(ip) || { tasks: [] };
-    ix.tasks.push({ id: id, title: t.title, status: t.status, assignedTo: t.assignedTo, priority: t.priority, type: t.type });
+    ix.tasks.push({ id: id, title: t.title, status: t.status, assignedTo: t.assignedTo, priority: t.priority, type: t.type, autopilot: t.autopilot, parentTaskId: t.parentTaskId });
     writeJSON(ip, ix);
+    // If this is a subtask, auto-link to parent
+    if (t.parentTaskId) {
+      var parentTp = path.join(ROOT, 'data/tasks', t.parentTaskId, 'task.json');
+      var parentTask = readJSON(parentTp);
+      if (parentTask) {
+        if (!parentTask.subtasks) parentTask.subtasks = [];
+        if (parentTask.subtasks.indexOf(id) === -1) parentTask.subtasks.push(id);
+        parentTask.updatedAt = now;
+        writeJSON(parentTp, parentTask);
+      }
+    }
     broadcast('tasks');
     return J(res, t, 201);
   }
@@ -1010,6 +1051,54 @@ async function handle(pn, m, req, res) {
     broadcast('tasks');
     broadcast('knowledge');
     return J(res, doc, 201);
+  }
+
+  // TASK SUBTASKS
+  const tsm = pn.match(/^\/api\/tasks\/([^\/]+)\/subtasks$/);
+  if (tsm && m === 'POST') {
+    const parentId = tsm[1];
+    const parentTp = path.join(ROOT, 'data/tasks', parentId, 'task.json');
+    const parent = readJSON(parentTp);
+    if (!parent) return E(res, 'Parent not found', 404);
+    if (parent.parentTaskId) return E(res, 'Cannot create subtask of a subtask (max 1 level deep)', 400);
+    const b = await parseBody(req);
+    const subId = b.id || genId();
+    const subDir = path.join(ROOT, 'data/tasks', subId);
+    fs.mkdirSync(path.join(subDir, 'v1'), { recursive: true });
+    const now = new Date().toISOString();
+    const sub = {
+      id: subId, title: b.title || 'Untitled', description: b.description || '',
+      assignedTo: b.assignedTo || null, status: b.status || 'draft',
+      priority: b.priority || parent.priority || 'medium',
+      type: b.type || parent.type || 'general',
+      channel: b.channel || '', version: 1,
+      tags: Array.isArray(b.tags) ? b.tags : [],
+      brief: b.brief || '',
+      autopilot: b.autopilot || false,
+      parentTaskId: parentId,
+      subtasks: [],
+      dependsOn: Array.isArray(b.dependsOn) ? b.dependsOn : [],
+      progressLog: [],
+      createdAt: now, updatedAt: now
+    };
+    writeJSON(path.join(subDir, 'task.json'), sub);
+    writeJSON(path.join(subDir, 'v1/version.json'), {
+      number: 1, content: b.content || '', status: 'submitted',
+      decision: null, comments: '', submittedAt: now, decidedAt: null,
+      deliverable: b.deliverable || '', result: b.result || ''
+    });
+    // Link to parent
+    if (!parent.subtasks) parent.subtasks = [];
+    parent.subtasks.push(subId);
+    parent.updatedAt = now;
+    writeJSON(parentTp, parent);
+    // Update index
+    const ip = path.join(ROOT, 'data/tasks/_index.json');
+    const ix = readJSON(ip) || { tasks: [] };
+    ix.tasks.push({ id: subId, title: sub.title, status: sub.status, assignedTo: sub.assignedTo, priority: sub.priority, type: sub.type, autopilot: sub.autopilot, parentTaskId: parentId });
+    writeJSON(ip, ix);
+    broadcast('tasks');
+    return J(res, sub, 201);
   }
 
   // TASK VERSIONS
@@ -1097,8 +1186,8 @@ async function handle(pn, m, req, res) {
     const b = await parseBody(req);
     const now = new Date().toISOString();
 
-    // Handle review actions: done, approve, improve, cancel, hold
-    if (b.action === 'done' || b.action === 'approve' || b.action === 'improve' || b.action === 'cancel' || b.action === 'hold') {
+    // Handle review actions: done, approve, accept, close, improve, cancel, hold
+    if (b.action === 'done' || b.action === 'approve' || b.action === 'accept' || b.action === 'close' || b.action === 'improve' || b.action === 'cancel' || b.action === 'hold') {
       // Find the latest version
       var taskDir = path.join(ROOT, 'data/tasks', id);
       var latestV = ex.version || 1;
@@ -1120,9 +1209,17 @@ async function handle(pn, m, req, res) {
       vData.decidedAt = now;
 
       if (b.action === 'done') {
-        vData.decision = 'done';
+        vData.decision = 'closed';
         writeJSON(vPath, vData);
-        actionResult = Object.assign({}, ex, { status: 'done', updatedAt: now });
+        actionResult = Object.assign({}, ex, { status: 'closed', updatedAt: now });
+      } else if (b.action === 'accept') {
+        vData.decision = 'accepted';
+        writeJSON(vPath, vData);
+        actionResult = Object.assign({}, ex, { status: 'accepted', updatedAt: now });
+      } else if (b.action === 'close') {
+        vData.decision = 'closed';
+        writeJSON(vPath, vData);
+        actionResult = Object.assign({}, ex, { status: 'closed', updatedAt: now });
       } else if (b.action === 'approve') {
         vData.decision = 'approved';
         writeJSON(vPath, vData);
@@ -1152,8 +1249,49 @@ async function handle(pn, m, req, res) {
       var aip = path.join(ROOT, 'data/tasks/_index.json');
       var aix = readJSON(aip) || { tasks: [] };
       var ai = aix.tasks.findIndex(function(x) { return x.id === id; });
-      if (ai >= 0) aix.tasks[ai] = { id: id, title: actionResult.title, status: actionResult.status, assignedTo: actionResult.assignedTo, priority: actionResult.priority, type: actionResult.type || 'general' };
+      if (ai >= 0) aix.tasks[ai] = { id: id, title: actionResult.title, status: actionResult.status, assignedTo: actionResult.assignedTo, priority: actionResult.priority, type: actionResult.type || 'general', autopilot: actionResult.autopilot || false, parentTaskId: actionResult.parentTaskId || null };
       writeJSON(aip, aix);
+
+      // Auto-advance parent task when all subtasks are accepted/closed
+      if ((actionResult.status === 'accepted' || actionResult.status === 'closed') && actionResult.parentTaskId) {
+        var parentTp2 = path.join(ROOT, 'data/tasks', actionResult.parentTaskId, 'task.json');
+        var parentTask2 = readJSON(parentTp2);
+        if (parentTask2 && parentTask2.subtasks && parentTask2.subtasks.length > 0) {
+          var allDone = parentTask2.subtasks.every(function(sid) {
+            var sub = readJSON(path.join(ROOT, 'data/tasks', sid, 'task.json'));
+            return sub && (sub.status === 'accepted' || sub.status === 'closed');
+          });
+          if (allDone && parentTask2.status !== 'pending_approval' && parentTask2.status !== 'accepted' && parentTask2.status !== 'closed') {
+            parentTask2.status = 'pending_approval';
+            parentTask2.updatedAt = now;
+            writeJSON(parentTp2, parentTask2);
+            var pi = aix.tasks.findIndex(function(x) { return x.id === actionResult.parentTaskId; });
+            if (pi >= 0) { aix.tasks[pi].status = 'pending_approval'; writeJSON(aip, aix); }
+          }
+        }
+      }
+
+      // Auto-start dependent tasks when all dependencies are accepted/closed
+      if (actionResult.status === 'accepted' || actionResult.status === 'closed') {
+        aix.tasks.forEach(function(t) {
+          var dep = readJSON(path.join(ROOT, 'data/tasks', t.id, 'task.json'));
+          if (dep && dep.dependsOn && dep.dependsOn.length > 0 && dep.status === 'draft') {
+            var allMet = dep.dependsOn.every(function(did) {
+              var d = readJSON(path.join(ROOT, 'data/tasks', did, 'task.json'));
+              return d && (d.status === 'accepted' || d.status === 'closed');
+            });
+            if (allMet) {
+              dep.status = 'in_progress';
+              dep.updatedAt = now;
+              writeJSON(path.join(ROOT, 'data/tasks', t.id, 'task.json'), dep);
+              var di = aix.tasks.findIndex(function(x) { return x.id === t.id; });
+              if (di >= 0) { aix.tasks[di].status = 'in_progress'; }
+            }
+          }
+        });
+        writeJSON(aip, aix);
+      }
+
       broadcast('tasks');
       return J(res, actionResult);
     }
@@ -1164,7 +1302,7 @@ async function handle(pn, m, req, res) {
     var mip = path.join(ROOT, 'data/tasks/_index.json');
     var mix = readJSON(mip) || { tasks: [] };
     var mi = mix.tasks.findIndex(function(x) { return x.id === id; });
-    if (mi >= 0) mix.tasks[mi] = { id: id, title: merged.title, status: merged.status, assignedTo: merged.assignedTo, priority: merged.priority, type: merged.type || 'general' };
+    if (mi >= 0) mix.tasks[mi] = { id: id, title: merged.title, status: merged.status, assignedTo: merged.assignedTo, priority: merged.priority, type: merged.type || 'general', autopilot: merged.autopilot || false, parentTaskId: merged.parentTaskId || null };
     writeJSON(mip, mix);
     broadcast('tasks');
     return J(res, merged);
@@ -2071,6 +2209,36 @@ fs.mkdirSync(path.join(ROOT, 'temp'), { recursive: true });
 })();
 
 ensureOrchestrator();
+
+// ── Migration: done → closed, approved → accepted ──────
+(function migrateTaskStatuses() {
+  var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
+  if (sys.migrationDoneToClosedV3) return;
+  var ip = path.join(ROOT, 'data/tasks/_index.json');
+  var ix = readJSON(ip);
+  if (!ix || !ix.tasks) return;
+  var changed = false;
+  ix.tasks.forEach(function(t) {
+    if (t.status === 'done') { t.status = 'closed'; changed = true; }
+  });
+  if (changed) {
+    writeJSON(ip, ix);
+    // Also update individual task.json files
+    ix.tasks.forEach(function(t) {
+      if (t.status === 'closed') {
+        var tp = path.join(ROOT, 'data/tasks', t.id, 'task.json');
+        var task = readJSON(tp);
+        if (task && task.status === 'done') {
+          task.status = 'closed';
+          writeJSON(tp, task);
+        }
+      }
+    });
+  }
+  sys.migrationDoneToClosedV3 = true;
+  writeJSON(path.join(ROOT, 'config/system.json'), sys);
+  if (changed) console.log('  Migration: done → closed completed.');
+})();
 
 (async function() {
   var envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : null;

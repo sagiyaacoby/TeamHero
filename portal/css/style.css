@@ -254,6 +254,8 @@ body {
 .badge-revision_needed { background: transparent; color: var(--yellow); }
 .badge-done { background: transparent; color: var(--green); }
 .badge-approved { background: transparent; color: var(--green); }
+.badge-accepted { background: transparent; color: var(--green); }
+.badge-closed { background: transparent; color: var(--text-dim); }
 
 /* ── Agent detail ────────────────────────────────── */
 .agent-status-bar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
@@ -668,10 +670,12 @@ body {
 .status-step-active[onclick*="'hold'"] { color: var(--yellow); border-color: var(--yellow); background: rgba(212,169,74,0.08); }
 .status-step-active[onclick*="'cancelled'"] { color: var(--red); border-color: var(--red); background: rgba(224,96,96,0.08); }
 
+.status-step-disabled { opacity: 0.3; cursor: default; pointer-events: none; }
+
 /* ── Task Prev/Next Navigation ────────────────── */
 .task-nav-buttons {
   display: flex; align-items: center; gap: 8px;
-  margin-top: 12px; justify-content: flex-end;
+  margin-left: auto;
 }
 .task-nav-btn {
   display: inline-flex; align-items: center; gap: 4px;
@@ -1102,3 +1106,30 @@ body {
   transition: all 0.15s; white-space: nowrap;
 }
 .attach-image-btn:hover { border-color: var(--accent); color: var(--text); }
+
+/* ── Autopilot indicator ────────────────────────── */
+.autopilot-badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 10px; color: var(--gold); opacity: 0.8;
+}
+.autopilot-toggle {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-muted); font-size: 12px; padding: 4px 10px;
+  border-radius: var(--radius-sm); cursor: pointer;
+  transition: all 0.15s; white-space: nowrap;
+}
+.autopilot-toggle:hover { border-color: var(--gold); color: var(--gold); }
+.autopilot-toggle.active { border-color: var(--gold); color: var(--gold); background: rgba(200,176,96,0.1); }
+
+/* ── Subtask indent ─────────────────────────────── */
+.task-item.subtask-item {
+  padding-left: 28px; border-left: 2px solid var(--border); margin-left: 12px;
+  font-size: 13px;
+}
+.subtask-section { margin-top: 16px; }
+.subtask-section-title { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; font-weight: 600; }
+.parent-breadcrumb {
+  font-size: 12px; color: var(--text-muted); margin-bottom: 8px; cursor: pointer;
+}
+.parent-breadcrumb:hover { color: var(--accent); }
+.dep-indicator { font-size: 11px; color: var(--text-dim); margin-left: 4px; }

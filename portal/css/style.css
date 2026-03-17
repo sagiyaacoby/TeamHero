@@ -75,6 +75,12 @@ body {
 .nav-link.active { color: #ffffff; border-right: 2px solid var(--green); }
 .nav-link .icon { font-size: 15px; width: 20px; text-align: center; opacity: 0.6; }
 .nav-link.active .icon { opacity: 1; }
+.nav-badge {
+  margin-left: auto; background: var(--yellow); color: #131519;
+  font-size: 10px; font-weight: 700; min-width: 18px; height: 18px;
+  border-radius: 9px; display: flex; align-items: center; justify-content: center;
+  padding: 0 5px;
+}
 .nav-add { color: var(--text-dim) !important; font-style: italic; }
 .nav-add:hover { color: var(--green) !important; }
 
@@ -181,6 +187,7 @@ body {
 .btn-cancel { background: transparent; color: var(--red); border-color: transparent; }
 .btn-cancel:hover { border-color: var(--red); }
 .btn-lg { padding: 10px 28px; font-size: 15px; }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
 .btn-inline { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 12px; padding: 0; margin-left: 8px; }
 .btn-inline:hover { color: var(--text); }
 
@@ -1052,11 +1059,12 @@ body {
 .paste-image-btn:hover { border-color: var(--accent); color: var(--text); }
 .focus-terminal-btn {
   margin-left: auto; background: transparent; border: 1px solid var(--border);
-  color: var(--text-muted); width: 28px; height: 22px; border-radius: var(--radius-sm);
-  cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s;
+  color: var(--text-muted); padding: 2px 10px; height: 22px; border-radius: var(--radius-sm);
+  cursor: pointer; font-size: 11px; font-weight: 500; font-family: inherit;
+  display: flex; align-items: center; gap: 4px;
+  transition: all 0.15s; white-space: nowrap;
 }
-.focus-terminal-btn:hover { border-color: var(--green); color: var(--green); }
+.focus-terminal-btn:hover { border-color: var(--green); color: var(--green); background: rgba(184,230,184,0.06); }
 .paste-preview-area { display: flex; align-items: center; gap: 8px; }
 .paste-preview {
   max-height: 48px; max-width: 80px; border-radius: var(--radius-sm);

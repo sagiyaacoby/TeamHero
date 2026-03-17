@@ -9,12 +9,20 @@
 - The owner can freely change status via the dashboard — these are lightweight changes with no timeline entry
 - The orchestrator's role is: plan, delegate, coordinate, track, and present results to the owner
 
-## Agent Autonomy
+## Agent Autonomy & Execution Guards
 - Each agent owns their assigned tasks and executes the work
 - Agents update task status as they progress
 - Agents write deliverables into task version folders (data/tasks/{id}/v1/, v2/, etc.)
 - When work is complete, agents set status to `pending_approval` for owner review
 - When status is `revision_needed`, the agent MUST read the owner's feedback comments and submit a new revision
+
+### STRICT: When agents may execute work
+- Agents may ONLY begin work on a task when its status is **`approved`** or **`revision_needed`**
+- An agent must NEVER work on a task in `draft`, `pending_approval`, `hold`, `done`, or `cancelled` status
+- An agent must NEVER create a new version (v2, v3, etc.) unless the owner has explicitly approved or sent revision feedback
+- If a task is `pending_approval`, it means the owner has NOT reviewed it yet - the agent must wait, no exceptions
+- The orchestrator must verify task status before launching any agent - skip tasks that are not `approved` or `revision_needed`
+- Violating these rules corrupts the review pipeline and undermines owner control
 
 ## Knowledge Pipeline
 - When completing research tasks, promote deliverables to Knowledge Base via `POST /api/tasks/{id}/promote`
@@ -50,6 +58,15 @@ Tasks on "hold" remain visible but should not be actively worked on until the ow
 - Images are stored in `data/media/social-images/`
 - To generate images, use the owner's ChatGPT instance via Chrome browser (owner will open it manually)
 - When creating content tasks for social media, always include a companion image task or flag that an image is needed before posting
+
+## Token Efficiency
+- Always think token-savvy. Use the cheapest tool that gets the job done.
+- Playwright: avoid unnecessary full page snapshots. Each snapshot can be 5000+ tokens. Only snapshot when you need to find an element or check state.
+- After clicking/typing in Playwright, do not snapshot just to confirm - trust the action unless there is reason to doubt.
+- Prefer targeted checks (evaluate, wait_for) over full snapshots.
+- When calling APIs, avoid fetching data you do not need.
+- When reading files, use offset/limit for large files instead of reading the whole thing.
+- Do not repeat searches you already did. Cache results mentally within the conversation.
 
 ## Round Table Reviews
 - Round tables must check that work is properly delegated, not silently done by the orchestrator

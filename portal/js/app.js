@@ -334,6 +334,26 @@
     if (addAgentLink) {
       addAgentLink.closest('li').style.display = orchAgents.length > 0 ? '' : 'none';
     }
+
+    // Update pending count badge on Dashboard nav
+    var pendingCount = 0;
+    (state.tasks || []).forEach(function(t) {
+      if (t.status === 'pending_approval') pendingCount++;
+    });
+    var dashLink = document.querySelector('[data-view="dashboard"]');
+    if (dashLink) {
+      var badge = dashLink.querySelector('.nav-badge');
+      if (pendingCount > 0) {
+        if (!badge) {
+          badge = document.createElement('span');
+          badge.className = 'nav-badge';
+          dashLink.appendChild(badge);
+        }
+        badge.textContent = pendingCount;
+      } else if (badge) {
+        badge.remove();
+      }
+    }
   }
 
   // ── Dashboard ──────────────────────────────────────

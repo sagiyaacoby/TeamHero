@@ -1025,6 +1025,7 @@ async function handle(pn, m, req, res) {
           var vp = path.join(taskDir, e, 'version.json');
           var vd = readJSON(vp);
           if (!vd) vd = { number: parseInt(e.slice(1)), content: '', status: 'empty', decision: null, comments: '', submittedAt: null, decidedAt: null };
+          vd.number = parseInt(e.slice(1));
           // Attach list of extra files in version folder
           try {
             var vFiles = fs.readdirSync(path.join(taskDir, e));

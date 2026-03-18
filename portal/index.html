@@ -170,7 +170,7 @@
 
     <!-- Dashboard -->
     <section id="view-dashboard" class="view active">
-      <header class="view-header"><h2>Dashboard</h2><div class="header-actions"><button class="btn btn-secondary" onclick="App.openAddTask()">+ Add Task</button><button id="btn-round-table" class="btn btn-primary" onclick="App.runRoundTable()">Run Round Table</button></div></header>
+      <header class="view-header"><div class="header-left"><h2>Dashboard</h2><button id="btn-round-table" class="btn btn-secondary btn-rt" onclick="App.runRoundTable()">Round Table <span style="color:#86efac;margin-left:4px;">&#9654;</span></button></div><div class="header-actions"><button class="btn btn-secondary" onclick="App.openAddTask()">+ Add Task</button></div></header>
       <div class="stats-row">
         <div class="stat-card clickable-stat" data-filter="pending_approval" onclick="App.filterTasks('pending_approval','dashboard')"><div class="stat-value" id="stat-pending">0</div><div class="stat-label">Pending</div></div>
         <div class="stat-card clickable-stat" data-filter="all" onclick="App.filterTasks('all','dashboard')"><div class="stat-value" id="stat-total">0</div><div class="stat-label">Active</div></div>
@@ -253,11 +253,12 @@
     <!-- Command Center (Terminal) -->
     <section id="view-chat" class="view view-chat-fullscreen">
       <header class="view-header">
-        <h2>Command Center</h2>
+        <div class="header-left"><h2>Command Center</h2><button class="btn btn-secondary btn-rt" onclick="App.runRoundTable()" title="Run a round table review">Round Table <span style="color:#86efac;margin-left:4px;">&#9654;</span></button></div>
         <div class="header-actions">
-          <button class="btn btn-secondary btn-sm" onclick="App.runRoundTable()" title="Run a round table review">&#9679; Round Table</button>
           <span id="chat-status" class="chat-status disconnected">Disconnected</span>
-          <button class="btn btn-secondary" onclick="App.restartTerminal()">Restart</button>
+          <button class="btn btn-secondary" onclick="App.restartTerminal()" title="Restart CLI session">Restart CLI</button>
+          <button class="btn btn-secondary" onclick="App.restartServer()" title="Restart the entire server">Restart Server</button>
+          <button class="btn btn-cancel btn-sm" onclick="App.shutdownServer()" title="Stop server and close session" style="padding:4px 10px;">&#10005; Close</button>
         </div>
       </header>
       <div id="terminal-container" class="terminal-container"></div>
@@ -575,7 +576,15 @@
         <h3>Credentials</h3>
         <p class="form-hint">Service credentials (username/password) injected as environment variables. Stored in the same encrypted vault.</p>
         <div id="credentials-locked-msg" class="hidden">
-          <div class="empty-state">Unlock vault to manage credentials</div>
+          <div class="empty-state">Unlock vault in Secrets section above to manage credentials</div>
+        </div>
+        <div id="credentials-setup-form" class="hidden" style="margin-top:12px">
+          <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">No vault exists yet. Create a master password to encrypt your credentials.</p>
+          <div class="form-grid">
+            <div class="form-group"><label>Master Password</label><input type="password" id="credentials-new-master-password" placeholder="Choose a master password"></div>
+            <div class="form-group"><label>Confirm Password</label><input type="password" id="credentials-confirm-master-password" placeholder="Confirm password"></div>
+          </div>
+          <div class="form-actions"><button class="btn btn-primary" onclick="App.initializeCredentialsVault()">Create Vault</button></div>
         </div>
         <div id="credentials-list-container" class="hidden" style="margin-top:12px">
           <div class="settings-group" id="credentials-list"></div>
@@ -667,6 +676,19 @@
           <div class="setting-item">
             <span class="setting-label">Reset system (requires restart)</span>
             <button class="btn btn-cancel" onclick="App.resetSystem()">Reset</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Server Control</h3>
+        <div class="settings-group">
+          <div class="setting-item">
+            <span class="setting-label">Restart the portal server and CLI session</span>
+            <button class="btn btn-secondary" onclick="App.restartServer()">Restart Server</button>
+          </div>
+          <div class="setting-item">
+            <span class="setting-label">Stop the server and close the session</span>
+            <button class="btn btn-cancel" onclick="App.shutdownServer()">Close Session</button>
           </div>
         </div>
       </div>

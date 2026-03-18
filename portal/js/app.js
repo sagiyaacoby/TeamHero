@@ -867,8 +867,10 @@
 
   function renderFlowNode(task, allTasks, context, pos) {
     var blocked = isTaskBlocked(task, allTasks);
+    var hasBlocker = !!task.blocker;
     var statusClass = 'status-' + (task.status || 'draft');
     var blockedClass = blocked ? ' blocked' : '';
+    var blockerClass = hasBlocker ? ' has-blocker' : '';
     var isChild = !!task.parentTaskId;
     var agentName = '';
     if (task.assignedTo) {
@@ -879,7 +881,7 @@
     var hasOut = task.subtasks && task.subtasks.length > 0;
     var hasIn = isChild || (task.dependsOn && task.dependsOn.length > 0);
 
-    var html = '<div class="flow-node ' + statusClass + blockedClass + (isChild ? ' flow-child' : '') + '" data-task-id="' + task.id + '" ';
+    var html = '<div class="flow-node ' + statusClass + blockedClass + blockerClass + (isChild ? ' flow-child' : '') + '" data-task-id="' + task.id + '" ';
     html += 'style="position:absolute;left:' + pos.x + 'px;top:' + pos.y + 'px;width:' + pos.w + 'px;height:' + pos.h + 'px;" ';
     html += 'onclick="App.openTask(\'' + task.id + '\')">';
 
@@ -917,6 +919,7 @@
 
   function renderHierarchyNode(task, allTasks, context, depth) {
     var blocked = isTaskBlocked(task, allTasks);
+    var hasBlocker = !!task.blocker;
     var subs = findSubtasks(task.id, allTasks);
     var hasChildren = subs.length > 0;
     var expanded = state.hierarchyExpanded[task.id] !== false;
@@ -928,11 +931,12 @@
     }
     var depBadge = '';
     if (task.dependsOn && task.dependsOn.length > 0) {
-      depBadge = '<span class="hierarchy-dep-badge' + (blocked ? ' dep-blocked' : '') + '">' + (blocked ? 'blocked' : 'deps') + '</span>';
+      depBadge = blocked ? '<span class="badge badge-blocked">blocked</span>' : '<span class="hierarchy-dep-badge">deps</span>';
     }
+    var blockerBadge = hasBlocker ? '<span class="blocker-badge-small">BLOCKER</span>' : '';
 
     var html = '<div class="hierarchy-node">';
-    html += '<div class="hierarchy-item' + (blocked ? ' blocked' : '') + '" onclick="App.openTask(' + q + task.id + q + ')">';
+    html += '<div class="hierarchy-item' + (blocked ? ' blocked' : '') + (hasBlocker ? ' has-blocker' : '') + '" onclick="App.openTask(' + q + task.id + q + ')">';
     html += '<div class="hierarchy-item-left">';
     if (hasChildren) {
       html += '<span class="hierarchy-toggle" onclick="event.stopPropagation();App.toggleHierarchyExpand(' + q + task.id + q + ',' + q + context + q + ')">' + (expanded ? '&#9660;' : '&#9654;') + '</span>';
@@ -942,7 +946,7 @@
     html += '<span class="hierarchy-title">' + escHtml(task.title) + '</span>';
     html += '</div>';
     html += '<div class="hierarchy-meta">';
-    html += depBadge;
+    html += depBadge + blockerBadge;
     html += '<span class="badge badge-' + (task.priority || 'medium') + '">' + escHtml(task.priority || 'medium') + '</span>';
     html += '<span class="badge badge-' + (task.status || 'draft') + '">' + escHtml(statusLabel) + '</span>';
     if (agentName) html += '<span style="font-size:11px;color:var(--text-muted)">' + escHtml(agentName) + '</span>';
@@ -1009,7 +1013,12 @@
     var isWorking = t.status === 'in_progress';
     var workingDot = isWorking ? '<span class="agent-working-dot" title="Working"></span>' : '';
     var autopilotIcon = t.autopilot ? '<span class="autopilot-badge" title="Autopilot">&#9881;</span>' : '';
+    var blocked = isTaskBlocked(t, state.tasks);
+    var blockedBadge = blocked ? '<span class="badge badge-blocked">blocked</span>' : '';
+    var hasBlocker = !!t.blocker;
+    var blockerBadge = hasBlocker ? '<span class="blocker-badge-small">BLOCKER</span>' : '';
     var subtaskClass = isSubtask ? ' subtask-item' : '';
+    var blockerClass = hasBlocker ? ' task-has-blocker' : '';
     var depthStyle = isSubtask && depth ? ' style="padding-left:' + (16 + depth * 16) + 'px;margin-left:' + (depth * 12) + 'px"' : '';
     var statusLabel = STATUS_LABELS[t.status] || (t.status || 'draft').replace(/_/g, ' ');
 
@@ -1027,11 +1036,12 @@
     }
     var timeAgoHtml = t.createdAt ? '<span class="task-time-ago">' + timeAgo(t.createdAt) + '</span>' : '';
 
-    return '<div class="task-item' + subtaskClass + '"' + depthStyle + ' onclick="App.openTask(' + q + t.id + q + ')">' +
+    return '<div class="task-item' + subtaskClass + blockerClass + '"' + depthStyle + ' onclick="App.openTask(' + q + t.id + q + ')">' +
       '<span class="task-title">' + outputIcon + autopilotIcon + escHtml(t.title) + tagPills + '</span>' +
       '<span class="task-meta">' +
         '<span class="badge ' + priorityClass + '">' + escHtml(t.priority || 'medium') + '</span>' +
         '<span class="badge ' + statusClass + '">' + escHtml(statusLabel) + workingDot + '</span>' +
+        blockedBadge + blockerBadge +
         (agentName ? '<span>' + escHtml(agentName) + '</span>' : '') +
         dueDateHtml + timeAgoHtml +
       '</span></div>';
@@ -1289,6 +1299,14 @@
     var container = document.getElementById('task-session');
     var html = '';
 
+    // ── Blocker Banner ──
+    if (task.blocker) {
+      html += '<div class="blocker-banner">';
+      html += '<span class="blocker-banner-icon">&#9888;</span>';
+      html += '<span class="blocker-banner-text"><strong>BLOCKER:</strong> ' + escHtml(task.blocker) + '</span>';
+      html += '</div>';
+    }
+
     // ── Owner Instructions ──
     html += '<div class="session-instructions">';
     html += '<div class="session-section-label">Owner Instructions</div>';
@@ -1307,53 +1325,98 @@
       if (!versions) versions = [];
     } catch(e) { versions = []; }
 
-    if (versions.length === 0 && task.status === 'draft') {
+    if (versions.length === 0 && task.status === 'draft' && (!task.progressLog || task.progressLog.length === 0)) {
       html += '<div class="session-awaiting">Awaiting agent submission...</div>';
     }
 
-    if (versions.length > 0) {
-      versions.forEach(function(v, idx) {
-        var isLatest = idx === versions.length - 1;
-        var isApproved = v.decision === 'approve' || v.decision === 'approved' || v.decision === 'accepted';
-        var isImproved = v.decision === 'improve';
+    // ── Build unified timeline ──
+    // Collect all events: versions, progress entries, owner feedback
+    var timeline = [];
 
-        // Version header
-        html += '<div class="session-version' + (isLatest ? ' latest' : '') + '">';
-        html += '<div class="session-version-header">';
-        html += '<div class="session-version-id">';
-        html += '<span class="session-dot' + (isApproved ? ' dot-approved' : isImproved ? ' dot-improved' : '') + '"></span>';
-        html += 'v' + v.number;
-        if (v.submittedAt) html += ' &mdash; ' + new Date(v.submittedAt).toLocaleDateString();
-        else if (v.decidedAt) html += ' &mdash; ' + new Date(v.decidedAt).toLocaleDateString();
-        html += '</div>';
-        html += '<span class="session-agent-name">Agent: ' + escHtml(agentName) + '</span>';
-        html += '</div>';
+    // Add version events
+    versions.forEach(function(v, idx) {
+      var ts = v.submittedAt || v.decidedAt || task.createdAt || '';
+      timeline.push({ type: 'version', data: v, idx: idx, timestamp: ts });
+      // Add owner feedback as separate event after version
+      if (v.decision || v.comments) {
+        var fbTs = v.decidedAt || v.submittedAt || ts;
+        // Push feedback slightly after version so it sorts after
+        timeline.push({ type: 'feedback', data: v, timestamp: fbTs, _after: true });
+      }
+    });
 
-        // Version content
-        if (v.content) {
-          html += '<div class="session-content">' + renderMarkdown(v.content) + '</div>';
-        } else {
-          html += '<div class="session-content"><span class="empty-state" style="padding:8px">Awaiting submission...</span></div>';
-        }
+    // Add progress log entries
+    if (task.progressLog && task.progressLog.length > 0) {
+      task.progressLog.forEach(function(entry) {
+        timeline.push({ type: 'progress', data: entry, timestamp: entry.timestamp || '' });
+      });
+    }
 
-        // Deliverable
-        if (v.deliverable) {
-          html += '<div class="version-deliverable"><div class="version-deliverable-label">Deliverable</div>' + linkifyText(escHtml(v.deliverable)).replace(/\n/g, '<br>') + '</div>';
-        }
-        // Result
-        if (v.result) {
-          html += '<div class="version-result"><div class="version-result-label">Result</div>' + linkifyText(escHtml(v.result)).replace(/\n/g, '<br>') + '</div>';
-        }
-        // Files
-        if (v.files && v.files.length > 0) {
-          html += '<div class="version-files"><div class="version-files-label">Attachments</div>' +
-            v.files.map(function(f) {
-              return '<a href="#" class="version-file-link" data-task="' + taskId + '" data-version="' + v.number + '" data-file="' + escHtml(f) + '" onclick="App.viewVersionFile(this);return false;">' + escHtml(f) + '</a>';
-            }).join('') + '</div>';
-        }
+    // Sort chronologically (versions and their feedback stay ordered by _after flag)
+    timeline.sort(function(a, b) {
+      var ta = new Date(a.timestamp || 0).getTime();
+      var tb = new Date(b.timestamp || 0).getTime();
+      if (ta !== tb) return ta - tb;
+      // Same timestamp: version before feedback, feedback before progress
+      var order = { version: 0, feedback: 1, progress: 2 };
+      return (order[a.type] || 0) - (order[b.type] || 0);
+    });
 
-        // Owner feedback (shown after version if decision/comments were given)
-        if (v.decision || v.comments) {
+    // Render unified timeline
+    if (timeline.length > 0) {
+      html += '<div class="unified-timeline">';
+      timeline.forEach(function(evt) {
+        if (evt.type === 'version') {
+          var v = evt.data;
+          var idx = evt.idx;
+          var isLatest = idx === versions.length - 1;
+          var isApproved = v.decision === 'approve' || v.decision === 'approved' || v.decision === 'accepted';
+          var isImproved = v.decision === 'improve';
+
+          html += '<div class="session-version' + (isLatest ? ' latest' : '') + '">';
+          html += '<div class="session-version-header">';
+          html += '<div class="session-version-id">';
+          html += '<span class="session-dot' + (isApproved ? ' dot-approved' : isImproved ? ' dot-improved' : '') + '"></span>';
+          html += 'v' + v.number;
+          if (v.submittedAt) html += ' - ' + new Date(v.submittedAt).toLocaleDateString();
+          else if (v.decidedAt) html += ' - ' + new Date(v.decidedAt).toLocaleDateString();
+          html += '</div>';
+          html += '<span class="session-agent-name">Agent: ' + escHtml(agentName) + '</span>';
+          html += '</div>';
+
+          if (v.content) {
+            html += '<div class="session-content">' + renderMarkdown(v.content) + '</div>';
+          } else {
+            html += '<div class="session-content"><span class="empty-state" style="padding:8px">Awaiting submission...</span></div>';
+          }
+
+          if (v.deliverable) {
+            html += '<div class="version-deliverable"><div class="version-deliverable-label">Deliverable</div>' + linkifyText(escHtml(v.deliverable)).replace(/\n/g, '<br>') + '</div>';
+          }
+          if (v.result) {
+            html += '<div class="version-result"><div class="version-result-label">Result</div>' + linkifyText(escHtml(v.result)).replace(/\n/g, '<br>') + '</div>';
+          }
+          if (v.files && v.files.length > 0) {
+            var imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+            html += '<div class="version-files"><div class="version-files-label">Deliverable Files</div>' +
+              v.files.map(function(f) {
+                var ext = f.lastIndexOf('.') >= 0 ? f.slice(f.lastIndexOf('.')).toLowerCase() : '';
+                var rawUrl = '/api/tasks/' + taskId + '/versions/' + v.number + '/files/' + encodeURIComponent(f) + '/raw';
+                var isImage = imageExts.indexOf(ext) >= 0;
+                var linkHtml = '<div class="version-file-item">';
+                if (isImage) {
+                  linkHtml += '<a href="' + rawUrl + '" target="_blank" class="version-file-thumb-link"><img src="' + rawUrl + '" class="version-file-thumb" alt="' + escHtml(f) + '"></a>';
+                }
+                linkHtml += '<a href="' + rawUrl + '" target="_blank" class="version-file-link">' + escHtml(f) + '</a>';
+                linkHtml += '</div>';
+                return linkHtml;
+              }).join('') + '</div>';
+          }
+
+          html += '</div>'; // close session-version
+
+        } else if (evt.type === 'feedback') {
+          var v = evt.data;
           var fbClass = v.decision === 'improve' ? 'session-feedback-improve' : (v.decision === 'approved' || v.decision === 'accepted') ? 'session-feedback-approved' : (v.decision === 'done' || v.decision === 'closed') ? 'session-feedback-done' : '';
           html += '<div class="session-feedback ' + fbClass + '">';
           html += '<div class="session-feedback-label">Owner Feedback';
@@ -1361,15 +1424,35 @@
             var decisionLabels = { accepted: 'Accepted', approved: 'Execute', improve: 'Improve', done: 'Closed', closed: 'Closed', hold: 'Hold', cancelled: 'Cancelled' };
             html += ' <span class="badge badge-' + (v.decision) + '">' + (decisionLabels[v.decision] || v.decision) + '</span>';
           }
+          if (v.decidedAt) html += '<span class="session-feedback-date">' + new Date(v.decidedAt).toLocaleDateString() + '</span>';
           html += '</div>';
           if (v.comments) {
             html += '<div class="session-feedback-text">' + escHtml(v.comments).replace(/\n/g, '<br>') + '</div>';
           }
           html += '</div>';
-        }
 
-        html += '</div>'; // close session-version
+        } else if (evt.type === 'progress') {
+          var entry = evt.data;
+          var isBlocker = /blocker/i.test(entry.message);
+          var hasUrl = /(https?:\/\/[^\s]+)/i.test(entry.message);
+          var entryClass = 'timeline-progress';
+          if (isBlocker) entryClass += ' timeline-progress-blocker';
+          if (hasUrl) entryClass += ' timeline-progress-url';
+          var agentLabel = entry.agentId || '';
+          var agents = state.agents || [];
+          for (var ai = 0; ai < agents.length; ai++) {
+            if (agents[ai].id === entry.agentId) { agentLabel = agents[ai].name; break; }
+          }
+          var timeStr = entry.timestamp ? new Date(entry.timestamp).toLocaleDateString() : '';
+
+          html += '<div class="' + entryClass + '">';
+          if (isBlocker) html += '<span class="progress-blocker-badge">BLOCKER</span> ';
+          html += '<span class="timeline-progress-message">' + linkifyText(escHtml(entry.message)) + '</span>';
+          html += '<span class="timeline-progress-meta">' + escHtml(agentLabel) + (timeStr ? ' - ' + timeStr : '') + '</span>';
+          html += '</div>';
+        }
       });
+      html += '</div>'; // close unified-timeline
     }
 
     // ── Bottom section: status pipeline + feedback ──
@@ -1387,7 +1470,7 @@
       { key: 'draft',            label: 'Draft',     icon: '&#9998;'  },
       { key: 'in_progress',      label: 'Working',   icon: '&#9881;'  },
       { key: 'pending_approval', label: 'Pending',   icon: '&#9679;'  },
-      { key: 'accepted',         label: 'Accepted',  icon: '&#10003;', action: 'accept' },
+      { key: 'accepted',         label: 'Accepted <span style="color:#6f6;font-size:0.75em;margin-left:2px">&#9654;</span>',  icon: '&#10003;', action: 'accept' },
       { key: 'closed',           label: 'Closed',    icon: '&#9632;', action: 'close'  }
     ];
     var sideStates = [
@@ -2239,6 +2322,34 @@
     } catch(e) { toast('Failed to rebuild context', 'error'); }
   }
 
+  async function shutdownServer() {
+    var ok = await confirmAction({
+      title: 'Close Session',
+      message: 'This will stop the portal server and close the CLI session. You will need to run launch.bat again to restart.',
+      confirmLabel: 'Close Session'
+    });
+    if (!ok) return;
+    try {
+      await api.post('/api/server/shutdown', {});
+    } catch(e) { /* expected - server is shutting down */ }
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#999;font-size:18px;">Session closed. You can close this tab.</div>';
+  }
+
+  async function restartServer() {
+    var ok = await confirmAction({
+      title: 'Restart Server',
+      message: 'This will restart the portal server and CLI session. The page will automatically reconnect.',
+      confirmLabel: 'Restart'
+    });
+    if (!ok) return;
+    try {
+      await api.post('/api/server/restart', {});
+    } catch(e) { /* expected - server is restarting */ }
+    toast('Server restarting...');
+    // Wait and reload
+    setTimeout(function() { location.reload(); }, 4000);
+  }
+
   async function resetSystem() {
     var ok = await confirmAction({
       title: 'Reset Entire System',
@@ -2389,17 +2500,14 @@
     if (!pw || !pw.value) { toast('Enter a master password', 'error'); return; }
     if (pw.value !== confirm.value) { toast('Passwords do not match', 'error'); return; }
     if (pw.value.length < 4) { toast('Password must be at least 4 characters', 'error'); return; }
-    // Create vault with a placeholder, then show add form
     try {
-      secretsInitPassword = pw.value;
+      await api.post('/api/secrets/init', { password: pw.value });
       pw.value = ''; confirm.value = '';
-      toast('Vault created! Add your first secret.');
-      document.getElementById('secrets-setup-form').classList.add('hidden');
-      document.getElementById('secrets-add-form').classList.remove('hidden');
-    } catch(e) { toast('Failed to create vault', 'error'); }
+      toast('Vault created!');
+      loadSecretsStatus();
+      loadCredentialsStatus();
+    } catch(e) { toast(e.message || 'Failed to create vault', 'error'); }
   }
-
-  var secretsInitPassword = null;
 
   function showAddSecret() {
     var addForm = document.getElementById('secrets-add-form');
@@ -2410,7 +2518,6 @@
 
   function cancelAddSecret() {
     document.getElementById('secrets-add-form').classList.add('hidden');
-    secretsInitPassword = null;
   }
 
   async function saveSecret() {
@@ -2420,18 +2527,12 @@
     var value = valueEl.value;
     if (!name || !value) { toast('Name and value are required', 'error'); return; }
 
-    var body = { name: name, value: value };
-    if (secretsInitPassword) {
-      body.password = secretsInitPassword;
-      secretsInitPassword = null;
-    }
-
     try {
-      await api.post('/api/secrets', body);
+      await api.post('/api/secrets', { name: name, value: value });
       toast('Secret saved');
       document.getElementById('secrets-add-form').classList.add('hidden');
       loadSecretsStatus();
-    } catch(e) { toast('Failed to save secret', 'error'); }
+    } catch(e) { toast(e.message || 'Failed to save secret', 'error'); }
   }
 
   async function editSecret(name) {
@@ -2466,27 +2567,51 @@
   }
 
   // ── Credentials Manager ──────────────────────────────
+  var credentialsVaultPassword = null;
+
   async function loadCredentialsStatus() {
     var lockedMsg = document.getElementById('credentials-locked-msg');
+    var setupForm = document.getElementById('credentials-setup-form');
     var listContainer = document.getElementById('credentials-list-container');
     var addForm = document.getElementById('credentials-add-form');
     if (!lockedMsg) return;
 
     lockedMsg.classList.add('hidden');
+    if (setupForm) setupForm.classList.add('hidden');
     if (listContainer) listContainer.classList.add('hidden');
     if (addForm) addForm.classList.add('hidden');
 
     try {
       var status = await api.get('/api/secrets/status');
-      if (!status.exists || status.locked) {
+      if (!status.exists) {
+        // No vault at all - show setup form
+        if (setupForm) setupForm.classList.remove('hidden');
+      } else if (status.locked) {
+        // Vault exists but locked
         lockedMsg.classList.remove('hidden');
       } else {
+        // Vault unlocked
         if (listContainer) listContainer.classList.remove('hidden');
         loadCredentialsList();
       }
     } catch(e) {
       lockedMsg.classList.remove('hidden');
     }
+  }
+
+  async function initializeCredentialsVault() {
+    var pw = document.getElementById('credentials-new-master-password');
+    var confirmPw = document.getElementById('credentials-confirm-master-password');
+    if (!pw || !pw.value) { toast('Enter a master password', 'error'); return; }
+    if (pw.value !== confirmPw.value) { toast('Passwords do not match', 'error'); return; }
+    if (pw.value.length < 4) { toast('Password must be at least 4 characters', 'error'); return; }
+    try {
+      await api.post('/api/secrets/init', { password: pw.value });
+      pw.value = ''; confirmPw.value = '';
+      toast('Vault created!');
+      loadSecretsStatus();
+      loadCredentialsStatus();
+    } catch(e) { toast(e.message || 'Failed to create vault', 'error'); }
   }
 
   async function loadCredentialsList() {
@@ -2544,12 +2669,18 @@
         await api.put('/api/credentials/' + encodeURIComponent(editingCredentialService), { username: username, password: password });
         toast('Credential updated');
       } else {
-        await api.post('/api/credentials', { service: service, username: username, password: password });
+        var body = { service: service, username: username, password: password };
+        if (credentialsVaultPassword) {
+          body.masterPassword = credentialsVaultPassword;
+          credentialsVaultPassword = null;
+        }
+        await api.post('/api/credentials', body);
         toast('Credential saved');
       }
       document.getElementById('credentials-add-form').classList.add('hidden');
       editingCredentialService = null;
       loadCredentialsList();
+      loadSecretsStatus(); // refresh secrets panel too since vault was created
     } catch(e) { toast(e.message || 'Failed to save credential', 'error'); }
   }
 
@@ -4136,6 +4267,8 @@
     rebuildContext: rebuildContext,
     resetSystem: resetSystem,
     resetAgents: resetAgents,
+    shutdownServer: shutdownServer,
+    restartServer: restartServer,
     runRoundTable: runRoundTable,
     restartTerminal: restartTerminal,
     savePermissionMode: savePermissionMode,
@@ -4151,6 +4284,7 @@
     showAddCredential: showAddCredential,
     cancelAddCredential: cancelAddCredential,
     saveCredential: saveCredential,
+    initializeCredentialsVault: initializeCredentialsVault,
     editCredential: editCredential,
     deleteCredential: deleteCredential,
     checkForUpdates: checkForUpdates,

@@ -26,11 +26,19 @@ Shipper handles all GitHub operations including committing changes, pushing to r
 git operations (commit, push, tag, branch), GitHub Releases creation via gh CLI, Changelog generation from commit history, Version bumping in package.json and system config, Repository status reporting
 
 ## Task Workflow (MANDATORY)
-- When starting work, set task status to `in_progress` (Working).
-- When deliverable is ready, set task status to `pending_approval` (Pending) for owner review.
-- NEVER touch tasks with status `accepted`, `closed`, `hold`, or `cancelled`.
+
+### Two-Phase Flow: Prepare -> Review -> Execute -> Verify
+
+**Phase 1 (Prepare):** Prepare the release. Set `in_progress`, bump version, write changelog, update version.json with `content` describing the release and `deliverable` listing changed files. Set `pending_approval`. STOP.
+
+**Phase 2 (Execute - after owner accepts):** Cut the release and publish. Set `in_progress`, log "Executing: cutting release". Create git tag, push, create GitHub release. Update version.json `result` with release URL. Set `pending_approval` for owner to verify.
+
+**Blocker:** If blocked (e.g. tests failing, can't push), set blocker field: `PUT /api/tasks/{id} {"blocker":"reason"}` and STOP.
+
+- NEVER touch tasks with status `closed`, `hold`, or `cancelled`.
 - If status is `revision_needed` (Improve): read owner feedback comments, revise, then set back to `pending_approval`.
 - NEVER create a new version (v2, v3...) unless the owner explicitly sent revision feedback.
+- Server rejects `pending_approval` if version content is empty - always fill version.json first.
 - If a task has `autopilot: true`, the orchestrator handles acceptance automatically.
 
 ## Memory

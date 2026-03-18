@@ -376,6 +376,7 @@ function rebuildClaudeMd() {
     '  - Optional: `parentTaskId`, `dependsOn: []` for subtask/dependency relationships\n' +
     '- **Update task:** `PUT /api/tasks/{id}` with JSON body (partial update, e.g. `{"status":"closed"}`)\n' +
     '  - Actions: `{"action":"accept"}`, `{"action":"close"}`, `{"action":"improve","comments":"..."}`, `{"action":"hold"}`, `{"action":"cancel"}`\n' +
+    '  - Blocker: `{"blocker":"reason"}` to set, `{"blocker":null}` to clear (auto-logs to progress)\n' +
     '- **Create subtask:** `POST /api/tasks/{parentId}/subtasks` with task body (auto-links to parent)\n' +
     '- **Log progress:** `POST /api/tasks/{id}/progress` with `{"message":"...","agentId":"..."}`\n' +
     '- **Get progress:** `GET /api/tasks/{id}/progress`\n' +
@@ -433,24 +434,37 @@ function rebuildClaudeMd() {
     '## Round Table Protocol\n\n' +
     'A "round table" is a structured review session. When asked to run one:\n' +
     '1. Scan all tasks in `data/tasks/` \u2014 review each task\'s status\n' +
-    '2. For each agent, summarize what they\'ve accomplished and what\'s pending\n' +
-    '3. Present items needing approval to the owner\n' +
-    '4. Review knowledge base \u2014 list recent additions, flag stale docs (>30 days since update)\n' +
-    '5. Create a round table summary in `data/round-tables/` with timestamp filename\n' +
-    '6. Update each agent\'s short-memory with round table outcomes\n' +
-    '7. Clear completed items from short-memory\n\n' +
+    '2. Launch agents on `accepted` tasks to EXECUTE (not auto-close)\n' +
+    '3. Launch agents on `revision_needed` tasks \u2014 owner gave feedback\n' +
+    '4. Surface tasks with `blocker` field set \u2014 report the blocker text directly\n' +
+    '5. Present items needing approval to the owner\n' +
+    '6. Review knowledge base \u2014 list recent additions, flag stale docs (>30 days since update)\n' +
+    '7. Create a round table summary in `data/round-tables/` with timestamp filename\n' +
+    '8. Update each agent\'s short-memory with round table outcomes\n\n' +
     '## Task Lifecycle\n\n' +
-    'Tasks flow through: `draft` \u2192 `in_progress` (Working) \u2192 `pending_approval` (Pending) \u2192 `accepted` \u2192 `closed`\n\n' +
-    'Side statuses: `revision_needed` (Improve - owner sent feedback), `hold`, `cancelled`\n\n' +
+    '### Flow: Prepare -> Review -> Execute -> Verify -> Close\n\n' +
+    '1. **Prepare** (in_progress): Agent creates materials/draft\n' +
+    '2. **Submit for review** (pending_approval): Agent fills version.json + sets pending_approval\n' +
+    '3. **Owner reviews**: Accept (go execute) or Improve (revise)\n' +
+    '4. **Execute** (in_progress): Agent executes the approved work\n' +
+    '5. **Submit proof** (pending_approval): Agent updates version with execution proof\n' +
+    '6. **Owner verifies**: Checks proof and closes\n\n' +
     '### Status meanings\n' +
-    '- **draft**: Task created, not started. Orchestrator launches agent to begin work.\n' +
-    '- **in_progress** (Working): Agent is actively working.\n' +
-    '- **pending_approval** (Pending): Agent delivered, waiting for owner review. Owner can Accept or Improve.\n' +
-    '- **accepted**: Owner liked the result. Deliverable is final. Auto-closes or orchestrator closes.\n' +
-    '- **revision_needed** (Improve): Owner sent feedback. Agent must revise and resubmit to Pending.\n' +
-    '- **closed**: Fully complete, archived. Terminal state.\n' +
+    '- **in_progress** (Working): Agent preparing materials OR executing after acceptance.\n' +
+    '- **pending_approval** (Pending): Materials ready for review OR execution proof ready for verify.\n' +
+    '- **accepted**: Owner approved materials \u2014 triggers agent execution immediately.\n' +
+    '- **revision_needed** (Improve): Owner sent feedback. Agent must revise and resubmit.\n' +
+    '- **closed**: Owner verified execution proof. Terminal state.\n' +
     '- **hold**: Paused.\n' +
     '- **cancelled**: Abandoned.\n\n' +
+    '### Blocker Protocol\n' +
+    '- Tasks support a `blocker` field (string or null) via `PUT /api/tasks/{id} {"blocker":"reason"}`\n' +
+    '- Setting/clearing blocker auto-logs to progress\n' +
+    '- Blocker tasks show red glow in dashboard \u2014 do not work past a blocker, set it and stop\n' +
+    '- Orchestrator clears blocker and relaunches agent when unblocked\n\n' +
+    '### Submission Validation\n' +
+    '- Server rejects `pending_approval` if latest version.json has empty `content` (400 error)\n' +
+    '- Always update version.json before setting pending_approval\n\n' +
     '### Autopilot\n' +
     'Tasks with `autopilot: true` run the full lifecycle without human review. Agent delivers, orchestrator auto-accepts, auto-closes.\n\n' +
     '### Subtasks\n' +
@@ -520,12 +534,15 @@ function rebuildAgentMd(aid, a) {
     '## Rules\n' + ((a.rules||[]).map(function(r){return '- '+r;}).join('\n') || '_No specific rules._') + '\n\n' +
     '## Capabilities\n' + ((a.capabilities||[]).join(', ') || '_No capabilities defined._') + '\n\n' +
     (a.isOrchestrator ? '' :
-    '## Task Workflow (MANDATORY)\n' +
-    '- When starting work, set task status to `in_progress` (Working).\n' +
-    '- When deliverable is ready, set task status to `pending_approval` (Pending) for owner review.\n' +
-    '- NEVER touch tasks with status `accepted`, `closed`, `hold`, or `cancelled`.\n' +
+    '## Task Workflow (MANDATORY)\n\n' +
+    '### Two-Phase Flow: Prepare -> Review -> Execute -> Verify\n\n' +
+    '**Phase 1 (Prepare):** Set `in_progress`, do the work, update version.json with `content` (REQUIRED) and `deliverable`. Set `pending_approval`. STOP and wait for owner review.\n\n' +
+    '**Phase 2 (Execute - after owner accepts):** Set `in_progress`, log "Executing: {action}". Execute the approved work. Update version.json `result` with proof (URLs, file paths, verification). Set `pending_approval` for owner to verify.\n\n' +
+    '**Blocker:** If blocked, set blocker field immediately: `PUT /api/tasks/{id} {"blocker":"reason"}` and STOP. Do not continue past a blocker.\n\n' +
+    '- NEVER touch tasks with status `closed`, `hold`, or `cancelled`.\n' +
     '- If status is `revision_needed` (Improve): read owner feedback comments, revise, then set back to `pending_approval`.\n' +
     '- NEVER create a new version (v2, v3...) unless the owner explicitly sent revision feedback.\n' +
+    '- Server rejects `pending_approval` if version content is empty - always fill version.json first.\n' +
     '- If a task has `autopilot: true`, the orchestrator handles acceptance automatically.\n\n') +
     '## Memory\n' +
     '- Short-term context: `agents/' + aid + '/short-memory.md`\n' +
@@ -810,6 +827,15 @@ function createTermSession(sessionId, socket) {
     termSessions.delete(sessionId);
     // Claude may have modified files via API — broadcast refresh
     broadcast('all');
+    // Auto-shutdown server when terminal exits and no other sessions remain
+    if (termSessions.size === 0) {
+      setTimeout(function() {
+        if (termSessions.size === 0) {
+          console.log('Terminal exited. Shutting down server.');
+          process.exit(0);
+        }
+      }, 3000);
+    }
   });
 
   termSessions.set(sessionId, session);
@@ -1010,6 +1036,7 @@ async function handle(pn, m, req, res) {
       subtasks: Array.isArray(b.subtasks) ? b.subtasks : [],
       dependsOn: Array.isArray(b.dependsOn) ? b.dependsOn : [],
       dueDate: b.dueDate || null,
+      blocker: b.blocker || null,
       progressLog: [],
       createdAt: now, updatedAt: now
     };
@@ -1022,7 +1049,7 @@ async function handle(pn, m, req, res) {
     });
     const ip = path.join(ROOT, 'data/tasks/_index.json');
     const ix = readJSON(ip) || { tasks: [] };
-    ix.tasks.push({ id: id, title: t.title, status: t.status, assignedTo: t.assignedTo, priority: t.priority, type: t.type, autopilot: t.autopilot, parentTaskId: t.parentTaskId });
+    ix.tasks.push({ id: id, title: t.title, status: t.status, assignedTo: t.assignedTo, priority: t.priority, type: t.type, autopilot: t.autopilot, parentTaskId: t.parentTaskId, blocker: t.blocker });
     writeJSON(ip, ix);
     // If this is a subtask, auto-link to parent
     if (t.parentTaskId) {
@@ -1141,6 +1168,7 @@ async function handle(pn, m, req, res) {
       subtasks: [],
       dependsOn: Array.isArray(b.dependsOn) ? b.dependsOn : [],
       dueDate: b.dueDate || null,
+      blocker: b.blocker || null,
       progressLog: [],
       createdAt: now, updatedAt: now
     };
@@ -1158,7 +1186,7 @@ async function handle(pn, m, req, res) {
     // Update index
     const ip = path.join(ROOT, 'data/tasks/_index.json');
     const ix = readJSON(ip) || { tasks: [] };
-    ix.tasks.push({ id: subId, title: sub.title, status: sub.status, assignedTo: sub.assignedTo, priority: sub.priority, type: sub.type, autopilot: sub.autopilot, parentTaskId: parentId });
+    ix.tasks.push({ id: subId, title: sub.title, status: sub.status, assignedTo: sub.assignedTo, priority: sub.priority, type: sub.type, autopilot: sub.autopilot, parentTaskId: parentId, blocker: sub.blocker });
     writeJSON(ip, ix);
     broadcast('tasks');
     return J(res, sub, 201);
@@ -1189,6 +1217,20 @@ async function handle(pn, m, req, res) {
     } catch(e) {}
     versions.sort(function(a, b) { return a.number - b.number; });
     return J(res, versions);
+  }
+
+  // SERVE VERSION FILE RAW (binary-safe, for images/downloads)
+  const tvfr = pn.match(/^\/api\/tasks\/([^\/]+)\/versions\/(\d+)\/files\/(.+)\/raw$/);
+  if (tvfr && m === 'GET') {
+    var rawPath = path.join(ROOT, 'data/tasks', tvfr[1], 'v' + tvfr[2], decodeURIComponent(tvfr[3]));
+    if (!rawPath.startsWith(path.join(ROOT, 'data/tasks', tvfr[1]))) { res.writeHead(403); return res.end('Forbidden'); }
+    if (!fs.existsSync(rawPath)) { res.writeHead(404); return res.end('Not found'); }
+    try {
+      var rawData = fs.readFileSync(rawPath);
+      var rawExt = path.extname(tvfr[3]).toLowerCase();
+      res.writeHead(200, { 'Content-Type': MIME[rawExt] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+      return res.end(rawData);
+    } catch(e) { res.writeHead(500); return res.end('Error'); }
   }
 
   // SERVE VERSION FILE CONTENT
@@ -1312,7 +1354,7 @@ async function handle(pn, m, req, res) {
       var aip = path.join(ROOT, 'data/tasks/_index.json');
       var aix = readJSON(aip) || { tasks: [] };
       var ai = aix.tasks.findIndex(function(x) { return x.id === id; });
-      if (ai >= 0) aix.tasks[ai] = { id: id, title: actionResult.title, status: actionResult.status, assignedTo: actionResult.assignedTo, priority: actionResult.priority, type: actionResult.type || 'general', autopilot: actionResult.autopilot || false, parentTaskId: actionResult.parentTaskId || null };
+      if (ai >= 0) aix.tasks[ai] = { id: id, title: actionResult.title, status: actionResult.status, assignedTo: actionResult.assignedTo, priority: actionResult.priority, type: actionResult.type || 'general', autopilot: actionResult.autopilot || false, parentTaskId: actionResult.parentTaskId || null, blocker: actionResult.blocker || null };
       writeJSON(aip, aix);
 
       // Auto-advance parent task when all subtasks are accepted/closed (recursive for deep nesting)
@@ -1364,13 +1406,38 @@ async function handle(pn, m, req, res) {
       return J(res, actionResult);
     }
 
+    // Submission validation: reject pending_approval with empty version content
+    if (b.status === 'pending_approval' && ex.status !== 'pending_approval') {
+      var taskDir2 = path.join(ROOT, 'data/tasks', id);
+      var latestV2 = ex.version || 1;
+      try {
+        var entries2 = fs.readdirSync(taskDir2);
+        entries2.forEach(function(e) { if (/^v\d+$/.test(e)) { var n = parseInt(e.slice(1)); if (n > latestV2) latestV2 = n; } });
+      } catch(e) {}
+      var vData2 = readJSON(path.join(taskDir2, 'v' + latestV2, 'version.json'));
+      if (!vData2 || !vData2.content || !vData2.content.trim()) {
+        return E(res, 'Cannot submit: version content is empty. Update version first.', 400);
+      }
+    }
+
     // Default: merge update
     var merged = Object.assign({}, ex, b, { id: id, updatedAt: now });
+
+    // Blocker field handling: auto-log progress when blocker changes
+    if (b.blocker !== undefined && b.blocker !== ex.blocker) {
+      if (!merged.progressLog) merged.progressLog = [];
+      if (b.blocker) {
+        merged.progressLog.push({ message: 'BLOCKER: ' + b.blocker, agentId: b.agentId || merged.assignedTo || null, timestamp: now });
+      } else {
+        merged.progressLog.push({ message: 'BLOCKER RESOLVED', agentId: b.agentId || merged.assignedTo || null, timestamp: now });
+      }
+    }
+
     writeJSON(tp, merged);
     var mip = path.join(ROOT, 'data/tasks/_index.json');
     var mix = readJSON(mip) || { tasks: [] };
     var mi = mix.tasks.findIndex(function(x) { return x.id === id; });
-    if (mi >= 0) mix.tasks[mi] = { id: id, title: merged.title, status: merged.status, assignedTo: merged.assignedTo, priority: merged.priority, type: merged.type || 'general', autopilot: merged.autopilot || false, parentTaskId: merged.parentTaskId || null };
+    if (mi >= 0) mix.tasks[mi] = { id: id, title: merged.title, status: merged.status, assignedTo: merged.assignedTo, priority: merged.priority, type: merged.type || 'general', autopilot: merged.autopilot || false, parentTaskId: merged.parentTaskId || null, blocker: merged.blocker || null };
     writeJSON(mip, mix);
     broadcast('tasks');
     return J(res, merged);
@@ -1505,6 +1572,29 @@ async function handle(pn, m, req, res) {
     rmDir(tempDir);
     fs.mkdirSync(tempDir, { recursive: true });
     return J(res, { ok: true, message: 'Temp folder cleaned' });
+  }
+
+  // ── SERVER CONTROL ─────────────────────────────────
+  if (pn === '/api/server/shutdown' && m === 'POST') {
+    J(res, { ok: true, message: 'Server shutting down' });
+    // Kill all terminal sessions
+    termSessions.forEach(function(s) { try { s.pty.kill(); } catch(e) {} });
+    setTimeout(function() { process.exit(0); }, 500);
+    return;
+  }
+  if (pn === '/api/server/restart' && m === 'POST') {
+    J(res, { ok: true, message: 'Server restarting' });
+    // Kill all terminal sessions
+    termSessions.forEach(function(s) { try { s.pty.kill(); } catch(e) {} });
+    // Spawn a new server process detached
+    var child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
+      detached: true,
+      stdio: 'ignore',
+      cwd: ROOT
+    });
+    child.unref();
+    setTimeout(function() { process.exit(0); }, 500);
+    return;
   }
 
   // ── BACKUP / RESTORE ────────────────────────────────
@@ -1683,6 +1773,19 @@ async function handle(pn, m, req, res) {
     broadcast('secrets');
     return J(res, { ok: true });
   }
+  if (pn === '/api/secrets/init' && m === 'POST') {
+    var b = await parseBody(req);
+    if (!b.password) return E(res, 'Password required');
+    if (b.password.length < 4) return E(res, 'Password must be at least 4 characters');
+    if (secretsCache) return E(res, 'Vault already exists');
+    secretsSalt = crypto.randomBytes(32);
+    masterKeyCache = deriveKey(b.password, secretsSalt);
+    secretsCache = {};
+    saveSecretsFile();
+    rebuildClaudeMd();
+    broadcast('secrets');
+    return J(res, { ok: true });
+  }
   if (pn === '/api/secrets/change-password' && m === 'POST') {
     var b = await parseBody(req);
     if (!b.currentPassword || !b.newPassword) return E(res, 'Both passwords required');
@@ -1754,9 +1857,15 @@ async function handle(pn, m, req, res) {
     return J(res, { credentials: list });
   }
   if (pn === '/api/credentials' && m === 'POST') {
-    if (!secretsCache) return E(res, 'Vault is locked', 403);
     var b = await parseBody(req);
     if (!b.service || !b.username || !b.password) return E(res, 'service, username, and password required');
+    // Auto-create vault if needed
+    if (!secretsCache) {
+      if (!b.masterPassword) return E(res, 'Vault is locked. Provide masterPassword to create vault.', 403);
+      secretsSalt = crypto.randomBytes(32);
+      masterKeyCache = deriveKey(b.masterPassword, secretsSalt);
+      secretsCache = {};
+    }
     var creds = getCredentials();
     for (var ci = 0; ci < creds.length; ci++) {
       if (creds[ci].service.toLowerCase() === b.service.trim().toLowerCase()) return E(res, 'Credential for this service already exists');
@@ -2409,6 +2518,87 @@ setInterval(function() {
 // ── Startup ──────────────────────────────────────────────
 fs.mkdirSync(path.join(ROOT, 'data/knowledge'), { recursive: true });
 fs.mkdirSync(path.join(ROOT, 'temp'), { recursive: true });
+fs.mkdirSync(path.join(ROOT, 'config'), { recursive: true });
+
+// Ensure default team-rules (Agent Operating System) on fresh install
+(function ensureDefaultTeamRules() {
+  var rulesPath = path.join(ROOT, 'config/team-rules.md');
+  if (fs.existsSync(rulesPath)) return;
+  var defaultRules = '# Team Rules\n\n' +
+    '## #1 Rule: Mission-Driven Execution\n' +
+    '- The team exists to EXECUTE and DELIVER results. Not plans. Not briefs. Not checklists. Results.\n' +
+    '- Agents must DO the work, not describe how to do it\n' +
+    '- Only flag genuine blockers (missing credentials, need owner\'s personal account login)\n' +
+    '- Never set pending_approval for work that was already approved upstream - just finish it\n\n' +
+    '## Delegation & Task Tracking\n' +
+    '- The orchestrator MUST delegate work to agents via tasks - never do the actual work itself\n' +
+    '- All work must be tracked as tasks in the dashboard so the owner has full visibility\n' +
+    '- Create tasks via `POST /api/tasks` with the appropriate agent assigned\n\n' +
+    '## Task Lifecycle (CORRECTED FLOW)\n\n' +
+    '### Flow: Prepare -> Review -> Execute -> Verify -> Close\n\n' +
+    '1. **Prepare** (in_progress): Agent creates materials/draft/plan\n' +
+    '2. **Submit for review** (pending_approval): Agent fills version.json + sets pending_approval\n' +
+    '3. **Owner reviews**: Accept (go execute) or Improve (revise)\n' +
+    '4. **Execute** (in_progress): Agent executes the approved work (posts content, deploys code, etc.)\n' +
+    '5. **Submit proof** (pending_approval): Agent updates version with execution proof + sets pending_approval\n' +
+    '6. **Owner verifies**: Checks proof (URL works, code deployed, etc.) and closes\n\n' +
+    '### Status Meanings\n' +
+    '- **Working** (`in_progress`): Agent preparing materials OR executing after acceptance\n' +
+    '- **Pending** (`pending_approval`): Either materials ready for review OR execution proof ready for verify\n' +
+    '- **Accepted** (`accepted`): Owner approved materials - triggers agent execution immediately\n' +
+    '- **Improve** (`revision_needed`): Owner sent feedback - agent revises, resubmits to pending\n' +
+    '- **Closed** (`closed`): Owner verified execution proof. Terminal state.\n' +
+    '- **Hold** (`hold`): Paused - do not work on until the owner releases it.\n' +
+    '- **Cancelled** (`cancelled`): Abandoned - no further action.\n\n' +
+    '## Agent Execution Checklist\n\n' +
+    '### Phase 1: Prepare\n' +
+    '1. Set status to `in_progress`\n' +
+    '2. Log progress: "Starting: {what I\'m preparing}"\n' +
+    '3. Create materials (draft post, code, research, etc.)\n' +
+    '4. Save materials to `data/tasks/{id}/v{n}/`\n' +
+    '5. Update version.json: `content` (REQUIRED), `deliverable` (file paths)\n' +
+    '6. Set status to `pending_approval`\n' +
+    '7. STOP and wait for owner review\n\n' +
+    '### Phase 2: Execute (after owner accepts)\n' +
+    '8. Set status to `in_progress`\n' +
+    '9. Log progress: "Executing: {what I\'m doing}"\n' +
+    '10. Execute the approved work\n' +
+    '11. If blocker: `PUT /api/tasks/{id} {"blocker": "reason"}` and STOP\n' +
+    '12. Update version.json: `content` (execution summary), `result` (proof - URLs, screenshots)\n' +
+    '13. Set status to `pending_approval`\n\n' +
+    '### Blocker Protocol\n' +
+    '- Hit a blocker? Set blocker field immediately: `PUT /api/tasks/{id} {"blocker": "reason"}`\n' +
+    '- Blocker persists with red glow until explicitly cleared\n' +
+    '- Do NOT keep working past a blocker - set it and stop\n' +
+    '- When unblocked: orchestrator clears field and relaunches agent\n\n' +
+    '### Required proof by task type\n' +
+    '- **Content/Social**: `result` = published URL (mandatory)\n' +
+    '- **Development**: `result` = file paths changed, test results, or PR URL\n' +
+    '- **Research**: `deliverable` = report file path in version folder\n' +
+    '- **Operations**: `result` = verification or outcome description\n\n' +
+    '## Deliverable Tracking (MANDATORY)\n\n' +
+    'Every completed task MUST have visible outcomes in the task detail page.\n' +
+    '- Server rejects pending_approval with empty version content\n' +
+    '- Never close a content task without the published URL\n' +
+    '- Save all deliverable files to `data/tasks/{taskId}/v{n}/`\n\n' +
+    '## Round Table Protocol\n\n' +
+    'Round tables are **execution-first**. The orchestrator acts before it reports.\n\n' +
+    '### Phase 1: Execute (do this BEFORE reporting)\n' +
+    '1. **Launch agents on accepted tasks** - owner approved materials, agent must EXECUTE (not auto-close)\n' +
+    '2. **Launch agents on revision_needed tasks** - owner already gave feedback, agent must act\n' +
+    '3. **Launch agents on draft tasks** that are ready (assigned, dependencies met)\n' +
+    '4. **Clear blockers** - read blocker field on tasks, report the text directly\n\n' +
+    '### Phase 2: Surface blockers\n' +
+    '- Tasks with `blocker` field set - report the blocker text directly\n' +
+    '- Tasks in_progress with no recent progress - may be stalled\n' +
+    '- Tasks that need owner input (pending_approval)\n\n' +
+    '### Phase 3: Report\n' +
+    '- Brief status summary\n' +
+    '- What was just executed\n' +
+    '- What needs the owner\'s decision\n';
+  writeText(rulesPath, defaultRules);
+  console.log('  Default team rules (Agent Operating System) created.');
+})();
 
 // Auto-cleanup stale temp files if configured
 (function() {

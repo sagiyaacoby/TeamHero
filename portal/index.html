@@ -261,12 +261,10 @@
         </div>
       </header>
       <div id="terminal-container" class="terminal-container"></div>
-      <div class="paste-image-bar" id="paste-image-bar">
-        <button class="paste-image-btn" onclick="App.pasteImage()" title="Paste image from clipboard (Ctrl+V)">&#128203; Paste Image</button>
-        <div id="paste-preview-area" class="paste-preview-area hidden">
-          <img id="paste-preview-img" class="paste-preview" alt="preview">
-          <span id="paste-preview-path" class="paste-path"></span>
-        </div>
+      <div class="terminal-hints-bar">
+        <span>Ctrl+V paste text</span>
+        <span>Ctrl+C copy selected</span>
+        <span>Ctrl+G open editor</span>
         <button class="focus-terminal-btn" onclick="App.focusTerminal()" title="Focus terminal input">&#9660; Focus</button>
       </div>
     </section>
@@ -633,6 +631,21 @@
               <button class="btn btn-primary hidden" id="update-upgrade-btn" onclick="App.performUpgrade()">Upgrade Now</button>
             </div>
           </div>
+        </div>
+      </div>
+      <!-- Data Backup -->
+      <div class="panel">
+        <h3>Data Backup</h3>
+        <div class="settings-group">
+          <div class="setting-item">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="checkbox" id="backup-include-media"> Include media files (videos, images)
+            </label>
+          </div>
+          <div class="setting-item">
+            <button class="btn btn-primary" onclick="App.createBackup()">Create Backup</button>
+          </div>
+          <div id="backup-list" style="margin-top:8px"></div>
         </div>
       </div>
       <!-- Autopilot moved to dedicated view -->

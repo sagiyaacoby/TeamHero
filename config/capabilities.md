@@ -21,8 +21,10 @@ Current features available to the orchestrator and agents.
 - **Flow view**: Visual node graph showing task dependencies and parent/child relationships.
 - **Tree view**: Collapsible hierarchy for nested task structures.
 
-## Image Sharing
-- **Paste Image** button below the CLI (or Ctrl+V): Owner pastes a screenshot from clipboard, saved to `temp/clipboard/clip-{timestamp}.png`. The absolute file path is automatically sent to the CLI as a message so the orchestrator can read the image immediately.
+## Command Center Keyboard Shortcuts
+- **Ctrl+V**: Paste text from clipboard into the CLI terminal
+- **Ctrl+C**: Copy selected text from the CLI terminal
+- **Ctrl+G**: Open an external editor for multiline input
 - **Attach Image** in task detail: Owner pastes an image directly into task feedback, saved to `data/tasks/{taskId}/images/img-{timestamp}.png`. Path is auto-appended to the feedback text.
 - When the owner shares a screenshot, use the Read tool on the absolute path to view the image and understand the context.
 

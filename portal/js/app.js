@@ -169,7 +169,7 @@
         initTerminal();
         if (fitAddon) try { fitAddon.fit(); } catch(e) {}
         if (terminal) terminal.focus();
-      }, 50);
+      }, 100);
     } else {
       var el = document.getElementById('view-' + viewId);
       if (el) el.classList.add('active');
@@ -276,6 +276,7 @@
     // Skip refresh if user is on the Command Center — don't disrupt terminal
     if (state.currentView === 'chat') {
       loadSidebarAgents();
+      if (terminal) terminal.focus();
       return;
     }
     loadSidebarAgents();
@@ -1529,21 +1530,26 @@
         for (var t = 0; t < types.length; t++) {
           if (types[t] === 'image/png' || types[t] === 'image/jpeg') {
             var blob = await items[i].getType(types[t]);
-            return blob;
+            return { blob: blob, error: null };
           }
         }
       }
-      return null;
+      return { blob: null, error: null };
     } catch (e) {
-      return null;
+      if (e.name === 'NotAllowedError') {
+        return { blob: null, error: 'permission' };
+      }
+      return { blob: null, error: e.message };
     }
   }
 
   function blobToBase64(blob) {
-    // Compress image to fit within server body limit (5MB)
+    // Compress image to fit within server body limit (20MB)
     return new Promise(function(resolve, reject) {
       var img = new Image();
+      var objUrl = URL.createObjectURL(blob);
       img.onload = function() {
+        URL.revokeObjectURL(objUrl);
         var canvas = document.createElement('canvas');
         var maxDim = 1920;
         var w = img.width, h = img.height;
@@ -1559,54 +1565,65 @@
         var dataUrl = canvas.toDataURL('image/png');
         resolve(dataUrl.split(',')[1]);
       };
-      img.onerror = reject;
-      img.src = URL.createObjectURL(blob);
+      img.onerror = function() { URL.revokeObjectURL(objUrl); reject(new Error('Image load failed')); };
+      img.src = objUrl;
     });
   }
 
   async function pasteImage() {
-    var blob = await readClipboardImage();
-    if (!blob) {
-      toast('No image found in clipboard', 'error');
+    var clip = await readClipboardImage();
+    if (clip.error === 'permission') {
+      toast('Clipboard permission denied — click the page first', 'error');
+      return;
+    }
+    if (!clip.blob) {
+      toast(clip.error ? 'Clipboard error: ' + clip.error : 'No image found in clipboard', 'error');
       return;
     }
     try {
-      var b64 = await blobToBase64(blob);
+      var b64 = await blobToBase64(clip.blob);
       var result = await api.post('/api/upload-image', { data: b64, destination: 'clipboard' });
       var previewArea = document.getElementById('paste-preview-area');
       var previewImg = document.getElementById('paste-preview-img');
       var previewPath = document.getElementById('paste-preview-path');
       if (previewArea && previewImg && previewPath) {
-        previewImg.src = URL.createObjectURL(blob);
+        var previewUrl = URL.createObjectURL(clip.blob);
+        previewImg.onload = function() { URL.revokeObjectURL(previewUrl); };
+        previewImg.src = previewUrl;
         previewPath.textContent = result.path;
         previewArea.classList.remove('hidden');
       }
-      // Send image path to CLI so the orchestrator can see it
-      if (termWs && termWs.readyState === 1) {
-        var absPath = result.absPath || result.path;
-        termWs.send(JSON.stringify({ type: 'input', data: 'I pasted an image, see it at: ' + absPath + '\r' }));
-      }
-      toast('Image saved: ' + result.path);
+      // Copy path to clipboard instead of auto-sending to terminal
+      var absPath = result.absPath || result.path;
+      try { await navigator.clipboard.writeText(absPath); } catch(e) {}
+      toast('Image saved (path copied)');
     } catch (e) {
       toast('Failed to upload image: ' + e.message, 'error');
     }
+    if (terminal) terminal.focus();
   }
 
   async function attachTaskImage() {
     var taskId = state.currentTaskId;
     if (!taskId) { toast('No task selected', 'error'); return; }
-    var blob = await readClipboardImage();
-    if (!blob) {
-      toast('No image found in clipboard', 'error');
+    var clip = await readClipboardImage();
+    if (clip.error === 'permission') {
+      toast('Clipboard permission denied — click the page first', 'error');
+      return;
+    }
+    if (!clip.blob) {
+      toast(clip.error ? 'Clipboard error: ' + clip.error : 'No image found in clipboard', 'error');
       return;
     }
     try {
-      var b64 = await blobToBase64(blob);
+      var b64 = await blobToBase64(clip.blob);
       var result = await api.post('/api/upload-image', { data: b64, destination: 'task', taskId: taskId });
       var area = document.getElementById('feedback-image-area');
       if (area) {
         var img = document.createElement('img');
-        img.src = URL.createObjectURL(blob);
+        var imgUrl = URL.createObjectURL(clip.blob);
+        img.onload = function() { URL.revokeObjectURL(imgUrl); };
+        img.src = imgUrl;
         img.className = 'feedback-image-preview';
         area.innerHTML = '';
         area.appendChild(img);
@@ -2138,6 +2155,7 @@
     loadSecretsStatus();
     loadCredentialsStatus();
     loadTempStatus();
+    loadBackupList();
   }
 
   async function loadTempStatus() {
@@ -2158,6 +2176,60 @@
       toast('Temp folder cleaned');
       loadTempStatus();
     } catch(e) { toast('Failed to clean temp', 'error'); }
+  }
+
+  // ── Backup / Restore ──────────────────────────────
+  async function createBackup() {
+    var includeMedia = document.getElementById('backup-include-media')?.checked || false;
+    try {
+      toast('Creating backup...');
+      var result = await api.post('/api/backup/create', { includeMedia: includeMedia });
+      toast('Backup created (' + result.sizeMB + ' MB)');
+      loadBackupList();
+    } catch(e) { toast('Backup failed: ' + e.message, 'error'); }
+  }
+
+  async function loadBackupList() {
+    var container = document.getElementById('backup-list');
+    if (!container) return;
+    try {
+      var result = await api.get('/api/backup/list');
+      var backups = result.backups || [];
+      if (!backups.length) { container.innerHTML = '<div style="color:var(--text-muted);font-size:12px">No backups yet</div>'; return; }
+      var html = '';
+      for (var i = 0; i < backups.length; i++) {
+        var b = backups[i];
+        var date = b.manifest?.timestamp ? new Date(b.manifest.timestamp).toLocaleString() : b.id;
+        var media = b.manifest?.includeMedia ? ' (with media)' : '';
+        html += '<div class="backup-item">'
+          + '<div class="backup-info"><span class="backup-date">' + date + '</span>'
+          + '<span class="backup-meta">' + b.sizeMB + ' MB' + media + '</span></div>'
+          + '<div class="backup-actions">'
+          + '<button class="btn btn-secondary" onclick="App.restoreBackup(\'' + b.id + '\')">Restore</button>'
+          + '<button class="btn btn-cancel" onclick="App.deleteBackup(\'' + b.id + '\')">Delete</button>'
+          + '</div></div>';
+      }
+      container.innerHTML = html;
+    } catch(e) { container.innerHTML = '<div style="color:var(--text-muted);font-size:12px">Failed to load backups</div>'; }
+  }
+
+  async function restoreBackup(backupId) {
+    var confirmed = prompt('This will overwrite current data. Type "restore" to confirm:');
+    if (confirmed !== 'restore') { toast('Restore cancelled'); return; }
+    try {
+      toast('Restoring backup...');
+      await api.post('/api/backup/restore', { backupId: backupId });
+      toast('Backup restored successfully');
+    } catch(e) { toast('Restore failed: ' + e.message, 'error'); }
+  }
+
+  async function deleteBackup(backupId) {
+    if (!confirm('Delete this backup?')) return;
+    try {
+      await api.post('/api/backup/delete', { backupId: backupId });
+      toast('Backup deleted');
+      loadBackupList();
+    } catch(e) { toast('Delete failed: ' + e.message, 'error'); }
   }
 
   async function rebuildContext() {
@@ -2765,10 +2837,18 @@
     terminal.open(container);
     fitAddon.fit();
 
-    // Handle copy (Ctrl+C with selection) - paste is handled natively by xterm via onData
+    // Handle copy (Ctrl+C with selection) and paste (Ctrl+V)
     terminal.attachCustomKeyEventHandler(function(ev) {
       if (ev.type === 'keydown' && ev.ctrlKey && ev.key === 'c' && terminal.hasSelection()) {
         navigator.clipboard.writeText(terminal.getSelection()).catch(function() {});
+        return false;
+      }
+      if (ev.type === 'keydown' && ev.ctrlKey && ev.key === 'v') {
+        navigator.clipboard.readText().then(function(text) {
+          if (text && termWs && termWs.readyState === 1) {
+            termWs.send(JSON.stringify({ type: 'input', data: text }));
+          }
+        }).catch(function() {});
         return false;
       }
       return true;
@@ -3290,19 +3370,13 @@
   async function init() {
     connectWebSocket();
 
-    // Ctrl+V paste image in Command Center
-    document.addEventListener('paste', function(e) {
-      if (state.currentView !== 'chat') return;
-      var items = (e.clipboardData || {}).items;
-      if (!items) return;
-      for (var i = 0; i < items.length; i++) {
-        if (items[i].type.indexOf('image') === 0) {
-          e.preventDefault();
-          pasteImage();
-          return;
-        }
-      }
-    });
+    // Prevent hints-bar buttons from stealing terminal focus
+    var hintsBar = document.querySelector('.terminal-hints-bar');
+    if (hintsBar) {
+      hintsBar.addEventListener('mousedown', function(e) {
+        if (e.target.tagName === 'BUTTON') e.preventDefault();
+      });
+    }
 
     try {
       var sys = await api.get('/api/system/status');
@@ -3753,7 +3827,7 @@
         '<li>Be specific about what you want - the orchestrator delegates to the right agent</li>' +
         '<li>You can reference agents by name</li>' +
         '<li>The orchestrator never does agent work itself - it always delegates via tasks</li>' +
-        '<li>Use Ctrl+C to copy selected text, paste works normally</li>' +
+        '<li>Use <strong>Ctrl+C</strong> to copy selected text, <strong>Ctrl+V</strong> to paste text, <strong>Ctrl+G</strong> to open an editor for multiline input</li>' +
         '</ul>' +
         '<button class="help-go-link" onclick="App.navigate(\'chat\')">Go to Command Center &#8594;</button>'
     },
@@ -4097,6 +4171,9 @@
     deleteKnowledgeDoc: deleteKnowledgeDoc,
     cleanupTemp: cleanupTemp,
     loadTempStatus: loadTempStatus,
+    createBackup: createBackup,
+    restoreBackup: restoreBackup,
+    deleteBackup: deleteBackup,
     openAutopilotForm: openAutopilotForm,
     cancelAutopilotForm: cancelAutopilotForm,
     saveAutopilot: saveAutopilot,

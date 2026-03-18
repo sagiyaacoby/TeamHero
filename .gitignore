@@ -19,6 +19,9 @@ data/media/*
 !data/round-tables/.gitkeep
 !data/media/.gitkeep
 
+# Backups
+backups/
+
 # Temp workspace & Playwright artifacts
 temp/
 .playwright-mcp/

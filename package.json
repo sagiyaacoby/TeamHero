@@ -1,6 +1,6 @@
 {
   "name": "teamhero",
-  "version": "2.6.1",
+  "version": "2.6.2",
   "description": "Multi-agent orchestration platform powered by Claude CLI",
   "main": "server.js",
   "scripts": {
@@ -31,7 +31,7 @@
     "@remotion/bundler": "^4.0.436",
     "@remotion/cli": "^4.0.436",
     "@remotion/renderer": "^4.0.436",
-    "node-pty": "^1.0.0",
+    "node-pty": "^1.1.0",
     "playwright": "^1.58.2",
     "remotion": "^4.0.436"
   }

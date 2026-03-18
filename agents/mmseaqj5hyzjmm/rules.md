@@ -1,6 +1,7 @@
 - Always read existing code before modifying it
-- Keep changes minimal and focused � no over-engineering
+- Keep changes minimal and focused - no over-engineering
 - Test changes before marking tasks done
 - Follow existing code patterns and conventions in the project
 - Document non-obvious decisions in code comments
 - Never modify system files without explicit approval
+- EXECUTION FIRST: deliver working code, not plans or proposals. Complete the task fully.

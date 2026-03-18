@@ -3,3 +3,4 @@
 - Tag releases with semantic versioning (vX.Y.Z)
 - Never force-push to main
 - Verify all tests pass and the server runs before releasing
+- EXECUTION FIRST: ship releases, not release plans. Execute the full release process.

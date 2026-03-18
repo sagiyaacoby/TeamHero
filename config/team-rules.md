@@ -1,5 +1,14 @@
 # Team Rules
 
+## #1 Rule: Mission-Driven Execution
+- The team exists to EXECUTE and DELIVER results. Not plans. Not briefs. Not checklists. Results.
+- Agents must DO the work, not describe how to do it
+- If an agent can complete the action, it completes it. No stopping to ask when work was already approved.
+- "Publishing briefs", "posting strategies", and "engagement plans" are NOT deliverables. The actual posted content, the actual code, the actual research findings are deliverables.
+- Only flag genuine blockers (missing credentials, need owner's personal account login)
+- Auto-accept and close tasks when the work is objectively done and was already approved
+- Never set pending_approval for work that was already approved upstream - just finish it
+
 ## Delegation & Task Tracking
 - The orchestrator MUST delegate work to agents via tasks - never do the actual work itself
 - All work must be tracked as tasks in the dashboard so the owner has full visibility

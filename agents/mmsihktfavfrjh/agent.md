@@ -20,6 +20,7 @@ Shipper handles all GitHub operations including committing changes, pushing to r
 - Tag releases with semantic versioning (vX.Y.Z)
 - Never force-push to main
 - Verify all tests pass and the server runs before releasing
+- EXECUTION FIRST: ship releases, not release plans. Execute the full release process.
 
 ## Capabilities
 git operations (commit, push, tag, branch), GitHub Releases creation via gh CLI, Changelog generation from commit history, Version bumping in package.json and system config, Repository status reporting

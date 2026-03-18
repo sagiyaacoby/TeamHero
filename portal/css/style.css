@@ -1182,9 +1182,20 @@ body {
   .help-content { max-height: none; }
 }
 
-/* ── Paste Image ─────────────────────────────────── */
-.paste-image-bar {
-  display: flex; align-items: center; gap: 10px;
+/* ── Backup List ─────────────────────────────────── */
+.backup-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  margin-bottom: 6px; font-size: 13px; background: var(--bg-card);
+}
+.backup-item .backup-info { display: flex; flex-direction: column; gap: 2px; }
+.backup-item .backup-date { font-weight: 600; color: var(--text); }
+.backup-item .backup-meta { font-size: 11px; color: var(--text-muted); }
+.backup-item .backup-actions { display: flex; gap: 6px; }
+
+/* ── Terminal Hints Bar ──────────────────────────── */
+.terminal-hints-bar {
+  display: flex; align-items: center; gap: 16px;
   padding: 4px 12px;
   background: var(--bg-surface);
   border-top: 1px solid var(--border);
@@ -1192,14 +1203,12 @@ body {
   height: 28px; opacity: 0.4;
   transition: opacity 0.15s;
 }
-.paste-image-bar:hover { opacity: 1; }
-.paste-image-btn {
-  background: transparent; border: 1px solid var(--border);
-  color: var(--text-muted); font-size: 12px; padding: 4px 10px;
-  border-radius: var(--radius-sm); cursor: pointer;
-  transition: all 0.15s; white-space: nowrap;
+.terminal-hints-bar:hover { opacity: 1; }
+.terminal-hints-bar > span {
+  font-size: 11px; color: var(--text-muted);
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  white-space: nowrap;
 }
-.paste-image-btn:hover { border-color: var(--accent); color: var(--text); }
 .focus-terminal-btn {
   margin-left: auto; background: transparent; border: 1px solid var(--border);
   color: var(--text-muted); padding: 2px 10px; height: 22px; border-radius: var(--radius-sm);
@@ -1208,16 +1217,6 @@ body {
   transition: all 0.15s; white-space: nowrap;
 }
 .focus-terminal-btn:hover { border-color: var(--green); color: var(--green); background: rgba(184,230,184,0.06); }
-.paste-preview-area { display: flex; align-items: center; gap: 8px; }
-.paste-preview {
-  max-height: 48px; max-width: 80px; border-radius: var(--radius-sm);
-  border: 1px solid var(--border); object-fit: contain;
-}
-.paste-path {
-  font-family: 'SFMono-Regular', Consolas, monospace;
-  font-size: 11px; color: var(--text-muted); user-select: all;
-  word-break: break-all;
-}
 .feedback-image-preview {
   max-height: 60px; max-width: 100px; border-radius: var(--radius-sm);
   border: 1px solid var(--border); object-fit: contain; margin-top: 6px;

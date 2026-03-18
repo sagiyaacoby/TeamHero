@@ -135,6 +135,31 @@ function writeJSON(fp, d) { fs.mkdirSync(path.dirname(fp), { recursive: true });
 function readText(fp) { try { return fs.readFileSync(fp, 'utf8'); } catch(e) { return null; } }
 function writeText(fp, c) { fs.mkdirSync(path.dirname(fp), { recursive: true }); fs.writeFileSync(fp, c); }
 
+function copyDir(src, dest) {
+  if (!fs.existsSync(src)) return;
+  fs.mkdirSync(dest, { recursive: true });
+  var entries = fs.readdirSync(src, { withFileTypes: true });
+  for (var i = 0; i < entries.length; i++) {
+    var s = path.join(src, entries[i].name);
+    var d = path.join(dest, entries[i].name);
+    if (entries[i].isDirectory()) copyDir(s, d);
+    else fs.copyFileSync(s, d);
+  }
+}
+
+function dirSize(dir) {
+  var total = 0;
+  try {
+    var entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (var i = 0; i < entries.length; i++) {
+      var fp = path.join(dir, entries[i].name);
+      if (entries[i].isDirectory()) total += dirSize(fp);
+      else try { total += fs.statSync(fp).size; } catch(e) {}
+    }
+  } catch(e) {}
+  return total;
+}
+
 function parseBody(req) {
   return new Promise(function(resolve, reject) {
     let body = '';
@@ -1480,6 +1505,106 @@ async function handle(pn, m, req, res) {
     rmDir(tempDir);
     fs.mkdirSync(tempDir, { recursive: true });
     return J(res, { ok: true, message: 'Temp folder cleaned' });
+  }
+
+  // ── BACKUP / RESTORE ────────────────────────────────
+  var backupsDir = path.join(ROOT, 'backups');
+
+  if (pn === '/api/backup/create' && m === 'POST') {
+    var b = await parseBody(req);
+    var includeMedia = !!(b && b.includeMedia);
+    var ts = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '-').slice(0, 19);
+    var backupId = 'backup-' + ts;
+    var dest = path.join(backupsDir, backupId);
+    fs.mkdirSync(dest, { recursive: true });
+    var folders = ['agents', 'data', 'config', 'profile'];
+    if (!includeMedia) {
+      // copy data/ but skip data/media/
+      for (var fi = 0; fi < folders.length; fi++) {
+        var src = path.join(ROOT, folders[fi]);
+        if (!fs.existsSync(src)) continue;
+        if (folders[fi] === 'data') {
+          // copy data/ contents except media/
+          fs.mkdirSync(path.join(dest, 'data'), { recursive: true });
+          var dataEntries = fs.readdirSync(src, { withFileTypes: true });
+          for (var di = 0; di < dataEntries.length; di++) {
+            if (dataEntries[di].name === 'media') continue;
+            var ds = path.join(src, dataEntries[di].name);
+            var dd = path.join(dest, 'data', dataEntries[di].name);
+            if (dataEntries[di].isDirectory()) copyDir(ds, dd);
+            else fs.copyFileSync(ds, dd);
+          }
+        } else {
+          copyDir(src, path.join(dest, folders[fi]));
+        }
+      }
+    } else {
+      for (var fi = 0; fi < folders.length; fi++) {
+        var src = path.join(ROOT, folders[fi]);
+        if (fs.existsSync(src)) copyDir(src, path.join(dest, folders[fi]));
+      }
+    }
+    var manifest = { timestamp: new Date().toISOString(), version: readJSON(path.join(ROOT, 'config', 'system.json'))?.version || '?', includeMedia: includeMedia, folders: folders };
+    writeJSON(path.join(dest, 'manifest.json'), manifest);
+    var sizeMB = (dirSize(dest) / 1048576).toFixed(2);
+    return J(res, { ok: true, backupId: backupId, timestamp: manifest.timestamp, sizeMB: sizeMB });
+  }
+
+  if (pn === '/api/backup/list' && m === 'GET') {
+    var list = [];
+    try {
+      var dirs = fs.readdirSync(backupsDir, { withFileTypes: true });
+      for (var i = 0; i < dirs.length; i++) {
+        if (!dirs[i].isDirectory()) continue;
+        var man = readJSON(path.join(backupsDir, dirs[i].name, 'manifest.json'));
+        var sizeMB = (dirSize(path.join(backupsDir, dirs[i].name)) / 1048576).toFixed(2);
+        list.push({ id: dirs[i].name, manifest: man, sizeMB: sizeMB });
+      }
+    } catch(e) {}
+    list.sort(function(a,b) { return b.id.localeCompare(a.id); });
+    return J(res, { backups: list });
+  }
+
+  if (pn === '/api/backup/restore' && m === 'POST') {
+    var b = await parseBody(req);
+    if (!b || !b.backupId) return E(res, 'backupId required');
+    var id = String(b.backupId).replace(/[^a-zA-Z0-9_-]/g, '');
+    var src = path.join(backupsDir, id);
+    if (!fs.existsSync(src) || !fs.existsSync(path.join(src, 'manifest.json'))) return E(res, 'Backup not found', 404);
+    var man = readJSON(path.join(src, 'manifest.json'));
+    var folders = man && man.folders ? man.folders : ['agents', 'data', 'config', 'profile'];
+    for (var fi = 0; fi < folders.length; fi++) {
+      var backupFolder = path.join(src, folders[fi]);
+      if (!fs.existsSync(backupFolder)) continue;
+      var target = path.join(ROOT, folders[fi]);
+      copyDir(backupFolder, target);
+    }
+    // Rebuild CLAUDE.md and notify clients
+    try { rebuildClaudeMd(); } catch(e) {}
+    broadcast({ type: 'refresh', scope: 'all' });
+    return J(res, { ok: true, message: 'Backup restored: ' + id });
+  }
+
+  if (pn === '/api/backup/delete' && m === 'POST') {
+    var b = await parseBody(req);
+    if (!b || !b.backupId) return E(res, 'backupId required');
+    var id = String(b.backupId).replace(/[^a-zA-Z0-9_-]/g, '');
+    var target = path.join(backupsDir, id);
+    if (!fs.existsSync(target)) return E(res, 'Backup not found', 404);
+    // Recursive delete
+    function rmDirRecursive(dir) {
+      try {
+        var entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (var i = 0; i < entries.length; i++) {
+          var fp = path.join(dir, entries[i].name);
+          if (entries[i].isDirectory()) { rmDirRecursive(fp); try { fs.rmdirSync(fp); } catch(e) {} }
+          else { try { fs.unlinkSync(fp); } catch(e) {} }
+        }
+        fs.rmdirSync(dir);
+      } catch(e) {}
+    }
+    rmDirRecursive(target);
+    return J(res, { ok: true, message: 'Backup deleted' });
   }
 
   // UPLOAD IMAGE (clipboard paste)

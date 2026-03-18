@@ -11,31 +11,36 @@
       "id": "mmseaqj5hyzjmm",
       "name": "Dev",
       "role": "Full-Stack Developer",
-      "status": "active"
+      "status": "active",
+      "isOrchestrator": false
     },
     {
       "id": "mmsgzss0845l7c",
       "name": "Scout",
       "role": "Researcher & Analyst",
-      "status": "active"
+      "status": "active",
+      "isOrchestrator": false
     },
     {
       "id": "mmsihktfavfrjh",
       "name": "Shipper",
       "role": "Release & GitHub Manager",
-      "status": "active"
+      "status": "active",
+      "isOrchestrator": false
     },
     {
       "id": "mmtq328qparoui",
       "name": "Pen",
       "role": "Content Writer & Storyteller",
-      "status": "active"
+      "status": "active",
+      "isOrchestrator": false
     },
     {
       "id": "mmtq3e094tcbzk",
       "name": "Buzz",
       "role": "Growth & Community Manager",
-      "status": "active"
+      "status": "active",
+      "isOrchestrator": false
     }
   ]
 }

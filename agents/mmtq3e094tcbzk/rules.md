@@ -1,8 +1,3 @@
-- Research and identify the highest-impact communities for each piece of content
-- Monitor Reddit, HN, Twitter, LinkedIn, Dev.to, and Discord for mentions and feedback
-- Collect and categorize all user feedback
-- Track star growth and correlate with promotion activities
-- Never spam communities - provide genuine value in every post
-- Respect each community culture and rules
-- Prioritize channels by ROI: effort vs star/adoption impact
-- EXECUTION FIRST: post content and log the URL. If credentials exist, use them. If not, flag blocker immediately. Publishing briefs are not deliverables.
+- Read both short-memory.md and long-memory.md before starting any task
+- Update short-memory.md before finishing any task phase using the structured format
+- Add reusable lessons to long-memory.md after task completion

@@ -248,3 +248,140 @@ Round tables are **execution-first**. The orchestrator acts before it reports. N
 - Work is properly delegated, not silently done by the orchestrator
 - When a task is `accepted`, launch the agent to execute - do NOT auto-close
 - If a task has a `blocker` field, report the blocker text and flag it to the owner
+
+## Agent Memory System
+
+Every agent has two memory files: `short-memory.md` (working state) and `long-memory.md` (persistent knowledge). Both are visible in the dashboard Memory tab.
+
+### Short Memory Template
+
+```markdown
+# {Agent Name} - Short Memory
+Last updated: {date}
+
+## Active Tasks
+- **{taskId}** - {title} | {status}
+  - Current state: {one-line}
+  - Next action: {what happens next}
+
+## Recent Completions (last 7 days)
+- **{taskId}** - {title} | Closed {date}
+  - Outcome: {URL, file path, or one-line result}
+
+## Working Context
+- {Cross-task knowledge the agent needs right now}
+
+## Blockers
+- {taskId}: {blocker text}
+```
+
+### Long Memory Template
+
+```markdown
+# {Agent Name} - Long Memory
+
+## Tools & Access
+### Authenticated Platforms
+- {Platform}: {access method, account, session status}
+
+### Available Credentials
+- {SERVICE}_USERNAME / _PASSWORD available as env vars
+
+### Skills & Tools
+- {Skill}: {status, how to use, quirks}
+
+### Platform Constraints
+- {Platform-specific limitations discovered during execution}
+
+## Domain Knowledge
+- {Learned facts, patterns, platform behaviors}
+
+## Owner Preferences
+- {Patterns from revision feedback}
+
+## Lessons Learned
+- {date}: {What happened, what to do differently}
+
+## Completed Work Log
+### {Month Year}
+- {taskId} - {title} - {one-line outcome}
+```
+
+### Orchestrator Short Memory Template
+
+```markdown
+# Hero - Team State
+Last updated: {date}
+
+## Team Status
+- {Agent}: {available | working on taskId - title}
+
+## Pending Owner Decisions
+- {taskId} - {title} - awaiting {what}
+
+## Active Blockers
+- {taskId} ({agent}): {blocker text}
+
+## Last Round Table
+- {date}: {2-3 line summary}
+```
+
+### Orchestrator Long Memory Template
+
+```markdown
+# Hero - Team Knowledge
+
+## Tools & Access (Team-Wide)
+### Credentials Vault
+- {Service}: {status}
+
+### Browser Sessions
+- {Browser/account}: {status, shared with, constraints}
+
+### Platform Status
+- {Platform}: {current access status and constraints}
+
+## Team Patterns
+- {Observations about agent effectiveness}
+
+## Campaign History
+### {Campaign Name}
+- Period: {dates} | Agents: {list} | Outcome: {summary}
+
+## Process Improvements
+- {date}: {What was changed and why}
+```
+
+### Memory Update Rules
+
+| Event | Short Memory | Long Memory |
+|-------|-------------|-------------|
+| Task started | Add to Active Tasks | - |
+| Task submitted (pending_approval) | Update status | - |
+| Task closed | Move to Recent Completions | Add to Work Log |
+| Revision feedback | Update task notes | Add to Owner Preferences if pattern |
+| Blocker set | Add to Blockers | - |
+| Blocker cleared | Remove from Blockers | Add to Platform Constraints if access issue |
+| Auth discovered | - | Add to Tools & Access |
+| Auth failed | - | Add to Tools & Access |
+| New skill/tool used | - | Add to Skills & Tools |
+| Round table | Full refresh | Promote aged items, consolidate |
+
+**Mandatory:** Agent reads both memories at launch. Agent updates short memory before finishing any task phase.
+
+### Round Table Phase 4: Memory Maintenance
+
+After Phase 3 (Report), the orchestrator:
+1. For each agent with completed tasks: prune short memory, promote outcomes to long memory
+2. For agents with revision feedback: extract patterns to long memory
+3. Update orchestrator's own short memory with current team state
+4. Validate Active Tasks in short memories match actual API task states
+
+Orchestrator does this directly via curl/API calls, not delegated to subagents.
+
+### Memory Hygiene
+
+- Short memory: max ~2000 chars. Prune oldest Recent Completions first.
+- Long memory: max ~5000 chars. Consolidate Work Log into monthly summaries.
+- Entries >14 days old in short memory are stale - review during round table.
+- Never store full task content, raw API data, or debug info in memory.

@@ -15,12 +15,9 @@
     "style": "checklist-driven, confirms before irreversible actions"
   },
   "rules": [
-    "Always confirm with the owner before pushing to remote or creating a release",
-    "Include a changelog summary in every release",
-    "Tag releases with semantic versioning (vX.Y.Z)",
-    "Never force-push to main",
-    "Verify all tests pass and the server runs before releasing",
-    "EXECUTION FIRST: ship releases, not release plans. Execute the full release process."
+    "Read both short-memory.md and long-memory.md before starting any task",
+    "Update short-memory.md before finishing any task phase using the structured format",
+    "Add reusable lessons to long-memory.md after task completion"
   ],
   "capabilities": [
     "git operations (commit, push, tag, branch)",

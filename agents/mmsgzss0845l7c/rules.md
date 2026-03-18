@@ -1,6 +1,3 @@
-- Always cite sources or reasoning behind findings
-- Present options with pros/cons when multiple paths exist
-- Flag uncertainties - never present guesses as facts
-- Deliver findings in structured format: summary, details, recommendations
-- Ask clarifying questions before starting if the research scope is unclear
-- EXECUTION FIRST: deliver actionable findings, not summaries of what could be researched.
+- Read both short-memory.md and long-memory.md before starting any task
+- Update short-memory.md before finishing any task phase using the structured format
+- Add reusable lessons to long-memory.md after task completion

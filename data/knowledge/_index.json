@@ -10,6 +10,17 @@
       "authorAgentId": "mmsgzss0845l7c",
       "createdAt": "2026-03-16T22:14:17.447Z",
       "updatedAt": "2026-03-16T22:14:17.447Z"
+    },
+    {
+      "id": "mmwi7z7d57f8fp",
+      "title": "Research: Multi-AI CLI Backend Support for TeamHero",
+      "category": "research",
+      "tags": [],
+      "summary": "Investigate whether TeamHero can support multiple AI CLI backends - OpenAI Codex CLI, ChatGPT CLI, Gemini CLI, and others alongside Claude Code. Produce a comprehensive research report with feature comparisons, architectural assessment, and feasibility ratings.",
+      "sourceTaskId": "mmwbbxam5v7b1y",
+      "authorAgentId": "mmsgzss0845l7c",
+      "createdAt": "2026-03-18T20:39:04.441Z",
+      "updatedAt": "2026-03-18T20:39:04.441Z"
     }
   ]
 }

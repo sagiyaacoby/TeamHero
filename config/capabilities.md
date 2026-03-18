@@ -33,6 +33,14 @@ Current features available to the orchestrator and agents.
 - Social images stored in `data/media/social-images/`.
 - Remotion video skill available for programmatic video creation (`remotion/` folder).
 
+## Agent Memory System
+- **Short memory** (`agents/{id}/short-memory.md`): Working state - active tasks, recent completions, blockers. Max ~2000 chars. Refreshed every round table.
+- **Long memory** (`agents/{id}/long-memory.md`): Persistent knowledge - platform access, credentials, lessons learned, owner preferences, work log. Max ~5000 chars.
+- Both memories visible in dashboard Agent > Memory tab.
+- Agents read both memories at launch, update short memory before finishing any task phase.
+- Round tables include Phase 4: Memory Maintenance (prune short, promote to long, validate state).
+- Memory API: `GET /api/agents/{id}/memory/short` or `/long`, `PUT /api/agents/{id}/memory/short` or `/long` with `{"content":"..."}`.
+
 ## Skills System
 - Skills are optional integrations (Trello, Remotion, etc.) managed via Settings > Skills.
 - Each skill can have required secrets/config. Install/uninstall via dashboard.

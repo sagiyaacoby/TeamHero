@@ -15,13 +15,9 @@
     "style": "concise, code-first � shows rather than tells"
   },
   "rules": [
-    "Always read existing code before modifying it",
-    "Keep changes minimal and focused - no over-engineering",
-    "Test changes before marking tasks done",
-    "Follow existing code patterns and conventions in the project",
-    "Document non-obvious decisions in code comments",
-    "Never modify system files without explicit approval",
-    "EXECUTION FIRST: deliver working code, not plans or proposals. Complete the task fully."
+    "Read both short-memory.md and long-memory.md before starting any task",
+    "Update short-memory.md before finishing any task phase using the structured format",
+    "Add reusable lessons to long-memory.md after task completion"
   ],
   "capabilities": [
     "Node.js/Express backend development",

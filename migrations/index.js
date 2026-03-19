@@ -7,5 +7,5 @@ module.exports = [
   { version: '2.6.0', name: 'add-autopilot-memory', run: require('./2.6.0-add-autopilot-memory') },
   { version: '2.6.2', name: 'add-tags-timestamps', run: require('./2.6.2-add-tags-timestamps') },
   { version: '2.6.4', name: 'structured-agent-memory', run: require('./2.6.4-structured-agent-memory') },
-  { version: '2.7.0', name: 'draft-to-planning', run: require('./2.7.0-draft-to-planning') },
+  { version: '2.7.0', name: 'normalize-statuses', run: require('./2.7.0-normalize-statuses') },
 ];

@@ -1,8 +1,25 @@
-// Migration: 2.7.0 - Convert draft status to planning
-// Non-destructive: only changes status values from "draft" to "planning"
+// Migration: 2.7.0 - Normalize deprecated statuses
+// Non-destructive: only changes status values
+// Mappings: draft -> planning, done -> closed, on_hold -> hold
 
 module.exports = function(ctx) {
   var changed = 0;
+
+  var STATUS_MAP = {
+    'draft': 'planning',
+    'done': 'closed',
+    'on_hold': 'hold'
+  };
+
+  function migrateStatus(obj) {
+    if (obj && obj.status && STATUS_MAP[obj.status]) {
+      var oldStatus = obj.status;
+      obj.status = STATUS_MAP[oldStatus];
+      changed++;
+      return true;
+    }
+    return false;
+  }
 
   // 1. Update _index.json
   var indexPath = ctx.path.join(ctx.ROOT, 'data/tasks/_index.json');
@@ -11,10 +28,8 @@ module.exports = function(ctx) {
     if (index && index.tasks) {
       var indexChanged = false;
       index.tasks.forEach(function(t) {
-        if (t.status === 'draft') {
-          t.status = 'planning';
+        if (migrateStatus(t)) {
           indexChanged = true;
-          changed++;
         }
       });
       if (indexChanged) {
@@ -23,7 +38,7 @@ module.exports = function(ctx) {
     }
   }
 
-  // 2. Scan each task.json
+  // 2. Scan each task.json and version folders
   var tasksDir = ctx.path.join(ctx.ROOT, 'data/tasks');
   if (ctx.fs.existsSync(tasksDir)) {
     var entries = ctx.fs.readdirSync(tasksDir);
@@ -32,10 +47,8 @@ module.exports = function(ctx) {
       var taskJsonPath = ctx.path.join(tasksDir, entry, 'task.json');
       if (ctx.fs.existsSync(taskJsonPath)) {
         var task = ctx.readJSON(taskJsonPath);
-        if (task && task.status === 'draft') {
-          task.status = 'planning';
+        if (migrateStatus(task)) {
           ctx.writeJSON(taskJsonPath, task);
-          changed++;
         }
 
         // 3. Scan version folders (v1, v2, etc.)
@@ -46,10 +59,8 @@ module.exports = function(ctx) {
             var versionJsonPath = ctx.path.join(taskDir, sub, 'version.json');
             if (ctx.fs.existsSync(versionJsonPath)) {
               var version = ctx.readJSON(versionJsonPath);
-              if (version && version.status === 'draft') {
-                version.status = 'planning';
+              if (migrateStatus(version)) {
                 ctx.writeJSON(versionJsonPath, version);
-                changed++;
               }
             }
           }
@@ -58,5 +69,5 @@ module.exports = function(ctx) {
     });
   }
 
-  ctx.log('  Migration 2.7.0: converted draft -> planning in ' + changed + ' records');
+  ctx.log('  Migration 2.7.0: normalized statuses (draft->planning, done->closed, on_hold->hold) in ' + changed + ' records');
 };

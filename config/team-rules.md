@@ -23,6 +23,8 @@
 - Never explore the codebase for planning purposes - delegate that as a research task to Scout
 - Never read files to understand architecture - that's Scout's job, create a research task
 - Never touch portal/ or server.js directly - that's Dev's job
+- Never execute shell commands for real work (git operations, file copies, release management, GitHub operations) - always delegate to the appropriate agent
+- Even quick one-off operations like deleting a GitHub release must go through Shipper, not be done by the orchestrator directly
 
 ### What the orchestrator MUST do
 - Create a task BEFORE any work begins - even small things

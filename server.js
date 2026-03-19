@@ -5,6 +5,104 @@ const crypto = require('crypto');
 const { spawn, execSync } = require('child_process');
 const net = require('net');
 
+// ── Bootstrap Self-Heal ──────────────────────────────────
+// If lib/ is missing (old upgrade code didn't extract it),
+// re-download from the release tarball for the current version.
+(function bootstrapSelfHeal() {
+  var libDir = path.join(__dirname, 'lib');
+  if (fs.existsSync(libDir)) return; // lib/ exists, nothing to do
+
+  console.log('  Bootstrap: lib/ directory missing - attempting self-heal...');
+  try {
+    var pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+    var version = pkg.version || '0.0.0';
+    var repo = 'sagiyaacoby/TeamHero';
+    var url = 'https://api.github.com/repos/' + repo + '/tarball/v' + version;
+
+    console.log('  Bootstrap: Downloading v' + version + ' tarball...');
+
+    // Write a temporary download script and run it synchronously
+    var tmpScript = path.join(__dirname, '_bootstrap_tmp.js');
+    var scriptContent = [
+      'var https = require("https");',
+      'var zlib = require("zlib");',
+      'var fs = require("fs");',
+      'var path = require("path");',
+      'var root = process.argv[2];',
+      'var url = process.argv[3];',
+      '',
+      'function download(url, cb) {',
+      '  https.get(url, { headers: { "User-Agent": "TeamHero-Bootstrap" } }, function(res) {',
+      '    if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {',
+      '      return download(res.headers.location, cb);',
+      '    }',
+      '    if (res.statusCode !== 200) return cb(new Error("HTTP " + res.statusCode));',
+      '    var chunks = [];',
+      '    res.on("data", function(c) { chunks.push(c); });',
+      '    res.on("end", function() { cb(null, Buffer.concat(chunks)); });',
+      '  }).on("error", cb);',
+      '}',
+      '',
+      'download(url, function(err, gzData) {',
+      '  if (err) { console.error("Download failed: " + err.message); process.exit(1); }',
+      '  var tarData = zlib.gunzipSync(gzData);',
+      '  var offset = 0, stripPrefix = "", extracted = 0;',
+      '  var extractDirs = ["lib/", "migrations/"];',
+      '  while (offset < tarData.length) {',
+      '    var header = tarData.slice(offset, offset + 512);',
+      '    if (header.length < 512 || header[0] === 0) break;',
+      '    var fileName = header.slice(0, 100).toString("utf8").replace(/\\0/g, "");',
+      '    var prefix = header.slice(345, 500).toString("utf8").replace(/\\0/g, "");',
+      '    if (prefix) fileName = prefix + "/" + fileName;',
+      '    var sizeOctal = header.slice(124, 136).toString("utf8").replace(/\\0/g, "").trim();',
+      '    var fileSize = parseInt(sizeOctal, 8) || 0;',
+      '    var typeFlag = header[156];',
+      '    offset += 512;',
+      '    if (!stripPrefix && fileName.indexOf("/") > 0) {',
+      '      stripPrefix = fileName.slice(0, fileName.indexOf("/") + 1);',
+      '    }',
+      '    var relPath = fileName;',
+      '    if (stripPrefix && relPath.startsWith(stripPrefix)) {',
+      '      relPath = relPath.slice(stripPrefix.length);',
+      '    }',
+      '    if (relPath && fileSize > 0 && typeFlag === 48) {',
+      '      var shouldExtract = extractDirs.some(function(d) { return relPath.startsWith(d); });',
+      '      if (shouldExtract) {',
+      '        var fileData = tarData.slice(offset, offset + fileSize);',
+      '        var destPath = path.join(root, relPath);',
+      '        fs.mkdirSync(path.dirname(destPath), { recursive: true });',
+      '        fs.writeFileSync(destPath, fileData);',
+      '        extracted++;',
+      '      }',
+      '    }',
+      '    offset += Math.ceil(fileSize / 512) * 512;',
+      '  }',
+      '  console.log("  Bootstrap: Extracted " + extracted + " files");',
+      '});',
+    ].join('\n');
+
+    fs.writeFileSync(tmpScript, scriptContent);
+    try {
+      execSync('node "' + tmpScript + '" "' + __dirname + '" "' + url + '"', {
+        stdio: 'inherit',
+        timeout: 60000,
+      });
+    } finally {
+      // Clean up temp script
+      try { fs.unlinkSync(tmpScript); } catch(e2) {}
+    }
+
+    if (!fs.existsSync(libDir)) {
+      throw new Error('lib/ still missing after extraction');
+    }
+    console.log('  Bootstrap: Self-heal complete.');
+  } catch(e) {
+    console.error('  Bootstrap: Self-heal failed: ' + e.message);
+    console.error('  Please manually download the latest release from https://github.com/sagiyaacoby/TeamHero/releases');
+    process.exit(1);
+  }
+})();
+
 // ── Extracted Modules ────────────────────────────────────
 const { parseWsFrame, buildWsFrame, wsSend } = require('./lib/websocket');
 const { commandExists } = require('./lib/skills');

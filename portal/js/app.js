@@ -14,7 +14,7 @@
     previousAgentId: null,
     currentTaskId: null,
     mediaFilter: 'all',
-    dashboardTaskFilter: 'pending_approval',
+    dashboardTaskFilter: 'all',
     agentTaskFilter: 'all',
     cachedDashboardTasks: [],
     cachedAgentTasks: [],
@@ -26,6 +26,8 @@
     agentSort: JSON.parse(localStorage.getItem('agentSort') || '{"new":true,"priority":false}'),
     dashboardAgentFilter: null,
     agentAgentFilter: null,
+    tagsVisible: localStorage.getItem('tagsVisible') !== 'false',
+    tagFilterExpanded: false,
   };
 
   var PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
@@ -145,6 +147,7 @@
 
   function _buildHash(viewId, agentId) {
     if (viewId === 'agent-detail' && agentId) return '#agent/' + agentId;
+    if (viewId === 'agent-files' && agentId) return '#agent-files/' + agentId;
     if (viewId === 'task-detail' && state.currentTaskId) return '#task/' + state.currentTaskId;
     if (viewId === 'knowledge-detail' && state._currentKnowledgeId) return '#knowledge/' + state._currentKnowledgeId;
     if (viewId === 'add-agent') return '#add-agent';
@@ -161,6 +164,12 @@
       document.getElementById('view-agent-detail').classList.add('active');
       loadAgentDetail(agentId);
       var navEl = document.querySelector('[data-agent-id="' + agentId + '"]');
+      if (navEl) navEl.classList.add('active');
+    } else if (viewId === 'agent-files' && agentId) {
+      state.currentAgentId = agentId;
+      document.getElementById('view-agent-files').classList.add('active');
+      loadAgentFilesPage(agentId);
+      var navEl = document.querySelector('.nav-link[data-agent-id="' + agentId + '"]');
       if (navEl) navEl.classList.add('active');
     } else if (viewId === 'task-detail') {
       document.getElementById('view-task-detail').classList.add('active');
@@ -205,18 +214,44 @@
     if (!_skipHashUpdate) {
       var newHash = _buildHash(viewId, agentId);
       if (location.hash !== newHash) {
+        _lastNavigatedHash = newHash;
         location.hash = newHash;
       }
     }
   }
 
   document.addEventListener('click', function(e) {
+    // Handle sidebar agent arrow click
+    var arrow = e.target.closest('.nav-agent-arrow');
+    if (arrow) {
+      e.preventDefault();
+      e.stopPropagation();
+      var agentId = arrow.dataset.agentId;
+      if (!state.expandedAgents) state.expandedAgents = {};
+      state.expandedAgents[agentId] = !state.expandedAgents[agentId];
+      arrow.classList.toggle('expanded');
+      var sub = document.querySelector('[data-agent-sub="' + agentId + '"]');
+      if (sub) sub.classList.toggle('hidden');
+      // Lazy-load file count on first expand
+      if (state.expandedAgents[agentId] && (!state.agentFileCounts || state.agentFileCounts[agentId] == null)) {
+        if (!state.agentFileCounts) state.agentFileCounts = {};
+        api.get('/api/agents/' + agentId + '/files').then(function(data) {
+          state.agentFileCounts[agentId] = data.totalFiles || 0;
+          var badge = sub && sub.querySelector('.nav-badge-sm');
+          if (badge) badge.textContent = state.agentFileCounts[agentId];
+        }).catch(function() {});
+      }
+      return;
+    }
+
     var link = e.target.closest('.nav-link');
     if (!link) return;
     e.preventDefault();
     var view = link.dataset.view;
     var agentId = link.dataset.agentId;
-    if (agentId) {
+    if (view === 'agent-files' && agentId) {
+      navigate('agent-files', agentId);
+    } else if (agentId) {
       navigate('agent-detail', agentId);
     } else if (view) {
       navigate(view);
@@ -235,6 +270,8 @@
 
     if (view === 'agent' && id) {
       navigate('agent-detail', id);
+    } else if (view === 'agent-files' && id) {
+      navigate('agent-files', id);
     } else if (view === 'task' && id) {
       openTask(id);
     } else if (view === 'knowledge' && id) {
@@ -250,7 +287,10 @@
     }
   }
 
+  var _lastNavigatedHash = '';
   window.addEventListener('hashchange', function() {
+    // Skip if this hashchange was triggered by our own navigate() call
+    if (location.hash === _lastNavigatedHash) return;
     _skipHashUpdate = true;
     _navigateFromHash();
     _skipHashUpdate = false;
@@ -301,12 +341,14 @@
     };
   }
 
-  // ── Live Refresh Handler (debounced) ────────────────
+  // ── Live Refresh Handler (throttled) ─────────────────
   var refreshTimer = null;
   var pendingRefreshScope = null;
+  var lastRefreshTime = 0;
+  var REFRESH_INTERVAL = 2000; // minimum ms between full view refreshes
 
   function handleRefresh(scope) {
-    // Merge scopes — 'all' wins, otherwise accumulate as set
+    // Merge scopes - 'all' wins, otherwise accumulate as set
     if (pendingRefreshScope === 'all' || scope === 'all') {
       pendingRefreshScope = 'all';
     } else if (!pendingRefreshScope) {
@@ -318,29 +360,33 @@
     if (scope === 'tasks' || scope === 'all') {
       loadSidebarAgents();
     }
-    // Debounce: wait 3 seconds before full view refresh
-    if (refreshTimer) clearTimeout(refreshTimer);
+    // Throttle: fire at most once per REFRESH_INTERVAL, but always fire eventually
+    if (refreshTimer) return; // already scheduled
+    var elapsed = Date.now() - lastRefreshTime;
+    var delay = Math.max(0, REFRESH_INTERVAL - elapsed);
     refreshTimer = setTimeout(function() {
+      lastRefreshTime = Date.now();
       doRefresh(pendingRefreshScope || 'all');
       pendingRefreshScope = null;
       refreshTimer = null;
-    }, 3000);
+    }, delay);
   }
 
   function doRefresh(scope) {
-    // Skip refresh if user is on the Command Center — don't disrupt terminal
+    // Always update sidebar (agents, pending badge, working indicators)
+    loadSidebarAgents();
+    // Skip full view refresh if user is on the Command Center - don't disrupt terminal
     if (state.currentView === 'chat') {
-      loadSidebarAgents();
       if (terminal) terminal.focus();
       return;
     }
-    loadSidebarAgents();
     var v = state.currentView;
     if (scope === 'all' || scope === 'agents' || scope === 'tasks') {
       if (v === 'dashboard') loadDashboard();
+      if (v === 'agent-detail' && state.currentAgentId) loadAgentDetail(state.currentAgentId);
+      if (v === 'task-detail' && state.currentTaskId) openTask(state.currentTaskId);
     }
     if (scope === 'all' || scope === 'agents') {
-      if (v === 'agent-detail' && state.currentAgentId) loadAgentDetail(state.currentAgentId);
       if (v === 'settings') loadSettings();
     }
     if (scope === 'all' || scope === 'profile') {
@@ -350,17 +396,21 @@
       if (v === 'rules') loadRulesEditor();
     }
     if (scope === 'all' || scope === 'secrets') {
-      if (v === 'settings') { loadSecretsStatus(); loadCredentialsStatus(); }
+      if (v === 'settings') { loadSecretsStatus(); loadCredentialsStatus(); renderVaultStatusBar('vault-status-bar-secrets'); renderVaultStatusBar('vault-status-bar-passwords'); }
     }
     if (scope === 'all' || scope === 'skills') {
       if (v === 'skills') loadSkills();
     }
     if (scope === 'all' || scope === 'knowledge') {
       if (v === 'knowledge') loadKnowledge();
+      if (v === 'knowledge-detail' && state._currentKnowledgeId) openKnowledgeDoc(state._currentKnowledgeId);
     }
     if (scope === 'all' || scope === 'autopilot') {
       if (v === 'settings') loadAutopilot();
       if (v === 'autopilot') loadAutopilotPage();
+    }
+    if (scope === 'all') {
+      if (v === 'media') loadMedia();
     }
   }
 
@@ -409,15 +459,26 @@
     });
 
     subAgents.forEach(function(a) {
-      var isActive = state.currentView === 'agent-detail' && state.currentAgentId === a.id;
+      var isActive = (state.currentView === 'agent-detail' || state.currentView === 'agent-files') && state.currentAgentId === a.id;
       var dotClass = 'agent-dot' + (workingAgents[a.id] ? ' agent-dot-working' : '');
       var dotTitle = workingAgents[a.id] ? 'Working on task' : 'Idle';
       var nameHtml = escHtml(a.name);
       if (a.role || a.mission) {
         nameHtml = '<span data-tooltip="' + escHtml((a.role || '') + (a.role && a.mission ? '\n' : '') + (a.mission || '')) + '">' + escHtml(a.name) + '</span>';
       }
-      html += '<a href="#" data-agent-id="' + a.id + '" class="nav-link' + (isActive ? ' active' : '') + '">' +
+      var isExpanded = state.expandedAgents && state.expandedAgents[a.id];
+      html += '<div class="nav-agent-group">';
+      html += '<div class="nav-agent-row">';
+      html += '<span class="nav-agent-arrow' + (isExpanded ? ' expanded' : '') + '" data-agent-id="' + a.id + '" title="Show files">&#9654;</span>';
+      html += '<a href="#" data-agent-id="' + a.id + '" class="nav-link' + (isActive ? ' active' : '') + '" style="flex:1">' +
         '<span class="icon">&#9670;</span> ' + nameHtml + '<span class="' + dotClass + '" title="' + dotTitle + '"></span></a>';
+      html += '</div>';
+      var countText = state.agentFileCounts && state.agentFileCounts[a.id] != null ? state.agentFileCounts[a.id] : '-';
+      html += '<div class="nav-agent-sub' + (isExpanded ? '' : ' hidden') + '" data-agent-sub="' + a.id + '">';
+      html += '<a href="#" data-view="agent-files" data-agent-id="' + a.id + '" class="nav-link nav-sub-link">' +
+        '<span class="icon">&#128193;</span> Files <span class="nav-badge-sm">' + countText + '</span></a>';
+      html += '</div>';
+      html += '</div>';
     });
 
     container.innerHTML = html;
@@ -584,8 +645,8 @@
     var af = state.agentTaskFilter;
     var total = tasks.filter(function(t) { return t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled' && t.status !== 'hold'; }).length;
     summaryEl.innerHTML =
-      '<span class="badge badge-pending_approval clickable-badge' + (af === 'pending_approval' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'pending_approval\',\'agent\')">' + pending + ' Pending</span> ' +
       '<span class="badge badge-all clickable-badge' + (af === 'all' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'all\',\'agent\')">' + total + ' Active</span> ' +
+      '<span class="badge badge-pending_approval clickable-badge' + (af === 'pending_approval' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'pending_approval\',\'agent\')">' + pending + ' Pending</span> ' +
       '<span class="badge badge-in_progress clickable-badge' + (af === 'in_progress' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'in_progress\',\'agent\')">' + working + ' Working</span> ' +
       '<span class="badge badge-accepted clickable-badge' + (af === 'accepted' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'accepted\',\'agent\')">' + accepted + ' Accepted</span> ' +
       '<span class="badge badge-hold clickable-badge' + (af === 'hold' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'hold\',\'agent\')">' + hold + ' Hold</span> ' +
@@ -620,13 +681,21 @@
       filtered = filtered.filter(function(t) { return t.assignedTo === agentFilter; });
     }
 
-    // Apply tag filters
+    // Apply tag filters (subtask-aware: if a subtask matches, include the parent)
     var tagFilters = context === 'dashboard' ? state.dashboardTagFilters : state.agentTagFilters;
     if (tagFilters && tagFilters.length > 0) {
+      var allTasksForTags = context === 'dashboard' ? state.cachedDashboardTasks : state.cachedAgentTasks;
       filtered = filtered.filter(function(t) {
-        if (!t.tags || t.tags.length === 0) return false;
-        return tagFilters.every(function(tf) {
+        var taskMatches = t.tags && t.tags.length > 0 && tagFilters.every(function(tf) {
           return t.tags.some(function(tag) { return tag.toLowerCase() === tf.toLowerCase(); });
+        });
+        if (taskMatches) return true;
+        // Check if any subtask matches the tag filter
+        var subs = allTasksForTags.filter(function(s) { return s.parentTaskId === t.id; });
+        return subs.some(function(sub) {
+          return sub.tags && sub.tags.length > 0 && tagFilters.every(function(tf) {
+            return sub.tags.some(function(tag) { return tag.toLowerCase() === tf.toLowerCase(); });
+          });
         });
       });
     }
@@ -989,6 +1058,11 @@
       html += '<span class="hierarchy-toggle">&bull;</span>';
     }
     html += '<span class="hierarchy-title">' + escHtml(task.title) + '</span>';
+    if (state.tagsVisible && task.tags && task.tags.length > 0) {
+      var treeTags = task.tags.slice(0, 2).map(function(tag) { return renderTagPill(tag); }).join('');
+      if (task.tags.length > 2) treeTags += '<span class="task-tag-overflow">+' + (task.tags.length - 2) + '</span>';
+      html += treeTags;
+    }
     html += '</div>';
     html += '<div class="hierarchy-meta">';
     html += depBadge + blockerBadge;
@@ -1068,8 +1142,9 @@
     var statusLabel = STATUS_LABELS[t.status] || (t.status || 'planning').replace(/_/g, ' ');
 
     var tagPills = '';
-    if (t.tags && t.tags.length > 0) {
-      tagPills = t.tags.map(function(tag) { return renderTagPill(tag); }).join('');
+    if (state.tagsVisible && t.tags && t.tags.length > 0) {
+      tagPills = t.tags.slice(0, 2).map(function(tag) { return renderTagPill(tag); }).join('');
+      if (t.tags.length > 2) tagPills += '<span class="task-tag-overflow">+' + (t.tags.length - 2) + '</span>';
     }
     var dueDateHtml = '';
     if (t.dueDate) {
@@ -1322,6 +1397,88 @@
       html += '</div></div>';
     });
     container.innerHTML = html;
+  }
+
+  // ── Agent Files Page ─────────────────────────────
+  async function loadAgentFilesPage(agentId) {
+    var agent = state.agents.find(function(a) { return a.id === agentId; });
+    document.getElementById('agent-files-title').textContent = (agent ? agent.name : 'Agent') + ' - Files';
+    document.getElementById('agent-files-reports').innerHTML = '<p class="empty-state">Loading...</p>';
+    document.getElementById('agent-files-content-list').innerHTML = '<p class="empty-state">Loading...</p>';
+    try {
+      var data = await api.get('/api/agents/' + agentId + '/files');
+      var reportCount = 0;
+      (data.reports || []).forEach(function(g) { reportCount += g.files.length; });
+      var contentCount = 0;
+      (data.content || []).forEach(function(g) { contentCount += g.files.length; });
+      document.getElementById('agent-files-reports-count').textContent = '(' + reportCount + ')';
+      document.getElementById('agent-files-content-count').textContent = '(' + contentCount + ')';
+      renderFilesSection('agent-files-reports', data.reports || []);
+      renderFilesSection('agent-files-content-list', data.content || []);
+      // Restore collapsed state from localStorage
+      restoreFilesSectionState('reports', agentId);
+      restoreFilesSectionState('content', agentId);
+    } catch(e) {
+      document.getElementById('agent-files-reports').innerHTML = '<p class="empty-state">Failed to load files.</p>';
+      document.getElementById('agent-files-content-list').innerHTML = '';
+    }
+  }
+
+  function renderFilesSection(containerId, groups) {
+    var container = document.getElementById(containerId);
+    if (!container) return;
+    if (!groups || groups.length === 0) {
+      container.innerHTML = '<p class="empty-state">No files yet</p>';
+      return;
+    }
+    var html = '';
+    groups.forEach(function(g) {
+      html += '<div class="agent-files-task-group">';
+      html += '<div class="agent-files-task-title" onclick="App.openTask(\'' + g.taskId + '\')">' + escHtml(g.taskTitle) + '</div>';
+      g.files.forEach(function(f) {
+        var safeName = encodeURIComponent(f.name);
+        html += '<div class="agent-files-entry">';
+        if (f.isImage) {
+          html += '<img src="' + f.rawUrl + '" class="agent-files-entry-thumb" alt="' + escHtml(f.name) + '">';
+        }
+        html += '<div class="agent-files-entry-info">';
+        html += '<a href="javascript:void(0)" onclick="App.previewFileInModal(decodeURIComponent(\'' + safeName + '\'),\'' + f.rawUrl + '\',' + f.isImage + ')" class="agent-files-entry-name">' + escHtml(f.name) + '</a>';
+        html += '<div class="agent-files-entry-meta">';
+        html += '<span class="agent-files-entry-task" onclick="App.openTask(\'' + g.taskId + '\')">' + escHtml(g.taskTitle) + '</span>';
+        if (g.createdAt) {
+          html += ' <span class="agent-files-entry-date">' + timeAgo(g.createdAt) + '</span>';
+        }
+        html += '</div></div></div>';
+      });
+      html += '</div>';
+    });
+    container.innerHTML = html;
+  }
+
+  function toggleFilesSection(section) {
+    var agentId = state.currentAgentId;
+    var grid = document.getElementById('agent-files-' + (section === 'content' ? 'content-list' : section));
+    var arrow = document.getElementById('agent-files-' + section + '-arrow');
+    if (!grid) return;
+    var isCollapsed = grid.classList.toggle('collapsed');
+    if (arrow) arrow.classList.toggle('collapsed', isCollapsed);
+    // Persist to localStorage
+    if (agentId) {
+      try { localStorage.setItem('agentFiles_' + agentId + '_' + section + '_collapsed', isCollapsed ? '1' : '0'); } catch(e) {}
+    }
+  }
+
+  function restoreFilesSectionState(section, agentId) {
+    try {
+      var key = 'agentFiles_' + agentId + '_' + section + '_collapsed';
+      var val = localStorage.getItem(key);
+      if (val === '1') {
+        var grid = document.getElementById('agent-files-' + (section === 'content' ? 'content-list' : section));
+        var arrow = document.getElementById('agent-files-' + section + '-arrow');
+        if (grid) grid.classList.add('collapsed');
+        if (arrow) arrow.classList.add('collapsed');
+      }
+    } catch(e) {}
   }
 
   // ── Task Detail ─────────────────────────────────
@@ -1593,8 +1750,6 @@
     if (current === 'done') current = 'closed';
 
     var steps = [
-      { key: 'planning',         label: 'Planning',  icon: '&#9998;'  },
-      { key: 'in_progress',      label: 'Working',   icon: '&#9881;'  },
       { key: 'pending_approval', label: 'Pending',   icon: '&#9679;'  },
       { key: 'accepted',         label: 'Accepted <span style="color:#6f6;font-size:0.75em;margin-left:2px">&#9654;</span>',  icon: '&#10003;', action: 'accept' },
       { key: 'closed',           label: 'Closed',    icon: '&#9632;', action: 'close'  }
@@ -1607,8 +1762,14 @@
 
     var html = '<div class="status-pipeline">';
 
-    // Single row: Autopilot | gap | main flow | side actions | ... | prev/next
+    // Single row: Working indicator | Autopilot | gap | main flow | side actions | ... | prev/next
     html += '<div class="status-pipeline-row">';
+
+    // Working indicator (before autopilot)
+    var isWorking = current === 'in_progress' || current === 'planning' || current === 'revision_needed';
+    if (isWorking) {
+      html += '<span class="pipeline-working-indicator"><span class="agent-working-dot"></span> Working</span>';
+    }
 
     // Autopilot toggle
     html += '<button class="autopilot-toggle' + (task.autopilot ? ' active' : '') + '" onclick="App.toggleTaskAutopilot()" title="Toggle autopilot mode">';
@@ -2119,6 +2280,7 @@
     } else {
       body.innerHTML = '<pre>' + escHtml(content) + '</pre>';
     }
+    body.scrollTop = 0;
     overlay.classList.remove('hidden');
   }
 
@@ -2155,6 +2317,7 @@
     newtabLink.style.display = '';
     var body = ov.querySelector('.file-preview-body');
     body.innerHTML = '<div class="file-preview-image-wrap"><img src="' + rawUrl + '" alt="' + escHtml(filename) + '" class="file-preview-image"></div>';
+    body.scrollTop = 0;
     ov.classList.remove('hidden');
   }
 
@@ -2612,22 +2775,65 @@
   }
 
   // ── Settings ───────────────────────────────────────
+  function switchSettingsSection(sectionId) {
+    var sections = document.querySelectorAll('.settings-section');
+    for (var i = 0; i < sections.length; i++) {
+      sections[i].classList.remove('active');
+    }
+    var items = document.querySelectorAll('.settings-sidebar-item');
+    for (var i = 0; i < items.length; i++) {
+      items[i].classList.remove('active');
+    }
+    var target = document.getElementById('settings-sec-' + sectionId);
+    if (target) target.classList.add('active');
+    var item = document.querySelector('.settings-sidebar-item[data-section="' + sectionId + '"]');
+    if (item) item.classList.add('active');
+    state.settingsSection = sectionId;
+  }
+
+  function renderVaultStatusBar(containerId) {
+    var container = document.getElementById(containerId);
+    if (!container) return;
+    api.get('/api/secrets/status').then(function(status) {
+      if (!status.exists) {
+        container.className = 'vault-status-bar not-configured';
+        container.innerHTML = '<span>&#9888; No vault configured yet</span>';
+      } else if (status.locked) {
+        container.className = 'vault-status-bar locked';
+        container.innerHTML = '<span>&#128274; Vault is locked</span>';
+      } else {
+        container.className = 'vault-status-bar unlocked';
+        container.innerHTML = '<span>&#128275; Vault unlocked</span><button class="btn btn-secondary" onclick="App.lockSecrets()" style="font-size:11px;padding:3px 10px;margin-left:auto">Lock</button>';
+      }
+    }).catch(function() {
+      container.className = 'vault-status-bar not-configured';
+      container.innerHTML = '<span>Unable to check vault status</span>';
+    });
+  }
+
   async function loadSettings() {
     try {
       var sys = await api.get('/api/system/status');
       var agents = await api.get('/api/agents');
       document.getElementById('settings-team-name').textContent = sys.teamName || '-';
-      document.getElementById('settings-version').textContent = sys.version || '1.0.0';
+      document.getElementById('settings-version').textContent = 'v' + (sys.version || '1.0.0');
       document.getElementById('settings-agent-count').textContent = (agents.agents || []).length;
     } catch(e) { console.error('Failed to load settings:', e); }
     checkClaudeStatus();
     loadPermissionMode();
+    loadAccessPaths();
     checkForUpdates();
     checkSystemHealth();
     loadSecretsStatus();
     loadCredentialsStatus();
     loadTempStatus();
     loadBackupList();
+    renderVaultStatusBar('vault-status-bar-secrets');
+    renderVaultStatusBar('vault-status-bar-passwords');
+    // Restore last active section
+    if (state.settingsSection) {
+      switchSettingsSection(state.settingsSection);
+    }
   }
 
   async function loadTempStatus() {
@@ -2801,6 +3007,57 @@
     } catch(e) { toast('Failed to save permission mode', 'error'); }
   }
 
+  // ── Local Access Paths ──────────────────────────────
+  async function loadAccessPaths() {
+    var container = document.getElementById('access-paths-list');
+    if (!container) return;
+    try {
+      var result = await api.get('/api/settings/access-paths');
+      var paths = result.paths || [];
+      var root = result.root || '';
+      container.innerHTML = paths.map(function(p) {
+        var isDefault = (p === root);
+        return '<div class="access-path-item">' +
+          '<div class="access-path-info">' +
+            '<span class="access-path-text">' + escHtml(p) + '</span>' +
+            '<span class="access-path-hint">includes subfolders</span>' +
+          '</div>' +
+          (isDefault
+            ? '<span class="access-path-default">Default</span>'
+            : '<button class="access-path-remove" onclick="App.removeAccessPath(\'' + escHtml(p.replace(/'/g, "\\'")) + '\')" title="Remove">&times;</button>') +
+        '</div>';
+      }).join('');
+    } catch(e) {
+      container.innerHTML = '<div class="form-hint">Failed to load access paths</div>';
+    }
+  }
+
+  async function addAccessPath() {
+    var input = document.getElementById('access-path-input');
+    if (!input) return;
+    var p = input.value.trim();
+    if (!p) { toast('Enter a folder path', 'error'); return; }
+    try {
+      await api.post('/api/settings/access-paths', { path: p });
+      input.value = '';
+      toast('Access path added');
+      loadAccessPaths();
+    } catch(e) { toast('Failed to add path: ' + e.message, 'error'); }
+  }
+
+  async function removeAccessPath(p) {
+    if (!confirm('Remove access to ' + p + '?')) return;
+    try {
+      await fetch('/api/settings/access-paths', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: p })
+      }).then(function(res) { return res.json(); });
+      toast('Access path removed');
+      loadAccessPaths();
+    } catch(e) { toast('Failed to remove path', 'error'); }
+  }
+
   // ── Secrets Management ──────────────────────────────
   async function loadSecretsStatus() {
     var badge = document.getElementById('secrets-status-badge');
@@ -2870,6 +3127,9 @@
       pw.value = '';
       toast('Secrets unlocked');
       loadSecretsStatus();
+      loadCredentialsStatus();
+      renderVaultStatusBar('vault-status-bar-secrets');
+      renderVaultStatusBar('vault-status-bar-passwords');
     } catch(e) {
       toast('Invalid master password', 'error');
     }
@@ -2880,6 +3140,9 @@
       await api.post('/api/secrets/lock', {});
       toast('Secrets locked');
       loadSecretsStatus();
+      loadCredentialsStatus();
+      renderVaultStatusBar('vault-status-bar-secrets');
+      renderVaultStatusBar('vault-status-bar-passwords');
     } catch(e) { toast('Failed to lock secrets', 'error'); }
   }
 
@@ -2895,6 +3158,8 @@
       toast('Vault created!');
       loadSecretsStatus();
       loadCredentialsStatus();
+      renderVaultStatusBar('vault-status-bar-secrets');
+      renderVaultStatusBar('vault-status-bar-passwords');
     } catch(e) { toast(e.message || 'Failed to create vault', 'error'); }
   }
 
@@ -3000,6 +3265,8 @@
       toast('Vault created!');
       loadSecretsStatus();
       loadCredentialsStatus();
+      renderVaultStatusBar('vault-status-bar-secrets');
+      renderVaultStatusBar('vault-status-bar-passwords');
     } catch(e) { toast(e.message || 'Failed to create vault', 'error'); }
   }
 
@@ -3912,18 +4179,18 @@
 
   // ── Tag System ──────────────────────────────────────
   var TAG_COLORS = [
-    { bg: 'rgba(110,180,230,0.18)', text: '#7ec8f0' },
-    { bg: 'rgba(180,130,220,0.18)', text: '#c0a0e8' },
-    { bg: 'rgba(130,200,150,0.18)', text: '#a0d8a8' },
-    { bg: 'rgba(220,170,90,0.18)', text: '#d8b060' },
-    { bg: 'rgba(220,120,120,0.18)', text: '#e09090' },
-    { bg: 'rgba(120,200,200,0.18)', text: '#90d0d0' },
-    { bg: 'rgba(200,160,120,0.18)', text: '#c8a878' },
-    { bg: 'rgba(160,180,220,0.18)', text: '#a8b8e0' },
-    { bg: 'rgba(220,160,180,0.18)', text: '#e0a0b8' },
-    { bg: 'rgba(180,200,100,0.18)', text: '#b8c870' },
-    { bg: 'rgba(200,140,200,0.18)', text: '#d090d0' },
-    { bg: 'rgba(140,190,180,0.18)', text: '#98c8b8' },
+    { bg: 'rgba(110,180,230,0.10)', text: '#6ab0d8' },
+    { bg: 'rgba(180,130,220,0.10)', text: '#a890c8' },
+    { bg: 'rgba(130,200,150,0.10)', text: '#88c090' },
+    { bg: 'rgba(220,170,90,0.10)', text: '#c0a058' },
+    { bg: 'rgba(220,120,120,0.10)', text: '#c88080' },
+    { bg: 'rgba(120,200,200,0.10)', text: '#80b8b8' },
+    { bg: 'rgba(200,160,120,0.10)', text: '#b09068' },
+    { bg: 'rgba(160,180,220,0.10)', text: '#90a0c8' },
+    { bg: 'rgba(220,160,180,0.10)', text: '#c890a0' },
+    { bg: 'rgba(180,200,100,0.10)', text: '#a0b060' },
+    { bg: 'rgba(200,140,200,0.10)', text: '#b880b8' },
+    { bg: 'rgba(140,190,180,0.10)', text: '#80b0a0' },
   ];
 
   function hashTagColor(tag) {
@@ -4121,17 +4388,51 @@
         tagCounts[tag] = (tagCounts[tag] || 0) + 1;
       });
     });
-    var tagNames = Object.keys(tagCounts).sort();
+    // Sort by frequency (most used first)
+    var tagNames = Object.keys(tagCounts).sort(function(a, b) { return tagCounts[b] - tagCounts[a]; });
     if (tagNames.length === 0) { bar.innerHTML = ''; return; }
 
     var activeFilters = context === 'dashboard' ? state.dashboardTagFilters : state.agentTagFilters;
-    var html = '';
-    tagNames.forEach(function(tag) {
+
+    // Toggle button for tag pill visibility
+    var toggleLabel = state.tagsVisible ? 'Tags' : 'Tags';
+    var toggleClass = state.tagsVisible ? ' active' : '';
+    var html = '<span class="tag-visibility-toggle' + toggleClass + '" onclick="App.toggleTagVisibility()" title="Show/hide tag pills on tasks">' +
+      '<span class="tag-vis-icon">&#9868;</span> ' + toggleLabel + '</span>';
+
+    // Show top 10 tags (plus any active filters outside top 10)
+    var visibleTags = tagNames.slice(0, 10);
+    var extraTags = tagNames.slice(10);
+    // Ensure active filters are always visible
+    activeFilters.forEach(function(af) {
+      if (visibleTags.indexOf(af) === -1 && extraTags.indexOf(af) !== -1) {
+        visibleTags.push(af);
+        extraTags = extraTags.filter(function(t) { return t !== af; });
+      }
+    });
+
+    visibleTags.forEach(function(tag) {
       var c = hashTagColor(tag);
       var isActive = activeFilters.indexOf(tag) !== -1;
       html += '<span class="tag-filter-chip' + (isActive ? ' active' : '') + '" style="background:' + c.bg + ';color:' + c.text + '" onclick="App.toggleTagFilter(\'' + escHtml(tag).replace(/'/g, "\\'") + '\',\'' + context + '\')">' +
-        escHtml(tag) + '<span class="chip-x">x</span></span>';
+        escHtml(tag) + ' <span class="tag-count">' + tagCounts[tag] + '</span><span class="chip-x">x</span></span>';
     });
+
+    // "+N more" expander for remaining tags
+    if (extraTags.length > 0) {
+      if (state.tagFilterExpanded) {
+        extraTags.forEach(function(tag) {
+          var c = hashTagColor(tag);
+          var isActive = activeFilters.indexOf(tag) !== -1;
+          html += '<span class="tag-filter-chip' + (isActive ? ' active' : '') + '" style="background:' + c.bg + ';color:' + c.text + '" onclick="App.toggleTagFilter(\'' + escHtml(tag).replace(/'/g, "\\'") + '\',\'' + context + '\')">' +
+            escHtml(tag) + ' <span class="tag-count">' + tagCounts[tag] + '</span><span class="chip-x">x</span></span>';
+        });
+        html += '<button class="tag-filter-clear" onclick="App.toggleTagFilterExpand()">Show less</button>';
+      } else {
+        html += '<button class="tag-filter-more" onclick="App.toggleTagFilterExpand()">+' + extraTags.length + ' more</button>';
+      }
+    }
+
     if (activeFilters.length > 0) {
       html += '<button class="tag-filter-clear" onclick="App.clearTagFilters(\'' + context + '\')">Clear filters</button>';
     }
@@ -4158,6 +4459,21 @@
     }
     renderTagFilterBar(context);
     renderFilteredTasks(context);
+  }
+
+  function toggleTagVisibility() {
+    state.tagsVisible = !state.tagsVisible;
+    localStorage.setItem('tagsVisible', state.tagsVisible ? 'true' : 'false');
+    renderFilteredTasks('dashboard');
+    renderFilteredTasks('agent');
+    renderTagFilterBar('dashboard');
+    renderTagFilterBar('agent');
+  }
+
+  function toggleTagFilterExpand() {
+    state.tagFilterExpanded = !state.tagFilterExpanded;
+    renderTagFilterBar('dashboard');
+    renderTagFilterBar('agent');
   }
 
   // ── Agent Filter Bar ─────────────────────────────────
@@ -4289,12 +4605,16 @@
         (s.missingDeps && s.missingDeps.length && !s.enabled ?
           '<div class="skill-deps-warning">Requires: ' + s.missingDeps.join(', ') + ' (will auto-install)</div>' : '') +
         (s.settings && s.settings.length && s.enabled ? renderSkillSettings(s) : '') +
+        (s.id === 'github' && s.enabled ? '<div class="github-status-panel" id="github-status-panel"><span class="text-muted">Checking connection...</span></div>' : '') +
         '<div class="skill-card-footer">' +
           '<span class="skill-type-badge skill-type-' + s.type + '">' + s.type + '</span>' +
           '<span class="skill-status ' + statusClass + '">' + statusText + '</span>' +
         '</div>' +
       '</div>';
     }).join('');
+    // Load GitHub status if enabled
+    var ghCard = document.getElementById('github-status-panel');
+    if (ghCard) loadGitHubStatus();
   }
 
   function renderSkillSettings(skill) {
@@ -4311,6 +4631,31 @@
     html += '<button class="btn btn-primary btn-sm" onclick="App.saveSkillSettings(' + q + skill.id + q + ')">Save Settings</button>';
     html += '</div>';
     return html;
+  }
+
+  async function loadGitHubStatus() {
+    var panel = document.getElementById('github-status-panel');
+    if (!panel) return;
+    try {
+      var data = await api.get('/api/skills/github/status');
+      var html = '<div class="github-status-row">';
+      if (!data.installed) {
+        html += '<span class="status-dot red"></span> gh CLI not installed - run <code>winget install GitHub.cli</code>';
+      } else if (!data.authenticated) {
+        html += '<span class="status-dot red"></span> Not authenticated - run <code>gh auth login</code>';
+      } else {
+        html += '<span class="status-dot green"></span> Connected as <strong>' + escHtml(data.user || 'unknown') + '</strong>';
+      }
+      html += '</div>';
+      if (data.authenticated && data.repo) {
+        html += '<div class="github-status-row"><span class="status-dot green"></span> Repo: <strong>' + escHtml(data.repo.owner ? data.repo.owner.login + '/' + data.repo.name : '') + '</strong></div>';
+      } else if (data.authenticated && data.repoError) {
+        html += '<div class="github-status-row"><span class="status-dot red"></span> ' + escHtml(data.repoError) + '</div>';
+      }
+      panel.innerHTML = html;
+    } catch(e) {
+      panel.innerHTML = '<span class="text-muted">Failed to check status</span>';
+    }
   }
 
   async function saveSkillSettings(skillId) {
@@ -4685,9 +5030,9 @@
       title: 'Dashboard & Views',
       icon: '&#9632;',
       content: '<h2>Dashboard &amp; Views</h2>' +
-        '<p>The Dashboard is your <strong>mission control</strong>. It shows all tasks, their statuses, and the latest round table summary. It defaults to showing <strong>Pending</strong> tasks - work that needs your attention.</p>' +
+        '<p>The Dashboard is your <strong>mission control</strong>. It shows all tasks, their statuses, and the latest round table summary. It defaults to showing <strong>Active</strong> tasks - all non-closed work across the team.</p>' +
         '<h3>Stat Cards</h3>' +
-        '<p>Click any stat card to filter: <strong>Pending</strong>, <strong>All</strong>, <strong>Working</strong>, <strong>Accepted</strong>, or <strong>Closed</strong>. The pending count includes subtasks so nothing slips through.</p>' +
+        '<p>Click any stat card to filter: <strong>Active</strong>, <strong>Pending</strong>, <strong>Working</strong>, <strong>Accepted</strong>, or <strong>Closed</strong>. The pending count includes subtasks so nothing slips through.</p>' +
         '<h3>View Modes</h3>' +
         '<ul>' +
         '<li><strong>Tree</strong> (default) - Hierarchical view showing parent tasks with their subtasks nested below. Expandable/collapsible.</li>' +
@@ -4986,6 +5331,7 @@
     document.body.appendChild(tip);
 
     document.addEventListener('mouseenter', function(e) {
+      if (!e.target || !e.target.closest) return;
       var el = e.target.closest('[data-tooltip]');
       if (!el) return;
       tip.textContent = el.getAttribute('data-tooltip');
@@ -4997,6 +5343,7 @@
     }, true);
 
     document.addEventListener('mouseleave', function(e) {
+      if (!e.target || !e.target.closest) return;
       var el = e.target.closest('[data-tooltip]');
       if (!el) return;
       tip.classList.remove('visible');
@@ -5017,6 +5364,8 @@
     saveMemory: saveMemory,
     switchAgentTab: switchAgentTab,
     loadAgentFiles: loadAgentFiles,
+    loadAgentFilesPage: loadAgentFilesPage,
+    toggleFilesSection: toggleFilesSection,
     openTask: openTask,
     reviewTask: reviewTask,
     navigateBack: navigateBack,
@@ -5039,6 +5388,8 @@
     runRoundTable: runRoundTable,
     restartTerminal: restartTerminal,
     savePermissionMode: savePermissionMode,
+    addAccessPath: addAccessPath,
+    removeAccessPath: removeAccessPath,
     unlockSecrets: unlockSecrets,
     lockSecrets: lockSecrets,
     initializeSecrets: initializeSecrets,
@@ -5063,6 +5414,7 @@
     retryMigrations: retryMigrations,
     rollbackUpgrade: rollbackUpgrade,
     checkClaudeStatus: checkClaudeStatus,
+    switchSettingsSection: switchSettingsSection,
     toggleSkill: toggleSkill,
     saveSkillSettings: saveSkillSettings,
     viewVersionFile: viewVersionFile,
@@ -5104,6 +5456,8 @@
     selectAutoTag: selectAutoTag,
     toggleTagFilter: toggleTagFilter,
     clearTagFilters: clearTagFilters,
+    toggleTagVisibility: toggleTagVisibility,
+    toggleTagFilterExpand: toggleTagFilterExpand,
     toggleAgentFilter: toggleAgentFilter,
     clearAgentFilter: clearAgentFilter,
     selectDep: selectDep,

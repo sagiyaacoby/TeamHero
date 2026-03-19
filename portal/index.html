@@ -172,15 +172,15 @@
     <section id="view-dashboard" class="view active">
       <header class="view-header"><div class="header-left"><h2>Dashboard</h2><button id="btn-round-table" class="btn btn-secondary btn-rt" onclick="App.runRoundTable()">Round Table <span style="color:#86efac;margin-left:4px;">&#9654;</span></button></div><div class="header-actions"><button class="btn btn-secondary" onclick="App.openAddTask()">+ Add Task</button></div></header>
       <div class="stats-row">
-        <div class="stat-card clickable-stat" data-filter="pending_approval" onclick="App.filterTasks('pending_approval','dashboard')"><div class="stat-value" id="stat-pending">0</div><div class="stat-label">Pending</div></div>
         <div class="stat-card clickable-stat" data-filter="all" onclick="App.filterTasks('all','dashboard')"><div class="stat-value" id="stat-total">0</div><div class="stat-label">Active</div></div>
+        <div class="stat-card clickable-stat" data-filter="pending_approval" onclick="App.filterTasks('pending_approval','dashboard')"><div class="stat-value" id="stat-pending">0</div><div class="stat-label">Pending</div></div>
         <div class="stat-card clickable-stat" data-filter="in_progress" onclick="App.filterTasks('in_progress','dashboard')"><div class="stat-value" id="stat-working">0</div><div class="stat-label">Working</div></div>
         <div class="stat-card clickable-stat" data-filter="accepted" onclick="App.filterTasks('accepted','dashboard')"><div class="stat-value" id="stat-accepted">0</div><div class="stat-label">Accepted</div></div>
         <div class="stat-card clickable-stat" data-filter="closed" onclick="App.filterTasks('closed','dashboard')"><div class="stat-value" id="stat-closed">0</div><div class="stat-label">Closed</div></div>
         <div class="stat-card clickable-stat" data-filter="hold" onclick="App.filterTasks('hold','dashboard')"><div class="stat-value" id="stat-hold">0</div><div class="stat-label">Hold</div></div>
         <div class="stat-card"><div class="stat-value" id="stat-agents">0</div><div class="stat-label">Agents</div></div>
       </div>
-      <div class="panel"><h3 id="dashboard-tasks-title">Pending Review
+      <div class="panel"><h3 id="dashboard-tasks-title">All Tasks
         <span class="view-mode-toggle">
           <button class="view-mode-btn active" data-view="hierarchy" onclick="App.setViewMode('hierarchy','dashboard')">Tree</button>
           <button class="view-mode-btn" data-view="flow" onclick="App.setViewMode('flow','dashboard')">Flow</button>
@@ -359,6 +359,30 @@
       </div>
     </section>
 
+    <!-- Agent Files Page -->
+    <section id="view-agent-files" class="view">
+      <header class="view-header">
+        <button class="btn btn-secondary" onclick="App.navigateBack()">&#8592; Back</button>
+        <h2 id="agent-files-title">Files</h2>
+      </header>
+      <div class="agent-files-page">
+        <div class="agent-files-section">
+          <h3 class="agent-files-section-header" id="agent-files-reports-header" onclick="App.toggleFilesSection('reports')">
+            <span class="agent-files-section-arrow" id="agent-files-reports-arrow">&#9660;</span>
+            Reports <span class="agent-files-section-count" id="agent-files-reports-count">(0)</span>
+          </h3>
+          <div id="agent-files-reports" class="agent-files-grid"></div>
+        </div>
+        <div class="agent-files-section">
+          <h3 class="agent-files-section-header" id="agent-files-content-header" onclick="App.toggleFilesSection('content')">
+            <span class="agent-files-section-arrow" id="agent-files-content-arrow">&#9660;</span>
+            Content <span class="agent-files-section-count" id="agent-files-content-count">(0)</span>
+          </h3>
+          <div id="agent-files-content-list" class="agent-files-grid"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- Task Detail -->
     <section id="view-task-detail" class="view">
       <header class="view-header">
@@ -486,230 +510,305 @@
     <!-- Settings -->
     <section id="view-settings" class="view">
       <header class="view-header"><h2>Settings</h2></header>
-      <div class="panel">
-        <h3>System Info</h3>
-        <div class="settings-group">
-          <div class="setting-item"><span class="setting-label">Team Name</span><span id="settings-team-name">-</span></div>
-          <div class="setting-item"><span class="setting-label">Version</span><span id="settings-version">1.0.0</span></div>
-          <div class="setting-item"><span class="setting-label">Agents</span><span id="settings-agent-count">0</span></div>
+      <div class="settings-layout">
+        <div class="settings-sidebar">
+          <div class="settings-sidebar-section" style="padding-top:0">General</div>
+          <div class="settings-sidebar-item active" data-section="local-access" onclick="App.switchSettingsSection('local-access')">
+            <span class="settings-icon">&#9671;</span> Local Access
+          </div>
+          <div class="settings-sidebar-item" data-section="permission-mode" onclick="App.switchSettingsSection('permission-mode')">
+            <span class="settings-icon">&#9744;</span> Permission Mode
+          </div>
+          <div class="settings-sidebar-section">Vault</div>
+          <div class="settings-sidebar-item" data-section="api-keys" onclick="App.switchSettingsSection('api-keys')">
+            <span class="settings-icon">&#10038;</span> API Keys & Secrets
+          </div>
+          <div class="settings-sidebar-item" data-section="passwords" onclick="App.switchSettingsSection('passwords')">
+            <span class="settings-icon">&#9635;</span> Passwords
+          </div>
+          <div class="settings-sidebar-section">System</div>
+          <div class="settings-sidebar-item" data-section="updates" onclick="App.switchSettingsSection('updates')">
+            <span class="settings-icon">&#8635;</span> Software Updates
+          </div>
+          <div class="settings-sidebar-item" data-section="backup" onclick="App.switchSettingsSection('backup')">
+            <span class="settings-icon">&#9647;</span> Data Backup
+          </div>
+          <div class="settings-sidebar-item" data-section="maintenance" onclick="App.switchSettingsSection('maintenance')">
+            <span class="settings-icon">&#9881;&#xFE0E;</span> Maintenance
+          </div>
+          <div class="settings-sidebar-section">Server</div>
+          <div class="settings-sidebar-item" data-section="claude-account" onclick="App.switchSettingsSection('claude-account')">
+            <span class="settings-icon">&#9678;</span> Claude Account
+          </div>
+          <div class="settings-sidebar-item" data-section="server-control" onclick="App.switchSettingsSection('server-control')">
+            <span class="settings-icon">&#9655;</span> Server Control
+          </div>
+          <div class="settings-sidebar-footer">
+            <span id="settings-team-name">-</span> <span id="settings-version">v1.0.0</span> - <span id="settings-agent-count">0</span> agents
+          </div>
         </div>
-      </div>
-      <div class="panel">
-        <h3>Claude Account</h3>
-        <p class="form-hint">Claude CLI powers the Command Center. Connect your account to enable AI features.</p>
-        <div class="settings-group">
-          <div class="setting-item">
-            <span class="setting-label">CLI Status</span>
-            <span id="claude-installed" class="badge badge-inactive">Checking...</span>
-          </div>
-          <div class="setting-item">
-            <span class="setting-label">Version</span>
-            <span id="claude-version">-</span>
-          </div>
-          <div class="setting-item">
-            <span class="setting-label">Connection</span>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <button class="btn btn-secondary" onclick="App.checkClaudeStatus()" style="font-size:12px;padding:4px 12px;">Check Status</button>
+        <div class="settings-content">
+
+          <!-- Local Access -->
+          <div class="settings-section active" id="settings-sec-local-access">
+            <div class="settings-section-title">Local Access</div>
+            <div class="settings-section-desc">Control which folders on your machine agents can access. The project folder is always included. Add extra folders if agents need to work on files outside this project.</div>
+            <div class="settings-group" id="access-paths-list"></div>
+            <div style="display:flex;gap:8px;margin-top:12px;">
+              <input type="text" id="access-path-input" placeholder="Paste folder path, e.g. D:/Projects/MyApp" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:var(--text);font-size:13px;">
+              <button class="btn btn-secondary" onclick="App.addAccessPath()" style="font-size:12px;padding:4px 12px;white-space:nowrap;">+ Add</button>
             </div>
           </div>
-        </div>
-      </div>
-      <div class="panel">
-        <h3>Claude Permission Mode</h3>
-        <p class="form-hint">Controls how Claude operates in the Command Center.</p>
-        <div class="settings-group">
-          <div class="setting-item">
-            <span class="setting-label">Mode</span>
-            <select id="permission-mode-select" onchange="App.savePermissionMode()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:var(--text);font-size:13px;">
-              <option value="autonomous">Autonomous</option>
-              <option value="supervised">Supervised</option>
-            </select>
-          </div>
-          <div class="setting-item" style="flex-direction:column;align-items:flex-start;gap:6px">
-            <span id="permission-mode-desc" class="form-hint" style="margin:0"></span>
-          </div>
-        </div>
-      </div>
-      <div class="panel" id="secrets-panel">
-        <h3>Secrets & API Keys</h3>
-        <p class="form-hint">Encrypted secrets injected as environment variables into Claude sessions. AES-256-GCM encrypted at rest.</p>
-        <div class="settings-group" id="secrets-status-group">
-          <div class="setting-item">
-            <span class="setting-label">Status</span>
-            <span id="secrets-status-badge" class="badge badge-inactive">Checking...</span>
-          </div>
-        </div>
-        <div id="secrets-unlock-form" class="hidden" style="margin-top:12px">
-          <div class="form-grid">
-            <div class="form-group full-width">
-              <label>Master Password</label>
-              <input type="password" id="secrets-master-password" placeholder="Enter master password" onkeydown="if(event.key==='Enter')App.unlockSecrets()">
+
+          <!-- Permission Mode -->
+          <div class="settings-section" id="settings-sec-permission-mode">
+            <div class="settings-section-title">Permission Mode</div>
+            <div class="settings-section-desc">Controls how Claude operates in the Command Center. Choose whether agents work independently or ask for your permission before each action.</div>
+            <div class="settings-group">
+              <div class="setting-item">
+                <span class="setting-label">Mode</span>
+                <select id="permission-mode-select" onchange="App.savePermissionMode()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:var(--text);font-size:13px;">
+                  <option value="autonomous">Autonomous</option>
+                  <option value="supervised">Supervised</option>
+                </select>
+              </div>
+              <div class="setting-item" style="flex-direction:column;align-items:flex-start;gap:6px">
+                <span id="permission-mode-desc" class="form-hint" style="margin:0"></span>
+              </div>
             </div>
           </div>
-          <div class="form-actions"><button class="btn btn-primary" onclick="App.unlockSecrets()">Unlock</button></div>
-        </div>
-        <div id="secrets-setup-form" class="hidden" style="margin-top:12px">
-          <p class="form-hint">Create a master password to encrypt your secrets vault. You'll need this password each time the server starts.</p>
-          <div class="form-grid">
-            <div class="form-group full-width">
-              <label>Create Master Password</label>
-              <input type="password" id="secrets-new-master-password" placeholder="Choose a master password">
-            </div>
-            <div class="form-group full-width">
-              <label>Confirm Password</label>
-              <input type="password" id="secrets-confirm-master-password" placeholder="Confirm password">
-            </div>
-          </div>
-          <div class="form-actions"><button class="btn btn-primary" onclick="App.initializeSecrets()">Create Vault</button></div>
-        </div>
-        <div id="secrets-list-container" class="hidden" style="margin-top:12px">
-          <div class="settings-group" id="secrets-list"></div>
-          <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-secondary" onclick="App.showAddSecret()">+ Add Secret</button>
-            <button class="btn btn-secondary" onclick="App.changeSecretsPassword()">Change Password</button>
-            <button class="btn btn-cancel" onclick="App.lockSecrets()" style="margin-left:auto">Lock</button>
-          </div>
-        </div>
-        <div id="secrets-add-form" class="hidden" style="margin-top:12px">
-          <div class="form-grid">
-            <div class="form-group">
-              <label>Name (ENV_VAR format)</label>
-              <input type="text" id="secret-add-name" placeholder="e.g. OPENAI_API_KEY" style="text-transform:uppercase">
-            </div>
-            <div class="form-group">
-              <label>Value</label>
-              <input type="password" id="secret-add-value" placeholder="Secret value">
-            </div>
-          </div>
-          <div class="form-actions">
-            <button class="btn btn-secondary" onclick="App.cancelAddSecret()">Cancel</button>
-            <button class="btn btn-primary" onclick="App.saveSecret()">Save Secret</button>
-          </div>
-        </div>
-      </div>
-      <div class="panel" id="credentials-panel">
-        <h3>Credentials</h3>
-        <p class="form-hint">Service credentials (username/password) injected as environment variables. Stored in the same encrypted vault.</p>
-        <div id="credentials-locked-msg" class="hidden">
-          <div class="empty-state">Unlock vault in Secrets section above to manage credentials</div>
-        </div>
-        <div id="credentials-setup-form" class="hidden" style="margin-top:12px">
-          <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">No vault exists yet. Create a master password to encrypt your credentials.</p>
-          <div class="form-grid">
-            <div class="form-group"><label>Master Password</label><input type="password" id="credentials-new-master-password" placeholder="Choose a master password"></div>
-            <div class="form-group"><label>Confirm Password</label><input type="password" id="credentials-confirm-master-password" placeholder="Confirm password"></div>
-          </div>
-          <div class="form-actions"><button class="btn btn-primary" onclick="App.initializeCredentialsVault()">Create Vault</button></div>
-        </div>
-        <div id="credentials-list-container" class="hidden" style="margin-top:12px">
-          <div class="settings-group" id="credentials-list"></div>
-          <div style="margin-top:12px">
-            <button class="btn btn-secondary" onclick="App.showAddCredential()">+ Add Credential</button>
-          </div>
-        </div>
-        <div id="credentials-add-form" class="hidden" style="margin-top:12px">
-          <div class="form-grid">
-            <div class="form-group">
-              <label>Service Name</label>
-              <input type="text" id="credential-add-service" placeholder="e.g. GitHub">
-            </div>
-            <div class="form-group">
-              <label>Username</label>
-              <input type="text" id="credential-add-username" placeholder="Username or email">
-            </div>
-            <div class="form-group full-width">
-              <label>Password</label>
-              <input type="password" id="credential-add-password" placeholder="Password or token">
+
+          <!-- API Keys & Secrets -->
+          <div class="settings-section" id="settings-sec-api-keys">
+            <div class="settings-section-title">API Keys & Secrets</div>
+            <div class="settings-section-desc">Store API keys and tokens that your agents need. These are encrypted with AES-256 and injected as environment variables into agent sessions.</div>
+            <div id="vault-status-bar-secrets" class="vault-status-bar"></div>
+            <div id="secrets-panel">
+              <div class="settings-group" id="secrets-status-group" style="display:none">
+                <div class="setting-item">
+                  <span class="setting-label">Status</span>
+                  <span id="secrets-status-badge" class="badge badge-inactive">Checking...</span>
+                </div>
+              </div>
+              <div id="secrets-unlock-form" class="hidden" style="margin-top:12px">
+                <div class="form-grid">
+                  <div class="form-group full-width">
+                    <label>Master Password</label>
+                    <input type="password" id="secrets-master-password" placeholder="Enter master password" onkeydown="if(event.key==='Enter')App.unlockSecrets()">
+                  </div>
+                </div>
+                <div class="form-actions"><button class="btn btn-primary" onclick="App.unlockSecrets()">Unlock</button></div>
+              </div>
+              <div id="secrets-setup-form" class="hidden" style="margin-top:12px">
+                <p class="form-hint">Create a master password to encrypt your secrets vault. You'll need this password each time the server starts.</p>
+                <div class="form-grid">
+                  <div class="form-group full-width">
+                    <label>Create Master Password</label>
+                    <input type="password" id="secrets-new-master-password" placeholder="Choose a master password">
+                  </div>
+                  <div class="form-group full-width">
+                    <label>Confirm Password</label>
+                    <input type="password" id="secrets-confirm-master-password" placeholder="Confirm password">
+                  </div>
+                </div>
+                <div class="form-actions"><button class="btn btn-primary" onclick="App.initializeSecrets()">Create Vault</button></div>
+              </div>
+              <div id="secrets-list-container" class="hidden" style="margin-top:12px">
+                <div class="settings-group" id="secrets-list"></div>
+                <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+                  <button class="btn btn-secondary" onclick="App.showAddSecret()">+ Add Secret</button>
+                  <button class="btn btn-secondary" onclick="App.changeSecretsPassword()">Change Password</button>
+                </div>
+              </div>
+              <div id="secrets-add-form" class="hidden" style="margin-top:12px">
+                <div class="form-grid">
+                  <div class="form-group full-width">
+                    <label>Variable Name</label>
+                    <input type="text" id="secret-add-name" placeholder="e.g. OPENAI_API_KEY" style="text-transform:uppercase">
+                    <span class="form-hint" style="margin-top:4px">Use UPPER_SNAKE_CASE format</span>
+                  </div>
+                  <div class="form-group full-width">
+                    <label>Secret Value</label>
+                    <input type="password" id="secret-add-value" placeholder="API key or token value">
+                  </div>
+                </div>
+                <div class="form-actions">
+                  <button class="btn btn-secondary" onclick="App.cancelAddSecret()">Cancel</button>
+                  <button class="btn btn-primary" onclick="App.saveSecret()">Save Secret</button>
+                </div>
+              </div>
             </div>
           </div>
-          <div class="form-actions">
-            <button class="btn btn-secondary" onclick="App.cancelAddCredential()">Cancel</button>
-            <button class="btn btn-primary" onclick="App.saveCredential()">Save Credential</button>
-          </div>
-        </div>
-      </div>
-      <div class="panel" id="update-panel">
-        <h3>Software Updates</h3>
-        <p class="form-hint">Check for platform updates from GitHub releases. Updates only affect platform files — your agents, tasks, and project data are never changed.</p>
-        <div class="settings-group">
-          <div class="setting-item">
-            <span class="setting-label">System Health</span>
-            <span id="system-health-indicator"></span>
-          </div>
-          <div id="system-health-details" class="hidden"></div>
-          <div class="setting-item">
-            <span class="setting-label">Current Version</span>
-            <span id="update-current-version">-</span>
-          </div>
-          <div class="setting-item">
-            <span class="setting-label">Latest Version</span>
-            <span id="update-latest-version">-</span>
-          </div>
-          <div class="setting-item">
-            <span class="setting-label">Status</span>
-            <span id="update-status" class="badge badge-active">Up to date</span>
-          </div>
-          <div id="update-release-info" class="hidden" style="margin-top:8px">
-            <div id="update-release-name" style="font-weight:600;margin-bottom:4px"></div>
-            <div id="update-release-notes" class="update-changes"></div>
-            <a id="update-release-url" href="#" target="_blank" style="font-size:12px;color:var(--accent);display:inline-block;margin-top:6px">View on GitHub</a>
-          </div>
-          <div class="setting-item" style="margin-top:8px">
-            <div style="display:flex;gap:8px;align-items:center;">
-              <button class="btn btn-secondary" onclick="App.checkForUpdates()">Check for Updates</button>
-              <button class="btn btn-primary hidden" id="update-upgrade-btn" onclick="App.performUpgrade()">Upgrade Now</button>
+
+          <!-- Passwords -->
+          <div class="settings-section" id="settings-sec-passwords">
+            <div class="settings-section-title">Passwords</div>
+            <div class="settings-section-desc">Store website login passwords for services your agents need to access. Each entry creates two environment variables: {SERVICE}_USERNAME and {SERVICE}_PASSWORD.</div>
+            <div id="vault-status-bar-passwords" class="vault-status-bar"></div>
+            <div id="credentials-panel">
+              <div id="credentials-locked-msg" class="hidden">
+                <div class="empty-state">Unlock vault in API Keys & Secrets section to manage passwords</div>
+              </div>
+              <div id="credentials-setup-form" class="hidden" style="margin-top:12px">
+                <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">No vault exists yet. Create a master password to encrypt your passwords.</p>
+                <div class="form-grid">
+                  <div class="form-group"><label>Master Password</label><input type="password" id="credentials-new-master-password" placeholder="Choose a master password"></div>
+                  <div class="form-group"><label>Confirm Password</label><input type="password" id="credentials-confirm-master-password" placeholder="Confirm password"></div>
+                </div>
+                <div class="form-actions"><button class="btn btn-primary" onclick="App.initializeCredentialsVault()">Create Vault</button></div>
+              </div>
+              <div id="credentials-list-container" class="hidden" style="margin-top:12px">
+                <div class="settings-group" id="credentials-list"></div>
+                <div style="margin-top:12px">
+                  <button class="btn btn-secondary" onclick="App.showAddCredential()">+ Add Password</button>
+                </div>
+              </div>
+              <div id="credentials-add-form" class="hidden" style="margin-top:12px">
+                <div class="form-grid">
+                  <div class="form-group full-width">
+                    <label>Service Name</label>
+                    <input type="text" id="credential-add-service" placeholder="e.g. LinkedIn">
+                    <span class="form-hint" style="margin-top:4px">Used as prefix: LINKEDIN_USERNAME</span>
+                  </div>
+                  <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="credential-add-username" placeholder="Username or email">
+                  </div>
+                  <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="credential-add-password" placeholder="Password or token">
+                  </div>
+                </div>
+                <div class="form-actions">
+                  <button class="btn btn-secondary" onclick="App.cancelAddCredential()">Cancel</button>
+                  <button class="btn btn-primary" onclick="App.saveCredential()">Add Password</button>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
-      <!-- Data Backup -->
-      <div class="panel">
-        <h3>Data Backup</h3>
-        <div class="settings-group">
-          <div class="setting-item">
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-              <input type="checkbox" id="backup-include-media"> Include media files (videos, images)
-            </label>
+
+          <!-- Software Updates -->
+          <div class="settings-section" id="settings-sec-updates">
+            <div class="settings-section-title">Software Updates</div>
+            <div class="settings-section-desc">Check for platform updates from GitHub. Updates only affect platform files - your agents, tasks, and data are never changed.</div>
+            <div id="update-panel">
+              <div class="settings-group">
+                <div class="setting-item">
+                  <span class="setting-label">System Health</span>
+                  <span id="system-health-indicator"></span>
+                </div>
+                <div id="system-health-details" class="hidden"></div>
+                <div class="setting-item">
+                  <span class="setting-label">Current Version</span>
+                  <span id="update-current-version">-</span>
+                </div>
+                <div class="setting-item">
+                  <span class="setting-label">Latest Version</span>
+                  <span id="update-latest-version">-</span>
+                </div>
+                <div class="setting-item">
+                  <span class="setting-label">Status</span>
+                  <span id="update-status" class="badge badge-active">Up to date</span>
+                </div>
+                <div id="update-release-info" class="hidden" style="margin-top:8px">
+                  <div id="update-release-name" style="font-weight:600;margin-bottom:4px"></div>
+                  <div id="update-release-notes" class="update-changes"></div>
+                  <a id="update-release-url" href="#" target="_blank" style="font-size:12px;color:var(--accent);display:inline-block;margin-top:6px">View on GitHub</a>
+                </div>
+                <div class="setting-item" style="margin-top:8px">
+                  <div style="display:flex;gap:8px;align-items:center;">
+                    <button class="btn btn-secondary" onclick="App.checkForUpdates()">Check for Updates</button>
+                    <button class="btn btn-primary hidden" id="update-upgrade-btn" onclick="App.performUpgrade()">Upgrade Now</button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="setting-item">
-            <button class="btn btn-primary" onclick="App.createBackup()">Create Backup</button>
+
+          <!-- Data Backup -->
+          <div class="settings-section" id="settings-sec-backup">
+            <div class="settings-section-title">Data Backup</div>
+            <div class="settings-section-desc">Create and restore backups of your team data. Backups include all agents, tasks, knowledge base, and settings.</div>
+            <div class="settings-group">
+              <div class="setting-item">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                  <input type="checkbox" id="backup-include-media"> Include media files (videos, images)
+                </label>
+              </div>
+              <div class="setting-item">
+                <button class="btn btn-primary" onclick="App.createBackup()">Create Backup</button>
+              </div>
+              <div id="backup-list" style="margin-top:8px"></div>
+            </div>
           </div>
-          <div id="backup-list" style="margin-top:8px"></div>
-        </div>
-      </div>
-      <!-- Autopilot moved to dedicated view -->
-      <div class="panel">
-        <h3>Actions</h3>
-        <div class="settings-group">
-          <div class="setting-item">
-            <span class="setting-label">Temp workspace: <span id="temp-status">-</span></span>
-            <button class="btn btn-secondary" onclick="App.cleanupTemp()">Clean Temp</button>
+
+          <!-- Maintenance -->
+          <div class="settings-section" id="settings-sec-maintenance">
+            <div class="settings-section-title">Maintenance</div>
+            <div class="settings-section-desc">System maintenance tools for cleaning up temporary files and rebuilding configuration.</div>
+            <div class="settings-group">
+              <div class="setting-item">
+                <span class="setting-label">Temp workspace: <span id="temp-status">-</span></span>
+                <button class="btn btn-secondary" onclick="App.cleanupTemp()">Clean Temp</button>
+              </div>
+              <div class="setting-item">
+                <span class="setting-label">Rebuild CLAUDE.md context file</span>
+                <button class="btn btn-secondary" onclick="App.rebuildContext()">Rebuild</button>
+              </div>
+            </div>
+            <div class="settings-danger-zone">
+              <h4>Danger Zone</h4>
+              <div class="settings-group">
+                <div class="setting-item">
+                  <span class="setting-label">Delete all sub-agents (keeps orchestrator)</span>
+                  <button class="btn btn-cancel" onclick="App.resetAgents()">Reset Agents</button>
+                </div>
+                <div class="setting-item">
+                  <span class="setting-label">Reset system (requires restart)</span>
+                  <button class="btn btn-cancel" onclick="App.resetSystem()">Reset</button>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="setting-item">
-            <span class="setting-label">Rebuild CLAUDE.md context file</span>
-            <button class="btn btn-secondary" onclick="App.rebuildContext()">Rebuild</button>
+
+          <!-- Claude Account -->
+          <div class="settings-section" id="settings-sec-claude-account">
+            <div class="settings-section-title">Claude Account</div>
+            <div class="settings-section-desc">Claude CLI powers the Command Center. Check your CLI installation and connection status.</div>
+            <div class="settings-group">
+              <div class="setting-item">
+                <span class="setting-label">CLI Status</span>
+                <span id="claude-installed" class="badge badge-inactive">Checking...</span>
+              </div>
+              <div class="setting-item">
+                <span class="setting-label">Version</span>
+                <span id="claude-version">-</span>
+              </div>
+              <div class="setting-item">
+                <span class="setting-label">Connection</span>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <button class="btn btn-secondary" onclick="App.checkClaudeStatus()" style="font-size:12px;padding:4px 12px;">Check Status</button>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="setting-item">
-            <span class="setting-label">Delete all sub-agents (keeps orchestrator)</span>
-            <button class="btn btn-cancel" onclick="App.resetAgents()">Reset Agents</button>
+
+          <!-- Server Control -->
+          <div class="settings-section" id="settings-sec-server-control">
+            <div class="settings-section-title">Server Control</div>
+            <div class="settings-section-desc">Manage the TeamHero server process.</div>
+            <div class="settings-group">
+              <div class="setting-item">
+                <span class="setting-label">Restart the portal server and CLI session</span>
+                <button class="btn btn-secondary" onclick="App.restartServer()">Restart Server</button>
+              </div>
+              <div class="setting-item">
+                <span class="setting-label">Stop the server and close the session</span>
+                <button class="btn btn-cancel" onclick="App.shutdownServer()">Close Session</button>
+              </div>
+            </div>
           </div>
-          <div class="setting-item">
-            <span class="setting-label">Reset system (requires restart)</span>
-            <button class="btn btn-cancel" onclick="App.resetSystem()">Reset</button>
-          </div>
-        </div>
-      </div>
-      <div class="panel">
-        <h3>Server Control</h3>
-        <div class="settings-group">
-          <div class="setting-item">
-            <span class="setting-label">Restart the portal server and CLI session</span>
-            <button class="btn btn-secondary" onclick="App.restartServer()">Restart Server</button>
-          </div>
-          <div class="setting-item">
-            <span class="setting-label">Stop the server and close the session</span>
-            <button class="btn btn-cancel" onclick="App.shutdownServer()">Close Session</button>
-          </div>
+
         </div>
       </div>
     </section>

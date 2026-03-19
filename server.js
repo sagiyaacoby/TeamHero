@@ -123,15 +123,6 @@ function getConfiguredPort() {
   return null;
 }
 
-function savePort(port) {
-  var sp = path.join(ROOT, 'config/system.json');
-  var sys = {};
-  try { sys = JSON.parse(fs.readFileSync(sp, 'utf8')); } catch(e) {}
-  sys.port = port;
-  fs.mkdirSync(path.dirname(sp), { recursive: true });
-  fs.writeFileSync(sp, JSON.stringify(sys, null, 2) + '\n');
-}
-
 function isPortFree(port) {
   return new Promise(function(resolve) {
     var srv = net.createServer();
@@ -139,13 +130,6 @@ function isPortFree(port) {
     srv.once('listening', function() { srv.close(function() { resolve(true); }); });
     srv.listen(port);
   });
-}
-
-async function findFreePort(start) {
-  for (var p = start; p < start + 100; p++) {
-    if (await isPortFree(p)) return p;
-  }
-  throw new Error('No free port found in range ' + start + '-' + (start + 99));
 }
 
 var PORT; // assigned during startup
@@ -380,7 +364,7 @@ function rebuildClaudeMd() {
     }).join('\n');
   }
 
-  var port = PORT || getConfiguredPort() || 3777;
+  var port = PORT || getConfiguredPort() || 3796;
 
   const md = '# ' + tn + ' \u2014 Orchestrator Context\n\n' +
     '> **Auto-generated file.** Do not edit manually. Regenerated when config changes.\n\n' +
@@ -466,67 +450,21 @@ function rebuildClaudeMd() {
     '```\n\n' +
     'After any API call that modifies data, the dashboard automatically refreshes in real-time.\n\n' +
     '## Team Building\n\n' +
-    'When the owner asks you to "build a team", "add agents", or "create a team":\n' +
-    '1. Ask clarifying questions about what roles are needed if not specified\n' +
-    '2. Create each agent via the API with a distinct role, personality, and mission\n' +
-    '3. Each agent should have specific rules and capabilities relevant to their role\n\n' +
-    'To create an agent via API:\n' +
-    '```bash\n' +
-    'curl -X POST http://localhost:' + port + '/api/agents \\\n' +
-    '  -H "Content-Type: application/json" \\\n' +
-    '  -d \'{"name":"Agent Name","role":"Role Title","mission":"What this agent does","description":"Detailed description","personality":{"traits":["trait1","trait2"],"tone":"tone description","style":"style description"},"rules":["rule1","rule2"],"capabilities":["cap1","cap2"]}\'\n' +
-    '```\n\n' +
-    'Rules for team building:\n' +
-    '- Always use the API to create agents — never write agent files directly\n' +
-    '- Give each agent a distinct role that doesn\'t overlap with others\n' +
-    '- Set personality traits, tone, and style to differentiate agents\n' +
-    '- Include specific rules for each agent\'s domain\n' +
-    '- After creating agents, briefly summarize the team to the owner\n\n' +
-
-    '## Task Structure Rules (MANDATORY)\n\n' +
-    'The orchestrator MUST use parent/child task structure for any work that involves multiple steps, multiple agents, or grouped deliverables. Flat tasks are only for simple, single-agent, single-step work.\n\n' +
-    '### ALWAYS create parent + subtasks when:\n\n' +
-    '- **Multi-agent work:** Owner asks for something that needs 2+ agents (e.g., "build feature X" needs Scout research + Dev implementation + Shipper release)\n' +
-    '- **Campaigns:** Owner asks to "promote", "launch", or "market" something - create a campaign parent with per-platform or per-channel subtasks\n' +
-    '- **Multi-step features:** Any development work with research, implementation, testing, and deployment phases\n' +
-    '- **Content series:** Multiple related content pieces (e.g., "write posts for all platforms")\n' +
-    '- **Investigations with follow-up:** Research that leads to implementation (Scout researches, Dev implements)\n\n' +
-    '### Use flat tasks ONLY when:\n\n' +
-    '- Single agent, single deliverable, no follow-up needed\n' +
-    '- Quick fixes or one-off operations\n' +
-    '- Standalone research with no implementation phase\n\n' +
-    '### Parent/Child Patterns\n\n' +
-    '| Owner Request | Parent Task | Subtasks |\n' +
-    '|---|---|---|\n' +
-    '| "Promote TeamHero" | Promotion Campaign | Per-platform: LinkedIn (Pen), Reddit (Buzz), HN (Buzz), Dev.to (Pen) |\n' +
-    '| "Build feature X" | Feature X | Research (Scout), Implement (Dev), Test (Dev), Release (Shipper) |\n' +
-    '| "Fix bug Y and announce it" | Bug Y Fix + Announce | Fix (Dev), Announce (Pen) |\n' +
-    '| "Research and implement Z" | Z Initiative | Research (Scout), Implement (Dev) |\n' +
-    '| "Create content for launch" | Launch Content | Blog post (Pen), Social posts (Pen), Community posts (Buzz) |\n\n' +
-    '### How to create parent + subtasks\n\n' +
-    '```bash\n' +
-    '# 1. Create parent task (no agent assigned - it is a container)\n' +
-    'curl -X POST http://localhost:' + port + '/api/tasks \\\n' +
-    '  -H "Content-Type: application/json" \\\n' +
-    '  -d \'{"title":"Promotion Campaign Q1","description":"Multi-platform promotion","status":"in_progress","priority":"high","type":"operations"}\'\n\n' +
-    '# 2. Create subtasks under the parent\n' +
-    'curl -X POST http://localhost:' + port + '/api/tasks/{parentId}/subtasks \\\n' +
-    '  -H "Content-Type: application/json" \\\n' +
-    '  -d \'{"title":"LinkedIn post","assignedTo":"pen-agent-id","type":"content"}\'\n' +
-    '```\n\n' +
-    '### Auto-advance behavior\n' +
-    'When ALL subtasks reach accepted or closed, the parent task automatically advances to `pending_approval`. The owner sees the parent as complete and can close it. This works recursively for nested subtasks.\n\n' +
-    '### Why this matters\n' +
-    '- Tree view and Flow view only show hierarchy when parent/child is used\n' +
-    '- Related work is visually grouped in the dashboard\n' +
-    '- The owner can see campaign progress at a glance\n' +
-    '- Auto-advance means the parent closes when all work is done\n\n' +
+    'When asked to build a team or add agents, create each via `POST /api/agents` with distinct role, personality, mission, rules, and capabilities. Never write agent files directly. Summarize the team to the owner when done.\n\n' +
 
     '## Team Rules\n\n' + teamR + '\n\n' +
     '## Security Rules\n\n' + secR + '\n\n' +
     '## Safety Boundaries\n\n' +
     'CRITICAL: These rules are enforced at all times regardless of permission mode.\n\n' +
-    '- **Project folder only:** ALL file operations (read, write, delete) must stay within `' + ROOT.replace(/\\/g, '/') + '/`. Never access files outside this directory.\n' +
+    (function() {
+      var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
+      var paths = sys.localAccess || [ROOT.replace(/\\/g, '/')];
+      if (paths.length <= 1) {
+        return '- **Project folder only:** ALL file operations (read, write, delete) must stay within `' + ROOT.replace(/\\/g, '/') + '/`. Never access files outside this directory.\n';
+      }
+      return '- **Allowed folders only:** ALL file operations (read, write, delete) must stay within these directories (including subfolders). Never access files outside them.\n' +
+        paths.map(function(p) { return '  - `' + p + '/`\n'; }).join('');
+    })() +
     '- **Never modify platform files:** Do not edit `server.js`, `portal/`, `launch.bat`, `launch.sh`, or `package.json`. These are managed by the upgrade system.\n' +
     '- **Never expose secrets:** Environment variables containing API keys or tokens must never be echoed, logged, written to files, or included in any output. Use them only as pass-through in commands.\n' +
     '- **No destructive system commands:** Do not run commands that affect the OS, other processes, or network infrastructure (e.g. `rm -rf /`, `shutdown`, `format`, `kill`, `netsh`).\n' +
@@ -535,48 +473,6 @@ function rebuildClaudeMd() {
     '- Only `node` is guaranteed to be available. Do not assume `python3`, `python`, or other runtimes are installed.\n' +
     '- To parse JSON in shell commands, use `node -e` instead of `python3 -c`.\n' +
     '- Example: `curl -s url | node -e "let d=\'\';process.stdin.on(\'data\',c=>d+=c);process.stdin.on(\'end\',()=>console.log(JSON.stringify(JSON.parse(d),null,2)))"`\n\n' +
-    '## Round Table Protocol\n\n' +
-    'A "round table" is a structured review session. When asked to run one:\n' +
-    '1. Scan all tasks in `data/tasks/` \u2014 review each task\'s status\n' +
-    '2. Launch agents on `accepted` tasks to EXECUTE (not auto-close)\n' +
-    '3. Launch agents on `revision_needed` tasks \u2014 owner gave feedback\n' +
-    '4. Surface tasks with `blocker` field set \u2014 report the blocker text directly\n' +
-    '5. Present items needing approval to the owner\n' +
-    '6. Review knowledge base \u2014 list recent additions, flag stale docs (>30 days since update)\n' +
-    '7. Create a round table summary in `data/round-tables/` with timestamp filename\n' +
-    '8. Update each agent\'s short-memory with round table outcomes\n\n' +
-    '## Task Lifecycle\n\n' +
-    '### Flow: Prepare -> Review -> Execute -> Verify -> Close\n\n' +
-    '1. **Planning** (planning): Agent creates plan/materials\n' +
-    '2. **Submit for review** (pending_approval): Agent fills version.json + sets pending_approval\n' +
-    '3. **Owner reviews**: Accept (go execute) or Improve (revise)\n' +
-    '4. **Execute** (in_progress): Agent executes the approved work\n' +
-    '5. **Submit proof** (pending_approval): Agent updates version with execution proof\n' +
-    '6. **Owner verifies**: Checks proof and closes\n\n' +
-    '### Status meanings\n' +
-    '- **planning**: Agent creating plan/materials before first review.\n' +
-    '- **in_progress** (Working): Agent executing after acceptance.\n' +
-    '- **pending_approval** (Pending): Materials ready for review OR execution proof ready for verify.\n' +
-    '- **accepted**: Owner approved materials \u2014 triggers agent execution immediately.\n' +
-    '- **revision_needed** (Improve): Owner sent feedback. Agent must revise and resubmit.\n' +
-    '- **closed**: Owner verified execution proof. Terminal state.\n' +
-    '- **hold**: Paused.\n' +
-    '- **cancelled**: Abandoned.\n\n' +
-    '### Blocker Protocol\n' +
-    '- Tasks support a `blocker` field (string or null) via `PUT /api/tasks/{id} {"blocker":"reason"}`\n' +
-    '- Setting/clearing blocker auto-logs to progress\n' +
-    '- Blocker tasks show red glow in dashboard \u2014 do not work past a blocker, set it and stop\n' +
-    '- Orchestrator clears blocker and relaunches agent when unblocked\n\n' +
-    '### Submission Validation\n' +
-    '- Server rejects `pending_approval` if latest version.json has empty `content` (400 error)\n' +
-    '- Always update version.json before setting pending_approval\n\n' +
-    '### Autopilot\n' +
-    'Tasks with `autopilot: true` run the full lifecycle without human review. Agent delivers, orchestrator auto-accepts, auto-closes.\n\n' +
-    '### Subtasks\n' +
-    'Parent tasks can have subtasks (`parentTaskId`, `subtasks[]`, `dependsOn[]`). Unlimited nesting.\n' +
-    'When all subtasks reach accepted/closed, parent auto-advances to pending_approval.\n' +
-    'Tasks with unmet `dependsOn` wait until all dependencies are accepted/closed.\n\n' +
-    'Task files: `data/tasks/{task-id}/task.json` with version folders `v1/`, `v2/`, etc.\n\n' +
     '## File Structure Reference\n\n' +
     '- `config/system.json` \u2014 System configuration\n' +
     '- `config/team-rules.md` \u2014 Team operational rules\n' +
@@ -598,6 +494,10 @@ function rebuildClaudeMd() {
     '- Files in `temp/` are disposable \u2014 they may be cleaned at any time\n' +
     '- Never store deliverables in `temp/` \u2014 use `data/tasks/{id}/v{n}/` instead\n\n' +
     (capsMd ? '## Capabilities\n\n' + capsMd + '\n\n' : '') +
+    (function() {
+      var sc = skills.getEnabledSkillContexts({ ROOT: ROOT, readJSON: readJSON, path: path });
+      return sc ? '## Enabled Skills\n\n' + sc + '\n\n' : '';
+    })() +
     '## Available Secrets\n\n' +
     'These environment variables are injected into your session when secrets are unlocked:\n\n' +
     (function() {
@@ -649,10 +549,15 @@ function rebuildAgentMd(aid, a) {
     '- NEVER create a new version (v2, v3...) unless the owner explicitly sent revision feedback.\n' +
     '- Server rejects `pending_approval` if version content is empty - always fill version.json first.\n' +
     '- If a task has `autopilot: true`, the orchestrator handles acceptance automatically.\n\n') +
-    '## Memory\n' +
-    '- Short-term context: `agents/' + aid + '/short-memory.md`\n' +
-    '- Long-term knowledge: `agents/' + aid + '/long-memory.md`\n' +
-    '- Agent-specific rules: `agents/' + aid + '/rules.md`\n';
+    '## Memory Management\n\n' +
+    'Read `short-memory.md` and `long-memory.md` at task start. Update via API: `PUT /api/agents/' + aid + '/memory/short` or `/long` with `{"content":"..."}`.\n\n' +
+    '**Key rules:**\n' +
+    '- Update short-memory before finishing any task phase (planning, execution)\n' +
+    '- On task CLOSE: promote completed work to long-memory (work log entry, lessons learned, new platform/tool knowledge, owner preference patterns). Remove closed task from short-memory Active Tasks.\n' +
+    '- On task START: prune short-memory entries older than 14 days, remove resolved blockers\n' +
+    '- This applies to ALL task modes: normal, direct execution, and autopilot\n\n' +
+    'Files: `agents/' + aid + '/short-memory.md`, `agents/' + aid + '/long-memory.md`, `agents/' + aid + '/rules.md`\n' +
+    'For full templates and detailed rules, read `config/memory-templates.md`.\n';
   writeText(path.join(ROOT, 'agents', aid, 'agent.md'), md);
 }
 
@@ -753,15 +658,23 @@ async function handle(pn, m, req, res) {
     const idx = readJSON(path.join(ROOT, 'data/tasks/_index.json')) || { tasks: [] };
     const agentTasks = idx.tasks.filter(function(t) { return t.assignedTo === agentId; });
     var groups = [];
+    var reports = [];
+    var content = [];
     var totalFiles = 0;
+    var contentTypes = { content: true };
     agentTasks.forEach(function(t) {
       var taskDir = path.join(ROOT, 'data/tasks', t.id);
       var taskJson = readJSON(path.join(taskDir, 'task.json'));
       if (!taskJson) return;
+      // Only include closed/accepted tasks for categorized view
+      var isFinal = taskJson.status === 'closed' || taskJson.status === 'accepted' || taskJson.status === 'done';
+      // Find latest version folder
+      var latestVn = 0;
       var fileMap = {};
       for (var vn = 1; vn <= 20; vn++) {
         var vDir = path.join(taskDir, 'v' + vn);
         if (!fs.existsSync(vDir)) continue;
+        latestVn = vn;
         try {
           var entries = fs.readdirSync(vDir);
           entries.forEach(function(f) {
@@ -779,10 +692,27 @@ async function handle(pn, m, req, res) {
       var files = Object.values(fileMap);
       if (files.length === 0) return;
       totalFiles += files.length;
-      groups.push({ taskId: t.id, taskTitle: taskJson.title || 'Untitled Task', taskUpdatedAt: taskJson.updatedAt || taskJson.createdAt || '', files: files });
+      var createdAt = taskJson.updatedAt || taskJson.createdAt || '';
+      var group = { taskId: t.id, taskTitle: taskJson.title || 'Untitled Task', taskType: taskJson.type || 'general', taskUpdatedAt: createdAt, createdAt: createdAt, files: files };
+      groups.push(group);
+      // Categorize for final tasks only
+      if (isFinal) {
+        // Only include files from the latest version for categorized view
+        var latestFiles = files.filter(function(f) { return f.version === latestVn; });
+        if (latestFiles.length > 0) {
+          var catGroup = { taskId: t.id, taskTitle: taskJson.title || 'Untitled Task', taskType: taskJson.type || 'general', createdAt: createdAt, files: latestFiles };
+          if (contentTypes[taskJson.type]) {
+            content.push(catGroup);
+          } else {
+            reports.push(catGroup);
+          }
+        }
+      }
     });
     groups.sort(function(a, b) { return (b.taskUpdatedAt || '').localeCompare(a.taskUpdatedAt || ''); });
-    return J(res, { groups: groups, totalFiles: totalFiles });
+    reports.sort(function(a, b) { return (b.createdAt || '').localeCompare(a.createdAt || ''); });
+    content.sort(function(a, b) { return (b.createdAt || '').localeCompare(a.createdAt || ''); });
+    return J(res, { groups: groups, reports: reports, content: content, totalFiles: totalFiles });
   }
 
   const am = pn.match(/^\/api\/agents\/([^\/]+)$/);
@@ -1610,6 +1540,41 @@ async function handle(pn, m, req, res) {
     return J(res, { ok: true, mode: mode, note: 'New sessions will use this mode. Restart existing sessions to apply.' });
   }
 
+  // LOCAL ACCESS PATHS
+  if (pn === '/api/settings/access-paths' && m === 'GET') {
+    var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
+    var paths = sys.localAccess || [ROOT.replace(/\\/g, '/')];
+    return J(res, { paths: paths, root: ROOT.replace(/\\/g, '/') });
+  }
+  if (pn === '/api/settings/access-paths' && m === 'POST') {
+    var b = await parseBody(req);
+    var p = (b.path || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+    if (!p) return E(res, 'Path is required');
+    var sp = path.join(ROOT, 'config/system.json');
+    var sys = readJSON(sp) || {};
+    var rootNorm = ROOT.replace(/\\/g, '/');
+    if (!sys.localAccess) sys.localAccess = [rootNorm];
+    if (!sys.localAccess.includes(p)) sys.localAccess.push(p);
+    writeJSON(sp, sys);
+    rebuildClaudeMd();
+    broadcast('settings');
+    return J(res, { ok: true, paths: sys.localAccess });
+  }
+  if (pn === '/api/settings/access-paths' && m === 'DELETE') {
+    var b = await parseBody(req);
+    var p = (b.path || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+    var rootNorm = ROOT.replace(/\\/g, '/');
+    if (!p || p === rootNorm) return E(res, 'Cannot remove the project folder');
+    var sp = path.join(ROOT, 'config/system.json');
+    var sys = readJSON(sp) || {};
+    if (!sys.localAccess) sys.localAccess = [rootNorm];
+    sys.localAccess = sys.localAccess.filter(function(x) { return x !== p; });
+    writeJSON(sp, sys);
+    rebuildClaudeMd();
+    broadcast('settings');
+    return J(res, { ok: true, paths: sys.localAccess });
+  }
+
   // SECRETS
   if (pn === '/api/secrets/status' && m === 'GET') {
     var exists = fs.existsSync(getSecretsFilePath());
@@ -1872,6 +1837,12 @@ async function handle(pn, m, req, res) {
     var result = await skills.handleSkillToggle(sharedCtx, skillMatch[1], skillMatch[2]);
     if (result.error) return E(res, result.error, result.status || 400);
     return J(res, result, result.status || 200);
+  }
+
+  // GITHUB STATUS
+  if (pn === '/api/skills/github/status' && m === 'GET') {
+    var ghResult = await skills.getGitHubStatus(sharedCtx);
+    return J(res, ghResult);
   }
 
   // SCREEN RECORDER CONTROL
@@ -2257,18 +2228,16 @@ if (healthResult.issues.length > 0) {
 (async function() {
   var envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : null;
   var configPort = getConfiguredPort();
-  var requestedPort = envPort || configPort || 3777;
+  var requestedPort = envPort || configPort || 3796;
 
-  // If the requested port is busy, find the next free one
-  if (await isPortFree(requestedPort)) {
-    PORT = requestedPort;
-  } else {
-    PORT = await findFreePort(requestedPort + 1);
-    console.log('  Port ' + requestedPort + ' is busy, using ' + PORT + ' instead.');
+  // Check if port is available - fail loudly if busy (never auto-switch)
+  if (!(await isPortFree(requestedPort))) {
+    console.error('\n  ERROR: Port ' + requestedPort + ' is already in use.');
+    console.error('  TeamHero requires this port. Please free it and try again.');
+    console.error('  To find what is using it: lsof -i :' + requestedPort + ' (macOS/Linux) or netstat -ano | findstr ' + requestedPort + ' (Windows)\n');
+    process.exit(1);
   }
 
-  // Save the port so this instance reuses it on restart
-  if (!envPort) savePort(PORT);
-
+  PORT = requestedPort;
   server.listen(PORT, function() { console.log('\n  Agent Team Portal running at http://localhost:' + PORT + '\n'); });
 })();

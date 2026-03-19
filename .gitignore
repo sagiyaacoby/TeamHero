@@ -14,9 +14,14 @@ agents/*/
 data/tasks/*
 data/round-tables/*
 data/media/*
+data/knowledge/*
 !data/tasks/.gitkeep
 !data/round-tables/.gitkeep
 !data/media/.gitkeep
+!data/knowledge/.gitkeep
+
+# Skills (user-installed)
+data/skills/
 
 # Backups
 backups/

@@ -400,16 +400,24 @@
       var isActive = state.currentView === 'agent-detail' && state.currentAgentId === a.id;
       var dotClass = 'agent-dot' + (workingAgents[a.id] ? ' agent-dot-working' : '');
       var dotTitle = workingAgents[a.id] ? 'Working on task' : 'Idle';
+      var nameHtml = escHtml(a.name);
+      if (a.role || a.mission) {
+        nameHtml = '<span data-tooltip="' + escHtml((a.role || '') + (a.role && a.mission ? '\n' : '') + (a.mission || '')) + '">' + escHtml(a.name) + '</span>';
+      }
       html += '<a href="#" data-agent-id="' + a.id + '" class="nav-link nav-orchestrator' + (isActive ? ' active' : '') + '">' +
-        '<span class="icon">&#9733;</span> ' + escHtml(a.name) + '<span class="' + dotClass + '" title="' + dotTitle + '"></span></a>';
+        '<span class="icon">&#9733;</span> ' + nameHtml + '<span class="' + dotClass + '" title="' + dotTitle + '"></span></a>';
     });
 
     subAgents.forEach(function(a) {
       var isActive = state.currentView === 'agent-detail' && state.currentAgentId === a.id;
       var dotClass = 'agent-dot' + (workingAgents[a.id] ? ' agent-dot-working' : '');
       var dotTitle = workingAgents[a.id] ? 'Working on task' : 'Idle';
+      var nameHtml = escHtml(a.name);
+      if (a.role || a.mission) {
+        nameHtml = '<span data-tooltip="' + escHtml((a.role || '') + (a.role && a.mission ? '\n' : '') + (a.mission || '')) + '">' + escHtml(a.name) + '</span>';
+      }
       html += '<a href="#" data-agent-id="' + a.id + '" class="nav-link' + (isActive ? ' active' : '') + '">' +
-        '<span class="icon">&#9670;</span> ' + escHtml(a.name) + '<span class="' + dotClass + '" title="' + dotTitle + '"></span></a>';
+        '<span class="icon">&#9670;</span> ' + nameHtml + '<span class="' + dotClass + '" title="' + dotTitle + '"></span></a>';
     });
 
     container.innerHTML = html;
@@ -1519,10 +1527,10 @@
                 var linkHtml = '<div class="version-file-item">';
                 var safeName = encodeURIComponent(f);
                 if (isImage) {
-                  linkHtml += '<a href="javascript:void(0)" onclick="App.previewFileInModal(decodeURIComponent(\'' + safeName + '\'),\'' + rawUrl + '\',true)" class="version-file-thumb-link"><img src="' + rawUrl + '" class="version-file-thumb" alt="' + escHtml(f) + '"></a>';
+                  linkHtml += '<a href="javascript:void(0)" onclick="App.previewFileInModal(decodeURIComponent(\'' + safeName + '\'),\'' + rawUrl + '\',true,\'' + taskId + '\')" class="version-file-thumb-link"><img src="' + rawUrl + '" class="version-file-thumb" alt="' + escHtml(f) + '"></a>';
                 }
                 if (isImage || isText) {
-                  linkHtml += '<a href="javascript:void(0)" onclick="App.previewFileInModal(decodeURIComponent(\'' + safeName + '\'),\'' + rawUrl + '\',' + isImage + ')" class="version-file-link">' + escHtml(f) + '</a>';
+                  linkHtml += '<a href="javascript:void(0)" onclick="App.previewFileInModal(decodeURIComponent(\'' + safeName + '\'),\'' + rawUrl + '\',' + isImage + ',\'' + taskId + '\')" class="version-file-link">' + escHtml(f) + '</a>';
                 } else {
                   linkHtml += '<a href="' + rawUrl + '" target="_blank" class="version-file-link">' + escHtml(f) + '</a>';
                 }
@@ -1618,11 +1626,17 @@
       if (isActive) cls += ' status-step-active';
       else if (isPast) cls += ' status-step-past';
 
-      var onclick = s.action ? 'App.changeTaskStatus(\'' + s.action + '\')' : 'App.changeTaskStatus(\'' + s.key + '\')';
-      html += '<button class="' + cls + '" onclick="' + onclick + '" title="Set to ' + s.label + '">';
-      html += '<span class="status-step-icon">' + s.icon + '</span>';
-      html += '<span class="status-step-label">' + s.label + '</span>';
-      html += '</button>';
+      if (s.action) {
+        html += '<button class="' + cls + '" onclick="App.changeTaskStatus(\'' + s.action + '\')" title="Set to ' + s.label + '">';
+        html += '<span class="status-step-icon">' + s.icon + '</span>';
+        html += '<span class="status-step-label">' + s.label + '</span>';
+        html += '</button>';
+      } else {
+        html += '<span class="' + cls + ' status-step-indicator" title="' + s.label + '">';
+        html += '<span class="status-step-icon">' + s.icon + '</span>';
+        html += '<span class="status-step-label">' + s.label + '</span>';
+        html += '</span>';
+      }
       if (i < steps.length - 1) html += '<span class="status-step-arrow' + (isPast ? ' status-step-arrow-past' : '') + '">&#8250;</span>';
     }
 
@@ -1851,6 +1865,17 @@
   async function changeTaskStatus(newStatus) {
     var id = state.currentTaskId;
     if (!id) return;
+
+    // Confirmation for Accept
+    if (newStatus === 'accept') {
+      var ok = await confirmAction({
+        title: 'Accept this task?',
+        message: 'This will approve the work and trigger the agent to execute.',
+        confirmLabel: 'Accept'
+      });
+      if (!ok) return;
+    }
+
     try {
       // Actions that go through the action handler (write version timeline)
       var actionStatuses = { accept: true, close: true };
@@ -1865,6 +1890,18 @@
         close: 'Closed', hold: 'On hold', cancelled: 'Cancelled'
       };
       toast(labels[newStatus] || 'Status updated');
+
+      // After successful Accept, inject PTY message to trigger orchestrator
+      if (newStatus === 'accept') {
+        if (termWs && termWs.readyState === 1) {
+          var task = await api.get('/api/tasks/' + id);
+          var msg = 'Task ' + id + ' "' + task.title + '" was accepted by the owner. Launch the assigned agent to execute it.\r';
+          termWs.send(JSON.stringify({ type: 'input', data: msg }));
+        } else {
+          toast('Terminal not connected - tell the orchestrator manually', 'warning');
+        }
+      }
+
       await openTask(id);
     } catch(e) {
       toast('Failed: ' + e.message, 'error');
@@ -1882,9 +1919,27 @@
       if (commentsEl) commentsEl.focus();
       return;
     }
+
+    var ok = await confirmAction({
+      title: 'Send revision feedback?',
+      message: 'This will request the agent to revise their work with your feedback.',
+      confirmLabel: 'Send Feedback'
+    });
+    if (!ok) return;
+
     try {
       await api.put('/api/tasks/' + id, { action: 'improve', comments: comments });
-      toast('Feedback sent — revision requested');
+      toast('Feedback sent - revision requested');
+
+      // Inject PTY message to trigger agent revision
+      if (termWs && termWs.readyState === 1) {
+        var task = await api.get('/api/tasks/' + id);
+        var msg = 'Task ' + id + ' "' + task.title + '" received revision feedback from the owner: "' + comments.replace(/"/g, "'") + '". Launch the assigned agent to revise.\r';
+        termWs.send(JSON.stringify({ type: 'input', data: msg }));
+      } else {
+        toast('Terminal not connected - tell the orchestrator manually', 'warning');
+      }
+
       await openTask(id);
     } catch(e) {
       toast('Failed: ' + e.message, 'error');
@@ -1900,7 +1955,108 @@
     if (overlay) overlay.classList.add('hidden');
   }
 
-  function showFilePreview(filename, content, rawUrl) {
+  function togglePreviewFeedback() {
+    var overlay = document.getElementById('file-preview-overlay');
+    if (!overlay) return;
+    var panel = overlay.querySelector('.file-preview-feedback');
+    if (!panel) return;
+    var isHidden = panel.classList.contains('hidden');
+    panel.classList.toggle('hidden');
+    if (isHidden) {
+      var ta = panel.querySelector('.file-preview-feedback-textarea');
+      if (ta) { ta.value = ''; ta.focus(); }
+      var imgArea = panel.querySelector('.file-preview-feedback-images');
+      if (imgArea) imgArea.innerHTML = '';
+    }
+  }
+
+  async function submitPreviewFeedback() {
+    var overlay = document.getElementById('file-preview-overlay');
+    if (!overlay) return;
+    var taskId = overlay.dataset.taskId;
+    if (!taskId) { toast('No task context', 'error'); return; }
+    var ta = overlay.querySelector('.file-preview-feedback-textarea');
+    var comments = ta ? ta.value.trim() : '';
+    if (!comments) {
+      toast('Please add feedback for the agent', 'error');
+      if (ta) ta.focus();
+      return;
+    }
+
+    var ok = await confirmAction({
+      title: 'Send revision feedback?',
+      message: 'This will request the agent to revise their work with your feedback.',
+      confirmLabel: 'Send Feedback'
+    });
+    if (!ok) return;
+
+    try {
+      await api.put('/api/tasks/' + taskId, { action: 'improve', comments: comments });
+      toast('Feedback sent - revision requested');
+
+      // Inject PTY message to trigger agent revision
+      if (termWs && termWs.readyState === 1) {
+        var task = await api.get('/api/tasks/' + taskId);
+        var msg = 'Task ' + taskId + ' "' + task.title + '" received revision feedback from the owner: "' + comments.replace(/"/g, "'") + '". Launch the assigned agent to revise.\r';
+        termWs.send(JSON.stringify({ type: 'input', data: msg }));
+      } else {
+        toast('Terminal not connected - tell the orchestrator manually', 'warning');
+      }
+
+      closeFilePreview();
+      if (state.currentTaskId === taskId) {
+        await openTask(taskId);
+      }
+    } catch(e) {
+      toast('Failed: ' + e.message, 'error');
+    }
+  }
+
+  async function attachPreviewImage() {
+    var overlay = document.getElementById('file-preview-overlay');
+    if (!overlay) return;
+    var taskId = overlay.dataset.taskId;
+    if (!taskId) { toast('No task context', 'error'); return; }
+    var clip = await readClipboardImage();
+    if (clip.error === 'permission') {
+      toast('Clipboard permission denied - click the page first', 'error');
+      return;
+    }
+    if (!clip.blob) {
+      toast(clip.error ? 'Clipboard error: ' + clip.error : 'No image found in clipboard', 'error');
+      return;
+    }
+    try {
+      var b64 = await blobToBase64(clip.blob);
+      var result = await api.post('/api/upload-image', { data: b64, destination: 'task', taskId: taskId });
+      var imgArea = overlay.querySelector('.file-preview-feedback-images');
+      if (imgArea) {
+        var img = document.createElement('img');
+        var imgUrl = URL.createObjectURL(clip.blob);
+        img.onload = function() { URL.revokeObjectURL(imgUrl); };
+        img.src = imgUrl;
+        img.className = 'feedback-image-preview';
+        imgArea.innerHTML = '';
+        imgArea.appendChild(img);
+        var pathSpan = document.createElement('span');
+        pathSpan.className = 'paste-path';
+        pathSpan.textContent = result.path;
+        pathSpan.style.display = 'block';
+        pathSpan.style.marginTop = '4px';
+        imgArea.appendChild(pathSpan);
+      }
+      var ta = overlay.querySelector('.file-preview-feedback-textarea');
+      if (ta) {
+        var sep = ta.value.trim() ? '\n' : '';
+        ta.value += sep + '[Attached image: ' + result.path + ']';
+      }
+      toast('Image attached: ' + result.path);
+    } catch (e) {
+      toast('Failed to upload image: ' + e.message, 'error');
+    }
+  }
+
+  function showFilePreview(filename, content, rawUrl, taskId) {
     var overlay = document.getElementById('file-preview-overlay');
     if (!overlay) {
       overlay = document.createElement('div');
@@ -1910,14 +2066,44 @@
         '<div class="file-preview-header">' +
           '<span class="file-preview-title"></span>' +
           '<div class="file-preview-actions">' +
+            '<button class="file-preview-improve-btn" onclick="App.togglePreviewFeedback()" title="Send feedback">&#9998; Improve</button>' +
             '<a class="file-preview-newtab" target="_blank" title="Open in new tab">&#8599;</a>' +
             '<button class="file-preview-close" onclick="App.closeFilePreview()" title="Close">&times;</button>' +
           '</div>' +
         '</div>' +
         '<div class="file-preview-body"></div>' +
+        '<div class="file-preview-feedback hidden">' +
+          '<textarea class="file-preview-feedback-textarea" placeholder="Write feedback for the agent..."></textarea>' +
+          '<div class="file-preview-feedback-actions">' +
+            '<button class="btn btn-primary" onclick="App.submitPreviewFeedback()">Send Feedback</button>' +
+            '<button class="attach-image-btn" onclick="App.attachPreviewImage()" title="Paste image from clipboard">&#128203; Attach Image</button>' +
+            '<button class="btn btn-secondary" onclick="App.togglePreviewFeedback()">Cancel</button>' +
+          '</div>' +
+          '<div class="file-preview-feedback-images"></div>' +
+        '</div>' +
       '</div>';
       overlay.addEventListener('click', function(e) { if (e.target === overlay) closeFilePreview(); });
       document.body.appendChild(overlay);
+    }
+    // Store taskId on the overlay
+    if (taskId) {
+      overlay.dataset.taskId = taskId;
+    } else {
+      delete overlay.dataset.taskId;
+    }
+    // Show/hide improve button based on task context
+    var improveBtn = overlay.querySelector('.file-preview-improve-btn');
+    if (improveBtn) {
+      improveBtn.style.display = taskId ? '' : 'none';
+    }
+    // Reset feedback panel
+    var feedbackPanel = overlay.querySelector('.file-preview-feedback');
+    if (feedbackPanel) {
+      feedbackPanel.classList.add('hidden');
+      var ta = feedbackPanel.querySelector('.file-preview-feedback-textarea');
+      if (ta) ta.value = '';
+      var imgArea = feedbackPanel.querySelector('.file-preview-feedback-images');
+      if (imgArea) imgArea.innerHTML = '';
     }
     overlay.querySelector('.file-preview-title').textContent = filename;
     var newtabLink = overlay.querySelector('.file-preview-newtab');
@@ -1936,13 +2122,33 @@
     overlay.classList.remove('hidden');
   }
 
-  function showImagePreview(filename, rawUrl) {
+  function showImagePreview(filename, rawUrl, taskId) {
     var overlay = document.getElementById('file-preview-overlay');
     if (!overlay) {
-      showFilePreview(filename, '', rawUrl);
+      showFilePreview(filename, '', rawUrl, taskId);
     }
     var ov = document.getElementById('file-preview-overlay');
     if (!ov) return;
+    // Store taskId on overlay
+    if (taskId) {
+      ov.dataset.taskId = taskId;
+    } else {
+      delete ov.dataset.taskId;
+    }
+    // Show/hide improve button
+    var improveBtn = ov.querySelector('.file-preview-improve-btn');
+    if (improveBtn) {
+      improveBtn.style.display = taskId ? '' : 'none';
+    }
+    // Reset feedback panel
+    var feedbackPanel = ov.querySelector('.file-preview-feedback');
+    if (feedbackPanel) {
+      feedbackPanel.classList.add('hidden');
+      var ta = feedbackPanel.querySelector('.file-preview-feedback-textarea');
+      if (ta) ta.value = '';
+      var imgArea = feedbackPanel.querySelector('.file-preview-feedback-images');
+      if (imgArea) imgArea.innerHTML = '';
+    }
     ov.querySelector('.file-preview-title').textContent = filename;
     var newtabLink = ov.querySelector('.file-preview-newtab');
     newtabLink.href = rawUrl;
@@ -1952,9 +2158,9 @@
     ov.classList.remove('hidden');
   }
 
-  function previewFileInModal(filename, rawUrl, isImage) {
+  function previewFileInModal(filename, rawUrl, isImage, taskId) {
     if (isImage) {
-      showImagePreview(filename, rawUrl);
+      showImagePreview(filename, rawUrl, taskId);
       return;
     }
     // Fetch text content and show in modal
@@ -1962,7 +2168,7 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.text();
     }).then(function(text) {
-      showFilePreview(filename, text, rawUrl);
+      showFilePreview(filename, text, rawUrl, taskId);
     }).catch(function() {
       // Fallback: open in new tab
       window.open(rawUrl, '_blank');
@@ -1987,7 +2193,7 @@
     var rawUrl = '/api/tasks/' + taskId + '/versions/' + version + '/files/' + encodeURIComponent(file) + '/raw';
     try {
       var data = await api.get('/api/tasks/' + taskId + '/versions/' + version + '/files/' + encodeURIComponent(file));
-      showFilePreview(file, data.content, rawUrl);
+      showFilePreview(file, data.content, rawUrl, taskId);
     } catch(e) {
       toast('Failed to load file', 'error');
     }
@@ -4482,11 +4688,15 @@
         '<p>The Dashboard is your <strong>mission control</strong>. It shows all tasks, their statuses, and the latest round table summary. It defaults to showing <strong>Pending</strong> tasks - work that needs your attention.</p>' +
         '<h3>Stat Cards</h3>' +
         '<p>Click any stat card to filter: <strong>Pending</strong>, <strong>All</strong>, <strong>Working</strong>, <strong>Accepted</strong>, or <strong>Closed</strong>. The pending count includes subtasks so nothing slips through.</p>' +
-        '<h3>Two View Modes</h3>' +
+        '<h3>View Modes</h3>' +
         '<ul>' +
         '<li><strong>Tree</strong> (default) - Hierarchical view showing parent tasks with their subtasks nested below. Expandable/collapsible.</li>' +
         '<li><strong>Flow</strong> - Visual dependency graph showing how tasks connect. Nodes pulse when in progress, dim when done, glow when pending. Hover any node to highlight its upstream and downstream chain.</li>' +
         '</ul>' +
+        '<h3>Agent Filter Bar</h3>' +
+        '<p>The filter bar above the task list lets you <strong>filter tasks by agent</strong>. Click an agent name to show only their tasks. Click again to clear the filter. This works across all view modes.</p>' +
+        '<h3>Agent Tooltip</h3>' +
+        '<p>Hover over any agent name in the sidebar to see a <strong>tooltip with their role description</strong>. A quick way to remember who does what without opening the agent page.</p>' +
         '<h3>Round Table Summary</h3>' +
         '<p>The right panel shows the latest round table report - what was executed, what needs your attention, and overall team status.</p>' +
         '<button class="help-go-link" onclick="App.navigate(\'dashboard\')">Go to Dashboard &#8594;</button>'
@@ -4497,25 +4707,32 @@
       content: '<h2>Tasks &amp; Lifecycle</h2>' +
         '<p>Tasks are <strong>work units</strong> assigned to agents. Every piece of work flows through a clear lifecycle so nothing gets lost.</p>' +
         '<h3>Status Flow</h3>' +
-        '<p><strong>Working &rarr; Pending &rarr; Accepted &rarr; Closed</strong></p>' +
+        '<p><strong>Working &rarr; Pending &rarr; Accepted/Improve &rarr; Working &rarr; Closed</strong></p>' +
         '<ul>' +
-        '<li><strong>Working</strong> - Agent is actively doing the work. This is the starting state - when a task is created, the agent begins immediately.</li>' +
-        '<li><strong>Pending</strong> - Agent submitted a deliverable for your review. You can <strong>Accept</strong> or <strong>Improve</strong>.</li>' +
-        '<li><strong>Accepted</strong> - You approved the work. The orchestrator closes it automatically.</li>' +
+        '<li><strong>Working</strong> - Agent is actively doing work. When a task is created, the agent begins immediately by preparing a plan or draft.</li>' +
+        '<li><strong>Pending</strong> - Agent submitted work for your review. You can <strong>Accept</strong> or <strong>Improve</strong>.</li>' +
+        '<li><strong>Accepted</strong> - You approved the work. The orchestrator launches the agent to execute, then closes it automatically.</li>' +
         '<li><strong>Improve</strong> - You sent feedback. The agent revises and resubmits to Pending.</li>' +
         '<li><strong>Closed</strong> - Done. Terminal state. No further work.</li>' +
         '<li><strong>Hold</strong> - Paused. Agent will not touch it until released.</li>' +
         '<li><strong>Cancelled</strong> - Abandoned. No further action.</li>' +
         '</ul>' +
-        '<h3>Key Principles</h3>' +
-        '<ul>' +
-        '<li>Tasks start in Planning state. The agent creates a plan, then submits for review.</li>' +
-        '<li>Accepted tasks are closed automatically - you never need to close them manually.</li>' +
-        '<li>Each submission creates a new version. You can see the full revision history on the task detail page.</li>' +
-        '<li>Use the Improve button with specific feedback to tell the agent exactly what to change.</li>' +
-        '</ul>' +
+        '<h3>Two-Phase Pending Flow</h3>' +
+        '<p>A task goes through <strong>Pending twice</strong>:</p>' +
+        '<ol>' +
+        '<li><strong>First Pending (Plan/Draft)</strong> - The agent prepares materials, a plan, or a draft and submits for review. You review the approach before any execution happens.</li>' +
+        '<li><strong>Second Pending (Proof)</strong> - After you accept, the agent executes the approved work and submits proof (URLs, file paths, test results). You verify the outcome and the task closes.</li>' +
+        '</ol>' +
+        '<p>This ensures you always see what will be done before it happens, and verify the results after.</p>' +
+        '<h3>Inline Improve</h3>' +
+        '<p>When previewing a deliverable file or image, you can click <strong>Improve</strong> directly from the preview modal. Type your feedback right there - no need to go back to the task page first.</p>' +
+        '<h3>Confirmation Dialogs</h3>' +
+        '<p>Both <strong>Accept</strong> and <strong>Improve</strong> now show a confirmation dialog before executing. This prevents accidental clicks and gives you a chance to add feedback text for Improve.</p>' +
+        '<h3>Auto-Trigger</h3>' +
+        '<p>When you click Accept or Improve, the orchestrator is <strong>immediately notified</strong> via the CLI. You do not need to run a round table or manually tell it - the agent picks up the work right away.</p>' +
         '<h3>Subtasks &amp; Dependencies</h3>' +
         '<p>Tasks can have subtasks assigned to different agents, and tasks can depend on other tasks. When all subtasks are done, the parent auto-advances. Blocked tasks (waiting on dependencies) show a lock icon.</p>' +
+        '<p>Use subtasks when a goal requires <strong>multiple agents or phases</strong>. For example, a launch campaign might have a research subtask (Scout), a content subtask (Pen), and a development subtask (Dev). The parent task tracks the overall goal while subtasks track individual contributions.</p>' +
         '<h3>Autopilot Mode</h3>' +
         '<p>Individual tasks can be set to autopilot - the agent delivers, the orchestrator auto-accepts, and the task closes without your review. Toggle it on the task detail page.</p>' +
         '<button class="help-go-link" onclick="App.navigate(\'dashboard\')">View Tasks &#8594;</button>'
@@ -4650,6 +4867,13 @@
         '<li><strong>Autonomous mode</strong> - No confirmation prompts. The only protection is the AI following its rules. Faster, but you are trusting the instructions to hold.</li>' +
         '</ul>' +
         '<p><strong>Recommendation:</strong> If your machine has sensitive files outside the project, use <strong>supervised mode</strong>. Use autonomous mode only when you trust the workflow and have reviewed your agent rules. You can switch modes anytime in Settings.</p>' +
+        '<h3>Two Storage Systems</h3>' +
+        '<p>TeamHero has two separate systems for storing sensitive information:</p>' +
+        '<ul>' +
+        '<li><strong>Secrets Vault</strong> - For <strong>API keys, tokens, and service credentials</strong>. Encrypted with AES-256-GCM. Injected as environment variables (e.g. <code>$TRELLO_API_KEY</code>). Managed in Settings &gt; Secrets &amp; API Keys.</li>' +
+        '<li><strong>Credentials Manager</strong> - For <strong>website login credentials</strong> (service name, username, password). Injected as paired environment variables: <code>{SERVICE}_USERNAME</code> and <code>{SERVICE}_PASSWORD</code>. Managed in Settings &gt; Credentials. Use this for platform logins agents need for browser-based tasks.</li>' +
+        '</ul>' +
+        '<p>Both are stored locally and encrypted. Neither uses the OS keychain.</p>' +
         '<h3>Secret Storage (Vault)</h3>' +
         '<p>API keys and tokens are stored in a single <strong>encrypted file</strong>: <code>config/secrets.enc</code>. This is TeamHero' + q + 's own vault - it does <strong>not</strong> use the OS keychain (Windows Credential Manager, macOS Keychain, etc.). The file is self-contained and portable with your project.</p>' +
         '<h3>How the Vault Works</h3>' +
@@ -4711,8 +4935,14 @@
         '<li><strong>Autonomous</strong> - Agents operate freely without confirmation prompts</li>' +
         '<li><strong>Supervised</strong> - Agents ask before executing certain actions</li>' +
         '</ul>' +
-        '<h3>Updates</h3>' +
-        '<p>Check for platform updates from GitHub. Updates only affect platform files - your agents, tasks, and data are never touched.</p>' +
+        '<h3>Credentials Manager</h3>' +
+        '<p>Store website login credentials for services your agents need to access. Each entry has a service name, username, and password. They are injected as environment variables (<code>{SERVICE}_USERNAME</code> and <code>{SERVICE}_PASSWORD</code>) so agents can use them in browser-based tasks without you pasting credentials each time.</p>' +
+        '<h3>Secrets &amp; API Keys</h3>' +
+        '<p>Store API keys and tokens in the encrypted vault. These are injected as environment variables into agent sessions. See the <strong>Security &amp; Secrets</strong> help topic for details on how the vault works.</p>' +
+        '<h3>Updates &amp; Self-Healing</h3>' +
+        '<p>Check for platform updates from GitHub. Updates only affect platform files - your agents, tasks, and data are never touched. The upgrade system includes <strong>self-healing</strong>: if critical bootstrap files (launch scripts, package.json) are missing or corrupted, the updater detects and restores them automatically.</p>' +
+        '<h3>CLI Installer</h3>' +
+        '<p>When installing TeamHero via the CLI, the installer prompts you for a <strong>folder name</strong> for your team. This becomes the project directory where all your team data lives.</p>' +
         '<button class="help-go-link" onclick="App.navigate(\'settings\')">Go to Settings &#8594;</button>'
     }
   ];
@@ -4748,6 +4978,30 @@
       contentEl.scrollTop = 0;
     }
   }
+
+  // ── JS-based tooltips (avoid sidebar overflow clipping) ──
+  (function initTooltips() {
+    var tip = document.createElement('div');
+    tip.className = 'tooltip-popup';
+    document.body.appendChild(tip);
+
+    document.addEventListener('mouseenter', function(e) {
+      var el = e.target.closest('[data-tooltip]');
+      if (!el) return;
+      tip.textContent = el.getAttribute('data-tooltip');
+      var rect = el.getBoundingClientRect();
+      tip.style.left = (rect.right + 8) + 'px';
+      tip.style.top = (rect.top + rect.height / 2) + 'px';
+      tip.style.transform = 'translateY(-50%)';
+      tip.classList.add('visible');
+    }, true);
+
+    document.addEventListener('mouseleave', function(e) {
+      var el = e.target.closest('[data-tooltip]');
+      if (!el) return;
+      tip.classList.remove('visible');
+    }, true);
+  })();
 
   window.App = {
     navigate: navigate,
@@ -4815,6 +5069,9 @@
     viewFile: viewFile,
     previewFileInModal: previewFileInModal,
     closeFilePreview: closeFilePreview,
+    togglePreviewFeedback: togglePreviewFeedback,
+    submitPreviewFeedback: submitPreviewFeedback,
+    attachPreviewImage: attachPreviewImage,
     changeTaskStatus: changeTaskStatus,
     toggleFeedback: toggleFeedback,
     pasteImage: pasteImage,

@@ -87,6 +87,23 @@ body {
 .nav-orchestrator.active { color: #ffffff !important; border-right-color: var(--green) !important; }
 .nav-orchestrator .icon { color: inherit; }
 
+/* Agent tooltip — JS-based, appended to body to avoid overflow clipping */
+.tooltip-popup {
+  position: fixed;
+  background: #1a1d24; color: var(--text-muted);
+  font-size: 11px; font-weight: 400; line-height: 1.4;
+  padding: 8px 12px; border-radius: 6px;
+  border: 1px solid var(--border);
+  white-space: pre-line; max-width: 250px; width: max-content;
+  pointer-events: none; opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 9999;
+}
+.tooltip-popup.visible { opacity: 1; }
+@media (max-width: 768px) {
+  .tooltip-popup { display: none; }
+}
+
 /* Agent working indicator */
 .agent-working-dot {
   display: inline-block; width: 6px; height: 6px; border-radius: 50%;
@@ -674,6 +691,9 @@ body {
 .status-step:hover {
   color: var(--text); border-color: var(--text-muted); background: var(--hover-bg);
 }
+.status-step-indicator { cursor: default; }
+.status-step-indicator:hover { color: var(--text-dim); border-color: var(--border); background: transparent; }
+.status-step-indicator.status-step-active:hover { color: var(--accent); border-color: var(--accent); background: rgba(176,176,176,0.08); }
 .status-step-icon { font-size: 13px; }
 .status-step-active {
   color: var(--accent); border-color: var(--accent); background: rgba(176,176,176,0.08);
@@ -1125,6 +1145,40 @@ body {
 .file-preview-image {
   max-width: 100%; max-height: 70vh; border-radius: var(--radius);
   object-fit: contain;
+}
+.file-preview-improve-btn {
+  background: none; border: 1px solid var(--warning, #f59e0b); color: var(--warning, #f59e0b);
+  font-size: 13px; cursor: pointer; padding: 4px 12px; border-radius: var(--radius);
+  transition: background 0.15s, color 0.15s; white-space: nowrap;
+}
+.file-preview-improve-btn:hover {
+  background: var(--warning, #f59e0b); color: var(--bg-surface);
+}
+.file-preview-feedback {
+  border-top: 1px solid var(--border); padding: 14px 20px; flex-shrink: 0;
+  background: rgba(0,0,0,0.15);
+}
+.file-preview-feedback.hidden { display: none; }
+.file-preview-feedback-textarea {
+  width: 100%; min-height: 72px; max-height: 150px; resize: vertical;
+  background: var(--bg-card, rgba(0,0,0,0.2)); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--text); padding: 10px 12px;
+  font-size: 13px; font-family: inherit; line-height: 1.5;
+  box-sizing: border-box;
+}
+.file-preview-feedback-textarea:focus {
+  outline: none; border-color: var(--accent);
+}
+.file-preview-feedback-textarea::placeholder { color: var(--text-dim); }
+.file-preview-feedback-actions {
+  display: flex; gap: 8px; margin-top: 10px; align-items: center;
+}
+.file-preview-feedback-images {
+  margin-top: 8px;
+}
+.file-preview-feedback-images img {
+  max-width: 120px; max-height: 80px; border-radius: var(--radius);
+  border: 1px solid var(--border);
 }
 
 /* ── Clickable Stat Cards & Badges ──────────────── */

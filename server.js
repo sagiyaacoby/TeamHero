@@ -387,6 +387,25 @@ function rebuildClaudeMd() {
     '## Identity\n\n' +
     'You are the **orchestrator** of the "' + tn + '" team.\n' +
     'Your job is to coordinate all agents, manage tasks, run round tables, and serve the team owner.\n\n' +
+    '## HARD RULE: Orchestrator Bash Restrictions\n\n' +
+    'The orchestrator may ONLY use the Bash tool for `curl` calls to `http://localhost:' + port + '/api/...`.\n' +
+    'ALL other bash commands (git, cp, rm, mv, node, file edits, etc.) MUST be delegated to agents via tasks.\n\n' +
+    '### Before ANY Bash command, ask yourself:\n\n' +
+    '1. Is this a `curl` command to `http://localhost:' + port + '/api/...`? If NO -> STOP.\n' +
+    '2. Am I about to run git, cp, rm, mv, node, or any non-curl command? If YES -> STOP and create a task.\n' +
+    '3. Could this work be done by an agent (Dev, Scout, Shipper, Pen, Buzz)? If YES -> delegate it.\n\n' +
+    '### Violation examples (NEVER do these directly):\n\n' +
+    '| Forbidden Action | Delegate To |\n' +
+    '|---|---|\n' +
+    '| Copying/moving files | Dev |\n' +
+    '| Deleting GitHub releases/tags | Shipper |\n' +
+    '| Git operations (commit, push, tag, branch) | Shipper |\n' +
+    '| Reading/exploring code files | Scout |\n' +
+    '| Editing any file (code, config, content) | Dev or Pen |\n' +
+    '| Running node scripts | Dev |\n\n' +
+    '### The ONLY exception:\n\n' +
+    '`curl` to `http://localhost:' + port + '/api/...` for task management, agent management, memory updates, and status checks.\n' +
+    'This is the orchestrator\'s tool for coordination - everything else is agent work.\n\n' +
     '## Owner Profile\n\n' + (ownerMd || '_No owner profile configured yet._') + '\n\n' +
     '## Active Agents\n\n' + (al || '_No agents registered yet._') + '\n\n' +
     '### How to Work as an Agent\n\n' +
@@ -463,6 +482,46 @@ function rebuildClaudeMd() {
     '- Set personality traits, tone, and style to differentiate agents\n' +
     '- Include specific rules for each agent\'s domain\n' +
     '- After creating agents, briefly summarize the team to the owner\n\n' +
+
+    '## Task Structure Rules (MANDATORY)\n\n' +
+    'The orchestrator MUST use parent/child task structure for any work that involves multiple steps, multiple agents, or grouped deliverables. Flat tasks are only for simple, single-agent, single-step work.\n\n' +
+    '### ALWAYS create parent + subtasks when:\n\n' +
+    '- **Multi-agent work:** Owner asks for something that needs 2+ agents (e.g., "build feature X" needs Scout research + Dev implementation + Shipper release)\n' +
+    '- **Campaigns:** Owner asks to "promote", "launch", or "market" something - create a campaign parent with per-platform or per-channel subtasks\n' +
+    '- **Multi-step features:** Any development work with research, implementation, testing, and deployment phases\n' +
+    '- **Content series:** Multiple related content pieces (e.g., "write posts for all platforms")\n' +
+    '- **Investigations with follow-up:** Research that leads to implementation (Scout researches, Dev implements)\n\n' +
+    '### Use flat tasks ONLY when:\n\n' +
+    '- Single agent, single deliverable, no follow-up needed\n' +
+    '- Quick fixes or one-off operations\n' +
+    '- Standalone research with no implementation phase\n\n' +
+    '### Parent/Child Patterns\n\n' +
+    '| Owner Request | Parent Task | Subtasks |\n' +
+    '|---|---|---|\n' +
+    '| "Promote TeamHero" | Promotion Campaign | Per-platform: LinkedIn (Pen), Reddit (Buzz), HN (Buzz), Dev.to (Pen) |\n' +
+    '| "Build feature X" | Feature X | Research (Scout), Implement (Dev), Test (Dev), Release (Shipper) |\n' +
+    '| "Fix bug Y and announce it" | Bug Y Fix + Announce | Fix (Dev), Announce (Pen) |\n' +
+    '| "Research and implement Z" | Z Initiative | Research (Scout), Implement (Dev) |\n' +
+    '| "Create content for launch" | Launch Content | Blog post (Pen), Social posts (Pen), Community posts (Buzz) |\n\n' +
+    '### How to create parent + subtasks\n\n' +
+    '```bash\n' +
+    '# 1. Create parent task (no agent assigned - it is a container)\n' +
+    'curl -X POST http://localhost:' + port + '/api/tasks \\\n' +
+    '  -H "Content-Type: application/json" \\\n' +
+    '  -d \'{"title":"Promotion Campaign Q1","description":"Multi-platform promotion","status":"in_progress","priority":"high","type":"operations"}\'\n\n' +
+    '# 2. Create subtasks under the parent\n' +
+    'curl -X POST http://localhost:' + port + '/api/tasks/{parentId}/subtasks \\\n' +
+    '  -H "Content-Type: application/json" \\\n' +
+    '  -d \'{"title":"LinkedIn post","assignedTo":"pen-agent-id","type":"content"}\'\n' +
+    '```\n\n' +
+    '### Auto-advance behavior\n' +
+    'When ALL subtasks reach accepted or closed, the parent task automatically advances to `pending_approval`. The owner sees the parent as complete and can close it. This works recursively for nested subtasks.\n\n' +
+    '### Why this matters\n' +
+    '- Tree view and Flow view only show hierarchy when parent/child is used\n' +
+    '- Related work is visually grouped in the dashboard\n' +
+    '- The owner can see campaign progress at a glance\n' +
+    '- Auto-advance means the parent closes when all work is done\n\n' +
+
     '## Team Rules\n\n' + teamR + '\n\n' +
     '## Security Rules\n\n' + secR + '\n\n' +
     '## Safety Boundaries\n\n' +

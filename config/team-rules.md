@@ -145,6 +145,13 @@ Progress log distinguishes the phases automatically via timestamps.
 - Owner can toggle autopilot off at any time to re-enable human review
 - Progress is still logged for audit
 
+## Task Structure (HARD RULE)
+- Multi-step or multi-agent work MUST use parent/child task structure
+- Create the parent task first, then create subtasks via `POST /api/tasks/{parentId}/subtasks`
+- Parent tasks are containers - they may or may not be assigned to an agent
+- The orchestrator must evaluate every incoming request: "Does this need multiple steps or agents?" If yes, parent + subtasks.
+- Never create 3+ related flat tasks when a parent/child structure would group them
+
 ## Collaboration / Subtasks
 - Parent tasks can have subtasks assigned to different agents
 - Subtask fields: `parentTaskId`, `subtasks[]`, `dependsOn[]`

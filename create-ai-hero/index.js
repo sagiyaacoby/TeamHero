@@ -4,6 +4,7 @@
 var fs = require('fs');
 var path = require('path');
 var { execSync, spawnSync } = require('child_process');
+var readline = require('readline');
 
 var VERSION = '2.2.1';
 
@@ -20,14 +21,26 @@ function info(msg) { log('  ' + c.blue + '→' + c.reset + ' ' + msg); }
 function warn(msg) { log('  ' + c.yellow + '!' + c.reset + ' ' + msg); }
 function err(msg) { log('  ' + c.red + '✗' + c.reset + ' ' + msg); }
 
+function prompt(question, defaultValue) {
+  return new Promise(function(resolve) {
+    var rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, function(answer) {
+      rl.close();
+      resolve(answer.trim() || defaultValue);
+    });
+  });
+}
+
 // ── Args ──
 var args = process.argv.slice(2);
-if (args.includes('--help') || args.includes('-h') || args.length === 0) {
+if (args.includes('--help') || args.includes('-h')) {
   log('');
-  log(c.bold + '  AI-Hero' + c.reset + ' — Multi-agent orchestration powered by Claude CLI');
+  log(c.bold + '  AI-Hero' + c.reset + ' - Multi-agent orchestration powered by Claude CLI');
   log('');
   log('  ' + c.dim + 'Usage:' + c.reset);
-  log('    npx create-ai-hero ' + c.cyan + '<project-name>' + c.reset);
+  log('    npx create-ai-hero ' + c.cyan + '[project-name]' + c.reset);
+  log('');
+  log('  ' + c.dim + 'If no project name is given, you will be prompted.' + c.reset);
   log('');
   log('  ' + c.dim + 'Example:' + c.reset);
   log('    npx create-ai-hero my-team');
@@ -35,13 +48,22 @@ if (args.includes('--help') || args.includes('-h') || args.length === 0) {
   process.exit(0);
 }
 
-var projectName = args[0].replace(/[^a-zA-Z0-9_\-\.]/g, '-');
-var projectDir = path.resolve(process.cwd(), projectName);
+async function main() {
 
 log('');
-log(c.bold + '  ⚡ AI-Hero v' + VERSION + c.reset);
+log(c.bold + '  AI-Hero v' + VERSION + c.reset);
 log(c.dim + '  Multi-agent orchestration powered by Claude CLI' + c.reset);
 log('');
+
+var projectName;
+if (args.length > 0) {
+  projectName = args[0].replace(/[^a-zA-Z0-9_\-\.]/g, '-');
+} else {
+  var answer = await prompt('  What would you like to name your team folder? ' + c.dim + '[MyTeam]' + c.reset + ': ', 'MyTeam');
+  projectName = answer.replace(/[^a-zA-Z0-9_\-\.]/g, '-');
+}
+
+var projectDir = path.resolve(process.cwd(), projectName);
 
 // ── Check if dir exists ──
 if (fs.existsSync(projectDir)) {
@@ -140,3 +162,7 @@ if (!hasClaude) {
 log('  The dashboard will open at ' + c.cyan + 'http://localhost:3777' + c.reset);
 log('  Complete the setup wizard, then ask your orchestrator to build a team.');
 log('');
+
+} // end main
+
+main().catch(function(e) { console.error(e); process.exit(1); });

@@ -1,3 +1,0 @@
-- Read both short-memory.md and long-memory.md before starting any task
-- Update short-memory.md before finishing any task phase using the structured format
-- Add reusable lessons to long-memory.md after task completion

@@ -632,6 +632,18 @@ async function handle(pn, m, req, res) {
   if (pn === '/api/system/initialize' && m === 'POST') {
     const sp = path.join(ROOT, 'config/system.json');
     const s = readJSON(sp) || {};
+    // On first initialization, clean out any shipped/leftover sub-agents
+    if (!s.initialized) {
+      const rp = path.join(ROOT, 'agents/_registry.json');
+      const rg = readJSON(rp) || { agents: [] };
+      rg.agents.forEach(function(a) {
+        if (a.isOrchestrator) return;
+        const dir = path.join(ROOT, 'agents', a.id);
+        if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+      });
+      rg.agents = rg.agents.filter(function(a) { return a.isOrchestrator; });
+      writeJSON(rp, rg);
+    }
     s.initialized = true;
     writeJSON(sp, s);
     ensureOrchestrator();

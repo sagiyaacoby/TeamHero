@@ -6,10 +6,9 @@ config/system.json
 config/credentials.md
 config/secrets.enc
 
-# Agent runtime data (auto-generated at startup)
-agents/orchestrator/
-agents/*/short-memory.md
-agents/*/long-memory.md
+# Agent data (generated at runtime via API, not platform files)
+agents/_registry.json
+agents/*/
 
 # Task & media content
 data/tasks/*

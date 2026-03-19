@@ -251,7 +251,7 @@ body {
 .badge-active { background: transparent; color: var(--green); }
 .badge-inactive { background: transparent; color: var(--text-dim); }
 .badge-pending { background: transparent; color: var(--yellow); }
-.badge-draft { background: transparent; color: var(--text-dim); }
+.badge-planning { background: transparent; color: #5ba8c8; }
 .badge-in_progress { background: transparent; color: var(--accent); }
 .badge-revision_needed { background: transparent; color: var(--yellow); }
 .badge-done { background: transparent; color: var(--green); }
@@ -660,8 +660,8 @@ body {
 .status-pipeline-row {
   display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
 }
-.status-pipeline-side {
-  display: flex; align-items: center; gap: 6px; margin-top: 10px;
+.pipeline-gap {
+  width: 16px; flex-shrink: 0;
 }
 .status-step {
   display: flex; align-items: center; gap: 5px;
@@ -696,7 +696,7 @@ body {
 .status-step-improve:hover { border-color: var(--yellow); }
 
 /* Pipeline active colors per status */
-.status-step-active[onclick*="draft"] { color: var(--text-muted); border-color: var(--text-muted); background: rgba(85,85,85,0.08); }
+.status-step-active[onclick*="planning"] { color: #5ba8c8; border-color: #5ba8c8; background: rgba(91,168,200,0.08); }
 .status-step-active[onclick*="pending_approval"] { color: var(--yellow); border-color: var(--yellow); background: rgba(212,169,74,0.08); }
 .status-step-active[onclick*="'approved'"] { color: var(--green); border-color: var(--green); background: rgba(184,230,184,0.08); }
 .status-step-active[onclick*="in_progress"] { color: var(--accent); border-color: var(--accent); background: rgba(176,176,176,0.08); }
@@ -903,6 +903,24 @@ body {
 }
 .tag-filter-clear:hover { color: var(--text); }
 
+/* ── Agent Filter Bar ────────────────────────────── */
+.agent-filter-bar {
+  display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; align-items: center;
+}
+.agent-filter-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;
+  cursor: pointer; transition: all 0.15s; border: 1px solid var(--border);
+  background: var(--bg-secondary); color: var(--text-dim);
+}
+.agent-filter-chip:hover { border-color: var(--accent); color: var(--text); }
+.agent-filter-chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.agent-filter-clear {
+  font-size: 11px; color: var(--text-dim); cursor: pointer;
+  padding: 3px 8px; border: none; background: none;
+}
+.agent-filter-clear:hover { color: var(--text); }
+
 /* Tag pills on task cards */
 .task-tags { display: inline-flex; gap: 3px; margin-left: 4px; flex-shrink: 0; }
 .task-tag-pill {
@@ -1033,33 +1051,67 @@ body {
 /* ── File Preview Modal ──────────────────────────── */
 .file-preview-overlay {
   position: fixed; inset: 0; z-index: 9999;
-  background: rgba(0,0,0,0.6); display: flex;
+  background: rgba(0,0,0,0.65); display: flex;
   align-items: center; justify-content: center;
+  backdrop-filter: blur(2px);
 }
 .file-preview-overlay.hidden { display: none; }
 .file-preview-modal {
   width: 80%; max-width: 900px; max-height: 85vh;
   background: var(--bg-surface); border: 1px solid var(--border);
   border-radius: var(--radius-lg); display: flex; flex-direction: column;
-  overflow: hidden;
+  overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
 }
 .file-preview-header {
   display: flex; justify-content: space-between; align-items: center;
   padding: 14px 20px; border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 .file-preview-title {
   font-weight: 600; color: var(--text); font-size: 14px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-right: 12px;
 }
+.file-preview-actions {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+}
+.file-preview-newtab {
+  color: var(--text-dim); font-size: 18px; text-decoration: none;
+  padding: 4px 8px; border-radius: var(--radius); transition: color 0.15s, background 0.15s;
+}
+.file-preview-newtab:hover { color: var(--accent); background: rgba(255,255,255,0.06); }
+.file-preview-close {
+  background: none; border: none; color: var(--text-dim); font-size: 22px;
+  cursor: pointer; padding: 2px 8px; border-radius: var(--radius);
+  line-height: 1; transition: color 0.15s, background 0.15s;
+}
+.file-preview-close:hover { color: var(--text); background: rgba(255,255,255,0.08); }
 .file-preview-body {
   padding: 20px; overflow-y: auto; color: var(--text);
-  font-size: 14px; line-height: 1.7;
+  font-size: 14px; line-height: 1.7; flex: 1;
 }
 .file-preview-body pre {
   white-space: pre-wrap; word-break: break-word;
+  background: rgba(0,0,0,0.2); padding: 12px 16px; border-radius: var(--radius);
 }
 .file-preview-body h1, .file-preview-body h2, .file-preview-body h3 {
   margin-top: 16px; margin-bottom: 8px; color: var(--text);
 }
+.file-preview-body h1 { font-size: 22px; }
+.file-preview-body h2 { font-size: 18px; }
+.file-preview-body h3 { font-size: 15px; }
+.file-preview-body p { margin: 8px 0; }
+.file-preview-body ul, .file-preview-body ol { padding-left: 24px; margin: 8px 0; }
+.file-preview-body li { margin: 4px 0; }
+.file-preview-body blockquote {
+  border-left: 3px solid var(--accent); padding: 8px 16px; margin: 12px 0;
+  color: var(--text-dim); background: rgba(0,0,0,0.15); border-radius: 0 var(--radius) var(--radius) 0;
+}
+.file-preview-body code {
+  background: rgba(0,0,0,0.25); padding: 2px 6px; border-radius: 3px; font-size: 13px;
+}
+.file-preview-body pre code { background: none; padding: 0; }
+.file-preview-body a { color: var(--accent); }
 .file-preview-body table {
   width: 100%; border-collapse: collapse; margin: 12px 0;
 }
@@ -1067,6 +1119,13 @@ body {
   padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: left; font-size: 13px;
 }
 .file-preview-body th { font-weight: 600; color: var(--text-dim); }
+.file-preview-image-wrap {
+  display: flex; align-items: center; justify-content: center; min-height: 200px;
+}
+.file-preview-image {
+  max-width: 100%; max-height: 70vh; border-radius: var(--radius);
+  object-fit: contain;
+}
 
 /* ── Clickable Stat Cards & Badges ──────────────── */
 .clickable-stat { cursor: pointer; transition: color 0.15s; }
@@ -1301,9 +1360,9 @@ body {
 }
 .autopilot-toggle {
   background: transparent; border: 1px solid var(--border);
-  color: var(--text-muted); font-size: 12px; padding: 4px 10px;
+  color: var(--text-muted); font-size: 12px; padding: 6px 12px;
   border-radius: var(--radius-sm); cursor: pointer;
-  transition: all 0.15s; white-space: nowrap;
+  transition: all 0.15s; white-space: nowrap; font-family: inherit; font-weight: 500;
 }
 .autopilot-toggle:hover { border-color: var(--gold); color: var(--gold); }
 .autopilot-toggle.active { border-color: var(--gold); color: var(--gold); background: rgba(200,176,96,0.1); }
@@ -1335,6 +1394,20 @@ body {
 .view-mode-btn:hover { color: var(--text); background: var(--hover-bg); }
 .view-mode-btn.active { color: var(--text); background: rgba(255,255,255,0.06); }
 
+/* ── Sort Toggle ─────────────────────────────── */
+.sort-toggle {
+  display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  overflow: hidden; margin-left: 8px; vertical-align: middle;
+}
+.sort-btn {
+  padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer;
+  background: transparent; color: var(--text-dim); border: none; border-right: 1px solid var(--border);
+  transition: background 0.15s, color 0.15s; text-transform: uppercase; letter-spacing: 0.3px;
+}
+.sort-btn:last-child { border-right: none; }
+.sort-btn:hover { color: var(--text); background: var(--hover-bg); }
+.sort-btn.active { color: var(--accent); background: rgba(99,102,241,0.10); }
+
 /* ── Flow View (Node Graph) ───────────────────── */
 .flow-view { position: relative; overflow: auto; padding: 0; min-height: 200px; }
 .flow-canvas {
@@ -1361,7 +1434,7 @@ body {
 .flow-node-agent { color: var(--text-muted); }
 .flow-node-status { padding: 1px 5px; border-radius: 3px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
 
-.flow-node.status-draft { border-left: 3px solid var(--text-dim); }
+.flow-node.status-planning { border-left: 3px solid #5ba8c8; box-shadow: 0 0 8px rgba(91,168,200,0.2); }
 .flow-node.status-in_progress { border-left: 3px solid #6e7dff; box-shadow: 0 0 12px rgba(110,125,255,0.35); animation: flow-pulse 2s ease-in-out infinite; }
 .flow-node.status-pending_approval { border-left: 3px solid var(--yellow); box-shadow: 0 0 8px rgba(212,169,74,0.25); }
 .flow-node.status-accepted { border-left: 3px solid var(--green); opacity: 0.5; }
@@ -1419,3 +1492,141 @@ body {
 .hierarchy-item.blocked { opacity: 0.7; }
 .hierarchy-dep-badge { font-size: 9px; color: var(--text-dim); padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px; }
 .hierarchy-dep-badge.dep-blocked { color: var(--red); border-color: var(--red); }
+
+/* ── Agent Files Tab ────────────────────────────── */
+.agent-files-container { padding: 8px 0; max-height: 600px; overflow-y: auto; }
+.agent-files-group { margin-bottom: 16px; }
+.agent-files-group-title {
+  font-size: 12px; font-weight: 600; color: var(--text-dim); text-transform: uppercase;
+  letter-spacing: 0.5px; padding: 4px 0; margin-bottom: 4px;
+  border-bottom: 1px solid var(--border); cursor: pointer; transition: color 0.15s;
+}
+.agent-files-group-title:hover { color: var(--yellow); }
+.agent-files-list { padding: 4px 0 4px 8px; }
+.agent-files-item { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.agent-files-thumb {
+  width: 40px; height: 40px; object-fit: cover; border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.1); flex-shrink: 0;
+}
+.agent-files-link {
+  color: var(--yellow); text-decoration: none; font-size: 13px; cursor: pointer;
+  font-family: 'SFMono-Regular', Consolas, monospace; transition: color 0.15s;
+}
+.agent-files-link:hover { color: #ffffff; }
+.agent-files-version {
+  font-size: 10px; color: var(--text-dim); padding: 1px 4px;
+  border: 1px solid var(--border); border-radius: 3px;
+}
+
+/* ── Upgrade Modal ─────────────────────────────── */
+.upgrade-modal-box {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 28px; width: 520px; max-width: 90vw;
+  max-height: 85vh; overflow-y: auto;
+}
+.upgrade-modal-box h3 { margin: 0 0 16px; font-size: 17px; font-weight: 600; color: var(--text); }
+.upgrade-version-arrow {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
+  font-size: 18px; font-weight: 600;
+}
+.upgrade-version-arrow .version-old { color: var(--text-muted); }
+.upgrade-version-arrow .version-arrow { color: var(--text-dim); font-size: 14px; }
+.upgrade-version-arrow .version-new { color: var(--green); }
+.upgrade-release-notes {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 14px; margin-bottom: 16px; max-height: 180px; overflow-y: auto;
+  font-size: 13px; line-height: 1.5; color: var(--text-muted);
+}
+.upgrade-release-notes h1, .upgrade-release-notes h2, .upgrade-release-notes h3 {
+  font-size: 13px; font-weight: 600; color: var(--text); margin: 8px 0 4px;
+}
+.upgrade-release-notes:first-child { margin-top: 0; }
+.upgrade-release-notes ul { padding-left: 16px; }
+.upgrade-release-notes li { margin-bottom: 2px; }
+.upgrade-warning {
+  background: rgba(224,96,96,0.08); border: 1px solid rgba(224,96,96,0.3);
+  border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px;
+  font-size: 13px; color: var(--red); display: flex; align-items: flex-start; gap: 8px;
+}
+.upgrade-warning .warn-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+.upgrade-warning label { display: flex; align-items: center; gap: 6px; cursor: pointer; margin-top: 8px; font-size: 12px; }
+.upgrade-warning input[type="checkbox"] { width: auto; }
+.upgrade-backup-note {
+  font-size: 12px; color: var(--text-dim); margin-bottom: 16px;
+  display: flex; align-items: center; gap: 6px;
+}
+.upgrade-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* ── Upgrade Progress ──────────────────────────── */
+.upgrade-progress {
+  margin-top: 12px; padding: 16px; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.upgrade-progress-step {
+  display: flex; align-items: center; gap: 10px; padding: 6px 0;
+  font-size: 13px; color: var(--text-dim); transition: color 0.2s;
+}
+.upgrade-progress-step.active { color: var(--text); font-weight: 500; }
+.upgrade-progress-step.done { color: var(--green); }
+.upgrade-progress-step.error { color: var(--red); }
+.upgrade-progress-step .step-icon {
+  width: 18px; text-align: center; flex-shrink: 0; font-size: 12px;
+}
+.upgrade-progress-step.active .step-icon { animation: upgradePulse 1s ease-in-out infinite; }
+@keyframes upgradePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* ── Post-Upgrade Banner ───────────────────────── */
+.post-upgrade-banner {
+  position: fixed; top: 0; left: var(--sidebar-w); right: 0; z-index: 900;
+  background: linear-gradient(90deg, rgba(184,230,184,0.12), rgba(184,230,184,0.06));
+  border-bottom: 1px solid rgba(184,230,184,0.25); padding: 10px 20px;
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 13px; color: var(--green);
+}
+.post-upgrade-banner .banner-dismiss {
+  background: none; border: none; color: var(--text-muted); cursor: pointer;
+  font-size: 16px; padding: 2px 6px; line-height: 1;
+}
+.post-upgrade-banner .banner-dismiss:hover { color: var(--text); }
+
+/* ── System Health Badge ───────────────────────── */
+.health-indicator {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+  border-radius: var(--radius-sm); font-size: 12px; font-weight: 500;
+}
+.health-indicator.health-green { background: rgba(184,230,184,0.1); color: var(--green); }
+.health-indicator.health-yellow { background: rgba(212,169,74,0.1); color: var(--yellow); }
+.health-indicator.health-red { background: rgba(224,96,96,0.1); color: var(--red); }
+.health-dot { width: 6px; height: 6px; border-radius: 50%; }
+.health-green .health-dot { background: var(--green); }
+.health-yellow .health-dot { background: var(--yellow); }
+.health-red .health-dot { background: var(--red); }
+.health-details {
+  margin-top: 8px; padding: 8px 12px; background: rgba(224,96,96,0.06);
+  border: 1px solid rgba(224,96,96,0.2); border-radius: var(--radius);
+  font-size: 12px; color: var(--red);
+}
+
+/* ── Upgrading Lock Overlay ────────────────────── */
+.upgrading-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,0.75); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 16px;
+}
+.upgrading-overlay .upgrading-spinner {
+  width: 40px; height: 40px; border: 3px solid var(--border);
+  border-top-color: var(--accent); border-radius: 50%;
+  animation: upgradeSpin 0.8s linear infinite;
+}
+@keyframes upgradeSpin {
+  to { transform: rotate(360deg); }
+}
+.upgrading-overlay .upgrading-text {
+  font-size: 16px; font-weight: 500; color: var(--text);
+}
+.upgrading-overlay .upgrading-sub {
+  font-size: 13px; color: var(--text-muted);
+}

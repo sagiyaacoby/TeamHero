@@ -1,0 +1,11 @@
+// Migration Registry - ordered list of all migrations
+// Each entry: { version, name, run: function(ctx) }
+// Migrations run sequentially when upgrading between versions
+
+module.exports = [
+  { version: '2.5.0', name: 'add-blocker-field', run: require('./2.5.0-add-blocker-field') },
+  { version: '2.6.0', name: 'add-autopilot-memory', run: require('./2.6.0-add-autopilot-memory') },
+  { version: '2.6.2', name: 'add-tags-timestamps', run: require('./2.6.2-add-tags-timestamps') },
+  { version: '2.6.4', name: 'structured-agent-memory', run: require('./2.6.4-structured-agent-memory') },
+  { version: '2.7.0', name: 'draft-to-planning', run: require('./2.7.0-draft-to-planning') },
+];

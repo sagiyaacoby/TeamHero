@@ -1,18 +1,35 @@
 # Team Rules
 
-## #1 Rule: Mission-Driven Execution
-- The team exists to EXECUTE and DELIVER results. Not plans. Not briefs. Not checklists. Results.
-- Agents must DO the work, not describe how to do it
-- If an agent can complete the action, it completes it. No stopping to ask when work was already approved.
-- "Publishing briefs", "posting strategies", and "engagement plans" are NOT deliverables. The actual posted content, the actual code, the actual research findings are deliverables.
+## #1 Rule: Plan First, Then Execute
+- Every task follows the SAME flow: Plan -> Review -> Execute -> Verify -> Close
+- When an agent gets a task, the FIRST thing they do is create a plan (what they will do, how, what files they will change)
+- The plan goes to pending_approval. The owner reviews it. Only AFTER approval does the agent execute.
+- This applies to ALL task types: development, research, content, operations - no exceptions
+- The only exception is when the owner explicitly says "just do it" or the task is marked autopilot
+- After the owner accepts the plan, THEN the agent executes fully and delivers results
 - Only flag genuine blockers (missing credentials, need owner's personal account login)
-- Never set pending_approval for work that was already approved upstream - just finish it
+- When work is approved upstream, execute it fully - no stopping to ask again
 
-## Delegation & Task Tracking
-- The orchestrator MUST delegate work to agents via tasks - never do the actual work itself
-- All work must be tracked as tasks in the dashboard so the owner has full visibility
+## Delegation & Task Tracking (HARD RULE - NO EXCEPTIONS)
+- The orchestrator MUST delegate ALL work to agents via tasks. NEVER do agent work yourself.
+- ALL work must be tracked as tasks in the dashboard. No untracked work. Ever.
+- If a session dies, every piece of in-flight work must be recoverable from the task system.
 - Create tasks via `POST /api/tasks` with the appropriate agent assigned
-- The orchestrator's role is: plan, delegate, coordinate, track, and present results to the owner
+- The orchestrator's role is ONLY: plan, delegate, coordinate, track, and present results to the owner
+
+### What the orchestrator MUST NOT do
+- Never write code, research, content, or any deliverable - that's agent work
+- Never use EnterPlanMode for implementation planning - create a task for the right agent instead
+- Never explore the codebase for planning purposes - delegate that as a research task to Scout
+- Never read files to understand architecture - that's Scout's job, create a research task
+- Never touch portal/ or server.js directly - that's Dev's job
+
+### What the orchestrator MUST do
+- Create a task BEFORE any work begins - even small things
+- Assign every task to the right agent (Dev=code, Scout=research, Pen=content, Buzz=growth, Shipper=releases)
+- Launch agents via the Agent tool with full context (agent identity, memory files, task ID, API URL)
+- Track progress and report to the owner
+- The task system is the SINGLE SOURCE OF TRUTH for all work
 
 ## Task Lifecycle (CORRECTED FLOW)
 
@@ -23,7 +40,7 @@
   +-----------------+    +-------------------+    +-----------------+    +----------------+
   |   in_progress    |--->|  pending_approval  |--->|   in_progress    |--->|pending_approval |--> closed
   |  Agent prepares  |    |  Materials ready    |    |  Agent executes  |    | Proof attached   |
-  |  materials/draft |    |  Owner reviews      |    |  (posts/builds)  |    | Owner verifies   |
+  |  materials/plan  |    |  Owner reviews      |    |  (posts/builds)  |    | Owner verifies   |
   +-----------------+    +-------------------+    +-----------------+    +----------------+
                                 |         |                   |
                                 | Improve |                   | Blocker
@@ -32,7 +49,7 @@
                            Agent revises                 (red glow, persists)
 ```
 
-1. **Prepare** (in_progress): Agent creates materials/draft/plan
+1. **Prepare** (planning): Agent creates materials/plan
 2. **Submit for review** (pending_approval): Agent fills version.json + sets pending_approval
 3. **Owner reviews**: Accept (go execute) or Improve (revise)
 4. **Execute** (in_progress): Agent executes the approved work (posts content, deploys code, etc.)
@@ -40,7 +57,8 @@
 6. **Owner verifies**: Checks proof (URL works, code deployed, etc.) and closes
 
 ### Status Meanings
-- **Working** (`in_progress`): Agent preparing materials OR executing after acceptance
+- **Planning** (`planning`): Agent creating plan/materials before first review
+- **Working** (`in_progress`): Agent executing after acceptance
 - **Pending** (`pending_approval`): Either materials ready for review OR execution proof ready for verify
 - **Accepted** (`accepted`): Owner approved materials - triggers agent execution immediately
 - **Improve** (`revision_needed`): Owner sent feedback - agent revises, resubmits to pending
@@ -50,13 +68,13 @@
 
 ### The two pending_approval phases
 Same status used twice, distinguished by the version content:
-1. **First pending** (after prepare): version has draft content/materials, no execution result yet
+1. **First pending** (after planning): version has plan content/materials, no execution result yet
 2. **Second pending** (after execute): version has proof - URLs, screenshots, final files
 
 Progress log distinguishes the phases automatically via timestamps.
 
 ### Rules
-- There is NO draft status. When a task is created, the agent starts working immediately.
+- Tasks start in `planning` status. The agent creates a plan/materials before submitting for review.
 - When the owner clicks Accept, the agent must execute the approved work (not auto-close)
 - When the owner clicks Improve and adds feedback, the agent must revise and resubmit
 - When the owner marks a task as Closed, it is done forever. No agent should touch it.
@@ -64,16 +82,21 @@ Progress log distinguishes the phases automatically via timestamps.
 
 ## Agent Execution Checklist
 
-### Phase 1: Prepare
+### Phase 1: Plan (MANDATORY - never skip)
 1. Set status to `in_progress`
-2. Log progress: "Starting: {what I'm preparing}"
-3. Create materials (draft post, code, research, etc.)
-4. Save materials to `data/tasks/{id}/v{n}/`
+2. Log progress: "Planning: {what I will do}"
+3. Create a plan describing:
+   - **What** will be done (specific deliverables)
+   - **How** it will be done (approach, tools, files to change)
+   - **For development tasks**: which files will be modified, what the changes look like
+   - **For research tasks**: what sources, what questions to answer
+   - **For content tasks**: outline, angle, platform, format
+4. Save plan to `data/tasks/{id}/v{n}/plan.md`
 5. Update version.json:
-   - `content`: Description of what was prepared (REQUIRED)
-   - `deliverable`: File paths of materials
+   - `content`: Summary of the plan (REQUIRED)
+   - `deliverable`: Path to plan file
 6. Set status to `pending_approval`
-7. STOP and wait for owner review
+7. STOP and wait for owner review. Do NOT start building/executing yet.
 
 ### Phase 2: Execute (after owner accepts)
 8. Set status to `in_progress`
@@ -177,7 +200,7 @@ curl -X PUT http://localhost:3791/api/tasks/{taskId}/versions/{vnum} \
 
 ### STRICT: When agents may execute work
 - Agents may ONLY begin work on a task when the orchestrator launches them
-- An agent must NEVER work on a task in `draft`, `pending_approval`, `hold`, `closed`, or `cancelled` status
+- An agent must NEVER work on a task in `pending_approval`, `hold`, `closed`, or `cancelled` status
 - An agent must NEVER create a new version (v2, v3...) unless the owner has explicitly sent revision feedback
 - If a task is `pending_approval`, the owner has NOT reviewed it yet - the agent must wait
 - The orchestrator must verify task status before launching any agent
@@ -225,7 +248,7 @@ Round tables are **execution-first**. The orchestrator acts before it reports. N
 ### Phase 1: Execute (do this BEFORE reporting)
 1. **Launch agents on accepted tasks** - owner approved materials, agent must EXECUTE (not auto-close)
 2. **Launch agents on revision_needed tasks** - owner already gave feedback, agent must act
-3. **Launch agents on draft tasks** that are ready (assigned, dependencies met)
+3. **Launch agents on planning tasks** that are ready (assigned, dependencies met)
 4. **Clear blockers** - read blocker field on tasks, report the text directly (don't re-investigate)
 5. **Close tasks** that have been verified by owner (second pending_approval approved)
 

@@ -177,14 +177,19 @@
         <div class="stat-card clickable-stat" data-filter="in_progress" onclick="App.filterTasks('in_progress','dashboard')"><div class="stat-value" id="stat-working">0</div><div class="stat-label">Working</div></div>
         <div class="stat-card clickable-stat" data-filter="accepted" onclick="App.filterTasks('accepted','dashboard')"><div class="stat-value" id="stat-accepted">0</div><div class="stat-label">Accepted</div></div>
         <div class="stat-card clickable-stat" data-filter="closed" onclick="App.filterTasks('closed','dashboard')"><div class="stat-value" id="stat-closed">0</div><div class="stat-label">Closed</div></div>
+        <div class="stat-card clickable-stat" data-filter="hold" onclick="App.filterTasks('hold','dashboard')"><div class="stat-value" id="stat-hold">0</div><div class="stat-label">Hold</div></div>
         <div class="stat-card"><div class="stat-value" id="stat-agents">0</div><div class="stat-label">Agents</div></div>
       </div>
       <div class="panel"><h3 id="dashboard-tasks-title">Pending Review
         <span class="view-mode-toggle">
-          <button class="view-mode-btn active" data-view="list" onclick="App.setViewMode('list','dashboard')">List</button>
+          <button class="view-mode-btn active" data-view="hierarchy" onclick="App.setViewMode('hierarchy','dashboard')">Tree</button>
           <button class="view-mode-btn" data-view="flow" onclick="App.setViewMode('flow','dashboard')">Flow</button>
-          <button class="view-mode-btn" data-view="hierarchy" onclick="App.setViewMode('hierarchy','dashboard')">Tree</button>
+        </span>
+        <span class="sort-toggle" id="dashboard-sort-toggle">
+          <button class="sort-btn active" data-sort="new" onclick="App.toggleSort('new','dashboard')">New</button>
+          <button class="sort-btn" data-sort="priority" onclick="App.toggleSort('priority','dashboard')">Priority</button>
         </span></h3>
+        <div id="dashboard-agent-filter" class="agent-filter-bar"></div>
         <div id="dashboard-tag-filter" class="tag-filter-bar"></div>
         <div id="dashboard-tasks" class="task-list"><div class="empty-state">No tasks yet</div></div>
       </div>
@@ -287,19 +292,24 @@
         <button class="tab-btn active" data-tab="tasks" onclick="App.switchAgentTab('tasks')">Tasks</button>
         <button class="tab-btn" data-tab="profile" onclick="App.switchAgentTab('profile')">Profile</button>
         <button class="tab-btn" data-tab="memory" onclick="App.switchAgentTab('memory')">Memory</button>
+        <button class="tab-btn" data-tab="files" onclick="App.switchAgentTab('files')">Files</button>
       </div>
       <div id="agent-tab-tasks" class="agent-tab active">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <div class="agent-tasks-summary" id="agent-tasks-summary"></div>
           <div style="display:flex;gap:8px;align-items:center">
             <span class="view-mode-toggle">
-              <button class="view-mode-btn active" data-view="list" onclick="App.setViewMode('list','agent')">List</button>
+              <button class="view-mode-btn active" data-view="hierarchy" onclick="App.setViewMode('hierarchy','agent')">Tree</button>
               <button class="view-mode-btn" data-view="flow" onclick="App.setViewMode('flow','agent')">Flow</button>
-              <button class="view-mode-btn" data-view="hierarchy" onclick="App.setViewMode('hierarchy','agent')">Tree</button>
+            </span>
+            <span class="sort-toggle" id="agent-sort-toggle">
+              <button class="sort-btn active" data-sort="new" onclick="App.toggleSort('new','agent')">New</button>
+              <button class="sort-btn" data-sort="priority" onclick="App.toggleSort('priority','agent')">Priority</button>
             </span>
             <button class="btn btn-secondary" onclick="App.openAddTask(App.state.currentAgentId)" style="font-size:12px;padding:4px 12px;white-space:nowrap">+ Add Task</button>
           </div>
         </div>
+        <div id="agent-agent-filter" class="agent-filter-bar"></div>
         <div id="agent-tag-filter" class="tag-filter-bar"></div>
         <div id="agent-tasks-list" class="task-list"></div>
       </div>
@@ -340,6 +350,11 @@
               </div>
             </div>
           </div>
+        </div>
+      </div>
+      <div id="agent-tab-files" class="agent-tab">
+        <div id="agent-files-content" class="agent-files-container">
+          <p class="empty-state">Click to load files...</p>
         </div>
       </div>
     </section>
@@ -618,6 +633,11 @@
         <p class="form-hint">Check for platform updates from GitHub releases. Updates only affect platform files — your agents, tasks, and project data are never changed.</p>
         <div class="settings-group">
           <div class="setting-item">
+            <span class="setting-label">System Health</span>
+            <span id="system-health-indicator"></span>
+          </div>
+          <div id="system-health-details" class="hidden"></div>
+          <div class="setting-item">
             <span class="setting-label">Current Version</span>
             <span id="update-current-version">-</span>
           </div>
@@ -870,6 +890,54 @@
         <button class="btn btn-cancel" id="confirm-ok-btn" disabled>Delete</button>
       </div>
     </div>
+  </div>
+
+  <!-- Upgrade Modal -->
+  <div id="upgrade-modal" class="modal-overlay hidden" onclick="if(event.target===this)App.closeUpgradeModal()">
+    <div class="upgrade-modal-box">
+      <h3>Upgrade Platform</h3>
+      <div class="upgrade-version-arrow">
+        <span class="version-old" id="upgrade-from-version">-</span>
+        <span class="version-arrow">&#8594;</span>
+        <span class="version-new" id="upgrade-to-version">-</span>
+      </div>
+      <div class="upgrade-release-notes" id="upgrade-release-notes"></div>
+      <div id="upgrade-active-warning" class="upgrade-warning hidden">
+        <span class="warn-icon">&#9888;</span>
+        <div>
+          <div id="upgrade-active-text">Active tasks may be interrupted.</div>
+          <label><input type="checkbox" id="upgrade-force-check" onchange="App.toggleUpgradeBtn()"> I understand agents may be interrupted</label>
+        </div>
+      </div>
+      <div class="upgrade-backup-note">&#128274; A backup will be created before upgrading.</div>
+      <div id="upgrade-progress-container" class="hidden">
+        <div class="upgrade-progress">
+          <div class="upgrade-progress-step" data-step="check"><span class="step-icon">&#9675;</span> Checking for active agents...</div>
+          <div class="upgrade-progress-step" data-step="backup"><span class="step-icon">&#9675;</span> Backing up current files...</div>
+          <div class="upgrade-progress-step" data-step="download"><span class="step-icon">&#9675;</span> Downloading update...</div>
+          <div class="upgrade-progress-step" data-step="migrate"><span class="step-icon">&#9675;</span> Running migrations...</div>
+          <div class="upgrade-progress-step" data-step="rebuild"><span class="step-icon">&#9675;</span> Rebuilding system context...</div>
+          <div class="upgrade-progress-step" data-step="done"><span class="step-icon">&#9675;</span> Done - restarting server...</div>
+        </div>
+      </div>
+      <div class="upgrade-actions" id="upgrade-actions">
+        <button class="btn btn-secondary" onclick="App.closeUpgradeModal()">Cancel</button>
+        <button class="btn btn-primary" id="upgrade-confirm-btn" onclick="App.confirmUpgrade()">Upgrade &amp; Restart</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Upgrading Lock Overlay -->
+  <div id="upgrading-overlay" class="upgrading-overlay hidden">
+    <div class="upgrading-spinner"></div>
+    <div class="upgrading-text">System is upgrading...</div>
+    <div class="upgrading-sub">Please wait. Do not close this window.</div>
+  </div>
+
+  <!-- Post-Upgrade Banner (injected by JS) -->
+  <div id="post-upgrade-banner" class="post-upgrade-banner hidden">
+    <span id="post-upgrade-text"></span>
+    <button class="banner-dismiss" onclick="App.dismissUpgradeBanner()">&times;</button>
   </div>
 
   <!-- Toast -->

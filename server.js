@@ -3,69 +3,16 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn, execSync } = require('child_process');
-
-// Check if a command-line tool is available on the system
-function commandExists(cmd) {
-  try {
-    execSync(process.platform === 'win32' ? 'where ' + cmd : 'which ' + cmd,
-      { stdio: 'ignore', timeout: 5000 });
-    return true;
-  } catch(e) {
-    return false;
-  }
-}
-
-// Known package managers for installing system dependencies
-function getInstallCommand(dep) {
-  var p = process.platform;
-  if (p === 'win32') {
-    if (commandExists('winget')) return { cmd: 'winget', args: ['install', '--id', dep.winget || dep, '-e', '--accept-source-agreements', '--accept-package-agreements'] };
-    if (commandExists('choco')) return { cmd: 'choco', args: ['install', dep.choco || dep, '-y'] };
-    return null;
-  }
-  if (p === 'darwin') {
-    if (commandExists('brew')) return { cmd: 'brew', args: ['install', dep.brew || dep] };
-    return null;
-  }
-  // Linux
-  if (commandExists('apt-get')) return { cmd: 'sudo', args: ['apt-get', 'install', '-y', dep.apt || dep] };
-  if (commandExists('yum')) return { cmd: 'sudo', args: ['yum', 'install', '-y', dep.yum || dep] };
-  if (commandExists('pacman')) return { cmd: 'sudo', args: ['pacman', '-S', '--noconfirm', dep.pacman || dep] };
-  return null;
-}
-
-// Map of system dep names to package manager identifiers
-var SYSTEM_DEP_MAP = {
-  'ffmpeg': { winget: 'Gyan.FFmpeg', choco: 'ffmpeg', brew: 'ffmpeg', apt: 'ffmpeg', yum: 'ffmpeg', pacman: 'ffmpeg' },
-  'python': { winget: 'Python.Python.3.12', choco: 'python3', brew: 'python3', apt: 'python3', yum: 'python3', pacman: 'python' },
-  'git': { winget: 'Git.Git', choco: 'git', brew: 'git', apt: 'git', yum: 'git', pacman: 'git' }
-};
-
-// Attempt to install a system dependency, returns { success, output }
-function installSystemDep(depName) {
-  var depInfo = SYSTEM_DEP_MAP[depName] || depName;
-  var installCmd = getInstallCommand(depInfo);
-  if (!installCmd) {
-    return { success: false, output: 'No package manager found to install "' + depName + '". Please install it manually.' };
-  }
-  try {
-    var output = execSync(installCmd.cmd + ' ' + installCmd.args.join(' '),
-      { timeout: 300000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-    // Verify it's now available
-    if (commandExists(depName)) {
-      return { success: true, output: 'Installed ' + depName + ' successfully.' };
-    }
-    return { success: false, output: 'Install command ran but "' + depName + '" still not found in PATH. Output: ' + output };
-  } catch(e) {
-    return { success: false, output: 'Failed to install "' + depName + '": ' + (e.stderr || e.message) };
-  }
-}
-
-var pty;
-try { pty = require('node-pty'); }
-catch(e) { try { pty = require('node-pty-prebuilt-multiarch'); } catch(e2) { pty = null; } }
-
 const net = require('net');
+
+// ── Extracted Modules ────────────────────────────────────
+const { parseWsFrame, buildWsFrame, wsSend } = require('./lib/websocket');
+const { commandExists } = require('./lib/skills');
+const upgrade = require('./lib/upgrade');
+const skills = require('./lib/skills');
+const ptyMod = require('./lib/pty');
+const migrations = require('./lib/migrations');
+const health = require('./lib/health');
 
 const BASE = path.join(__dirname, 'portal');
 const ROOT = __dirname;
@@ -335,7 +282,7 @@ function rebuildClaudeMd() {
     }).join('\n');
   }
 
-  var port = PORT;
+  var port = PORT || getConfiguredPort() || 3777;
 
   const md = '# ' + tn + ' \u2014 Orchestrator Context\n\n' +
     '> **Auto-generated file.** Do not edit manually. Regenerated when config changes.\n\n' +
@@ -371,7 +318,7 @@ function rebuildClaudeMd() {
     '### Tasks\n' +
     '- **List tasks:** `GET /api/tasks`\n' +
     '- **Get task:** `GET /api/tasks/{id}`\n' +
-    '- **Create task:** `POST /api/tasks` with `{"title","description","assignedTo","status":"draft","priority":"medium","type":"general","autopilot":false}`\n' +
+    '- **Create task:** `POST /api/tasks` with `{"title","description","assignedTo","status":"planning","priority":"medium","type":"general","autopilot":false}`\n' +
     '  - Supported types: `general`, `research`, `development`, `content`, `review`, `operations`\n' +
     '  - Optional: `parentTaskId`, `dependsOn: []` for subtask/dependency relationships\n' +
     '- **Update task:** `PUT /api/tasks/{id}` with JSON body (partial update, e.g. `{"status":"closed"}`)\n' +
@@ -443,14 +390,15 @@ function rebuildClaudeMd() {
     '8. Update each agent\'s short-memory with round table outcomes\n\n' +
     '## Task Lifecycle\n\n' +
     '### Flow: Prepare -> Review -> Execute -> Verify -> Close\n\n' +
-    '1. **Prepare** (in_progress): Agent creates materials/draft\n' +
+    '1. **Planning** (planning): Agent creates plan/materials\n' +
     '2. **Submit for review** (pending_approval): Agent fills version.json + sets pending_approval\n' +
     '3. **Owner reviews**: Accept (go execute) or Improve (revise)\n' +
     '4. **Execute** (in_progress): Agent executes the approved work\n' +
     '5. **Submit proof** (pending_approval): Agent updates version with execution proof\n' +
     '6. **Owner verifies**: Checks proof and closes\n\n' +
     '### Status meanings\n' +
-    '- **in_progress** (Working): Agent preparing materials OR executing after acceptance.\n' +
+    '- **planning**: Agent creating plan/materials before first review.\n' +
+    '- **in_progress** (Working): Agent executing after acceptance.\n' +
     '- **pending_approval** (Pending): Materials ready for review OR execution proof ready for verify.\n' +
     '- **accepted**: Owner approved materials \u2014 triggers agent execution immediately.\n' +
     '- **revision_needed** (Improve): Owner sent feedback. Agent must revise and resubmit.\n' +
@@ -551,323 +499,32 @@ function rebuildAgentMd(aid, a) {
   writeText(path.join(ROOT, 'agents', aid, 'agent.md'), md);
 }
 
-// ── WebSocket Helpers ────────────────────────────────────
-function parseWsFrame(buf) {
-  if (buf.length < 2) return null;
-  var b0 = buf[0], b1 = buf[1];
-  var opcode = b0 & 0x0f;
-  var masked = (b1 & 0x80) !== 0;
-  var len = b1 & 0x7f;
-  var offset = 2;
+// ── WebSocket Helpers (from lib/websocket.js) ────────────
 
-  if (len === 126) {
-    if (buf.length < 4) return null;
-    len = buf.readUInt16BE(2);
-    offset = 4;
-  } else if (len === 127) {
-    if (buf.length < 10) return null;
-    len = Number(buf.readBigUInt64BE(2));
-    offset = 10;
-  }
+// ── Upgrade / Update (from lib/upgrade.js) ───────────────
 
-  var maskKey = null;
-  if (masked) {
-    if (buf.length < offset + 4) return null;
-    maskKey = buf.slice(offset, offset + 4);
-    offset += 4;
-  }
+// ── PTY Terminal (from lib/pty.js) ────────────────────────
+var termSessions = ptyMod.getTermSessions();
 
-  if (buf.length < offset + len) return null;
-  var payload = Buffer.from(buf.slice(offset, offset + len));
-  if (masked && maskKey) {
-    for (var i = 0; i < payload.length; i++) payload[i] ^= maskKey[i % 4];
-  }
-
-  return { opcode: opcode, payload: payload, totalLen: offset + len };
-}
-
-function buildWsFrame(data) {
-  var payload = Buffer.from(data, 'utf8');
-  var len = payload.length;
-  var header;
-  if (len < 126) {
-    header = Buffer.alloc(2);
-    header[0] = 0x81;
-    header[1] = len;
-  } else if (len < 65536) {
-    header = Buffer.alloc(4);
-    header[0] = 0x81;
-    header[1] = 126;
-    header.writeUInt16BE(len, 2);
-  } else {
-    header = Buffer.alloc(10);
-    header[0] = 0x81;
-    header[1] = 127;
-    header.writeBigUInt64BE(BigInt(len), 2);
-  }
-  return Buffer.concat([header, payload]);
-}
-
-function wsSend(socket, obj) {
-  try { socket.write(buildWsFrame(JSON.stringify(obj))); } catch(e) {}
-}
-
-// ── Upgrade / Update Mechanism (GitHub Releases) ─────────
-var GITHUB_REPO = 'sagiyaacoby/TeamHero';
-var PLATFORM_FILES = ['server.js', 'portal/', 'launch.sh', 'launch.bat', 'config/agent-templates/', '.gitignore', 'package.json', 'package-lock.json'];
-
-function httpsGet(url) {
-  var https = require('https');
-  return new Promise(function(resolve, reject) {
-    var opts = { headers: { 'User-Agent': 'TeamHero-Updater', 'Accept': 'application/vnd.github.v3+json' } };
-    var parsed = new URL(url);
-    opts.hostname = parsed.hostname;
-    opts.path = parsed.pathname + parsed.search;
-    https.get(opts, function(res) {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return httpsGet(res.headers.location).then(resolve, reject);
-      }
-      var data = [];
-      res.on('data', function(ch) { data.push(ch); });
-      res.on('end', function() {
-        var buf = Buffer.concat(data);
-        resolve({ statusCode: res.statusCode, body: buf });
-      });
-    }).on('error', reject);
-  });
-}
-
-function compareVersions(a, b) {
-  // Returns >0 if b is newer than a
-  var pa = (a || '0.0.0').split('.').map(Number);
-  var pb = (b || '0.0.0').split('.').map(Number);
-  for (var i = 0; i < 3; i++) {
-    if ((pb[i] || 0) > (pa[i] || 0)) return 1;
-    if ((pb[i] || 0) < (pa[i] || 0)) return -1;
-  }
-  return 0;
-}
-
-async function checkForUpdates() {
-  var localPkg = readJSON(path.join(ROOT, 'package.json'));
-  var localVersion = localPkg ? localPkg.version : '1.0.0';
-
-  try {
-    var res = await httpsGet('https://api.github.com/repos/' + GITHUB_REPO + '/releases/latest');
-    if (res.statusCode === 404) {
-      return { updateAvailable: false, currentVersion: localVersion, latestVersion: localVersion, error: 'No releases published yet.' };
-    }
-    if (res.statusCode !== 200) {
-      return { updateAvailable: false, currentVersion: localVersion, error: 'GitHub API error: HTTP ' + res.statusCode };
-    }
-    var release = JSON.parse(res.body.toString());
-    var latestVersion = (release.tag_name || '').replace(/^v/, '');
-    var updateAvailable = compareVersions(localVersion, latestVersion) > 0;
-    var releaseNotes = release.body || '';
-    // Truncate long notes
-    if (releaseNotes.length > 1000) releaseNotes = releaseNotes.slice(0, 1000) + '...';
-
-    return {
-      updateAvailable: updateAvailable,
-      currentVersion: localVersion,
-      latestVersion: latestVersion,
-      releaseNotes: releaseNotes,
-      releaseName: release.name || release.tag_name || '',
-      releaseUrl: release.html_url || '',
-      tarballUrl: release.tarball_url || '',
-      publishedAt: release.published_at || '',
-      repoUrl: 'https://github.com/' + GITHUB_REPO,
-    };
-  } catch(e) {
-    return { updateAvailable: false, currentVersion: localVersion, error: 'Failed to check for updates: ' + e.message };
-  }
-}
-
-async function performUpgrade() {
-  var check = await checkForUpdates();
-  if (!check.updateAvailable) return { success: false, message: 'Already up to date.' };
-  if (!check.tarballUrl) return { success: false, message: 'No download URL available.' };
-
-  try {
-    // Download the release tarball
-    var tarRes = await httpsGet(check.tarballUrl);
-    if (tarRes.statusCode !== 200) return { success: false, message: 'Download failed: HTTP ' + tarRes.statusCode };
-
-    var zlib = require('zlib');
-    var tarData = zlib.gunzipSync(tarRes.body);
-
-    // Parse tar and extract platform files
-    var extracted = 0;
-    var offset = 0;
-    var stripPrefix = ''; // GitHub tarballs have a top-level dir like "user-repo-hash/"
-
-    while (offset < tarData.length) {
-      // Tar header is 512 bytes
-      var header = tarData.slice(offset, offset + 512);
-      if (header.length < 512 || header[0] === 0) break;
-
-      var fileName = header.slice(0, 100).toString('utf8').replace(/\0/g, '');
-      // Handle long names via prefix field (bytes 345-500)
-      var prefix = header.slice(345, 500).toString('utf8').replace(/\0/g, '');
-      if (prefix) fileName = prefix + '/' + fileName;
-
-      var sizeOctal = header.slice(124, 136).toString('utf8').replace(/\0/g, '').trim();
-      var fileSize = parseInt(sizeOctal, 8) || 0;
-      var typeFlag = header[156];
-
-      offset += 512; // past header
-
-      // Detect strip prefix from first entry
-      if (!stripPrefix && fileName.indexOf('/') > 0) {
-        stripPrefix = fileName.slice(0, fileName.indexOf('/') + 1);
-      }
-
-      // Strip the top-level directory
-      var relPath = fileName;
-      if (stripPrefix && relPath.startsWith(stripPrefix)) {
-        relPath = relPath.slice(stripPrefix.length);
-      }
-
-      if (relPath && fileSize > 0 && typeFlag === 48) { // typeFlag 48 = '0' = regular file
-        // Check if this is a platform file we should update
-        var isPlatform = PLATFORM_FILES.some(function(pf) {
-          if (pf.endsWith('/')) return relPath.startsWith(pf);
-          return relPath === pf;
-        });
-
-        if (isPlatform) {
-          var fileData = tarData.slice(offset, offset + fileSize);
-          var destPath = path.join(ROOT, relPath);
-          fs.mkdirSync(path.dirname(destPath), { recursive: true });
-          fs.writeFileSync(destPath, fileData);
-          extracted++;
-        }
-      }
-
-      // Advance past file data (padded to 512-byte boundary)
-      offset += Math.ceil(fileSize / 512) * 512;
-    }
-
-    return {
-      success: true,
-      message: 'Updated to v' + check.latestVersion + '. ' + extracted + ' files updated. Restart the server to apply.',
-      extractedFiles: extracted,
-      restartRequired: true,
-    };
-  } catch(e) {
-    return { success: false, message: 'Upgrade failed: ' + e.message };
-  }
-}
-
-// ── PTY Terminal Session Manager ─────────────────────────
-var termSessions = new Map();
-var MAX_BUFFER = 50 * 1024; // 50KB rolling buffer for reconnect replay
-
-function createTermSession(sessionId, socket) {
-  if (!pty) {
-    wsSend(socket, { type: 'terminal-error', error: 'Terminal not available. Run `npm install` in the project directory.' });
-    return null;
-  }
-
-  var isWindows = process.platform === 'win32';
-  var shell = isWindows ? 'cmd.exe' : 'bash';
-  var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
-  var permMode = sys.claudePermissionMode || 'autonomous';
-  var claudeCmd = permMode === 'supervised' ? 'claude' : 'claude --dangerously-skip-permissions';
-  var shellArgs = isWindows ? ['/c', claudeCmd] : ['-c', claudeCmd];
-
-  var envVars = Object.assign({}, process.env, {
-    FORCE_COLOR: '1',
-    TERM: 'xterm-256color',
-  });
-  // Inject decrypted secrets as environment variables
-  if (secretsCache) {
-    var skeys = getSecretNames();
-    for (var si = 0; si < skeys.length; si++) { envVars[skeys[si]] = secretsCache[skeys[si]]; }
-    // Inject credentials as SERVICE_USERNAME / SERVICE_PASSWORD
-    var creds = getCredentials();
-    for (var ci = 0; ci < creds.length; ci++) {
-      var prefix = creds[ci].service.toUpperCase().replace(/[\s\-]+/g, '_').replace(/[^A-Z0-9_]/g, '');
-      envVars[prefix + '_USERNAME'] = creds[ci].username;
-      envVars[prefix + '_PASSWORD'] = creds[ci].password;
-    }
-  }
-
-  var term = pty.spawn(shell, shellArgs, {
-    name: 'xterm-256color',
-    cols: 120,
-    rows: 30,
-    cwd: ROOT,
-    env: envVars,
-  });
-
-  var session = {
-    pty: term,
-    outputBuffer: '',
-    socket: socket,
-    timeout: null,
-  };
-
-  term.onData(function(data) {
-    // Append to rolling buffer
-    session.outputBuffer += data;
-    if (session.outputBuffer.length > MAX_BUFFER) {
-      session.outputBuffer = session.outputBuffer.slice(-MAX_BUFFER);
-    }
-    // Send to connected client (scrub secrets from output)
-    if (session.socket) {
-      wsSend(session.socket, { type: 'terminal-output', data: scrubSecrets(data) });
-    }
-  });
-
-  term.onExit(function(ev) {
-    if (session.socket) {
-      wsSend(session.socket, { type: 'terminal-exit', code: ev.exitCode });
-    }
-    termSessions.delete(sessionId);
-    // Claude may have modified files via API — broadcast refresh
-    broadcast('all');
-    // Auto-shutdown server when terminal exits and no other sessions remain
-    if (termSessions.size === 0) {
-      setTimeout(function() {
-        if (termSessions.size === 0) {
-          console.log('Terminal exited. Shutting down server.');
-          process.exit(0);
-        }
-      }, 3000);
-    }
-  });
-
-  termSessions.set(sessionId, session);
-  return session;
-}
-
-function detachTermSession(sessionId) {
-  var session = termSessions.get(sessionId);
-  if (!session) return;
-  session.socket = null;
-  // Start 5-min timeout to kill orphaned PTY
-  session.timeout = setTimeout(function() {
-    var s = termSessions.get(sessionId);
-    if (s && !s.socket) {
-      try { s.pty.kill(); } catch(e) {}
-      termSessions.delete(sessionId);
-    }
-  }, 5 * 60 * 1000);
-}
-
-function reattachTermSession(sessionId, socket) {
-  var session = termSessions.get(sessionId);
-  if (!session) return null;
-  // Clear orphan timeout
-  if (session.timeout) { clearTimeout(session.timeout); session.timeout = null; }
-  session.socket = socket;
-  // Replay buffer (scrub secrets)
-  if (session.outputBuffer) {
-    wsSend(socket, { type: 'terminal-output', data: scrubSecrets(session.outputBuffer) });
-  }
-  return session;
-}
+// ── Shared Context for Extracted Modules ─────────────────
+var sharedCtx = {
+  ROOT: ROOT,
+  path: path,
+  fs: fs,
+  readJSON: readJSON,
+  writeJSON: writeJSON,
+  readText: readText,
+  writeText: writeText,
+  broadcast: broadcast,
+  wsSend: wsSend,
+  parseWsFrame: parseWsFrame,
+  scrubSecrets: scrubSecrets,
+  getSecretNames: getSecretNames,
+  getCredentials: getCredentials,
+  get secretsCache() { return secretsCache; },
+  genId: genId,
+  rebuildClaudeMd: function() { rebuildClaudeMd(); },
+};
 
 // ── Request Handler ──────────────────────────────────────
 async function handle(pn, m, req, res) {
@@ -918,6 +575,45 @@ async function handle(pn, m, req, res) {
       broadcast('agents');
       return J(res, { ok: true });
     }
+  }
+
+  // AGENT FILES - list all files produced by an agent across tasks
+  const afm = pn.match(/^\/api\/agents\/([^\/]+)\/files$/);
+  if (afm && m === 'GET') {
+    const agentId = afm[1];
+    const idx = readJSON(path.join(ROOT, 'data/tasks/_index.json')) || { tasks: [] };
+    const agentTasks = idx.tasks.filter(function(t) { return t.assignedTo === agentId; });
+    var groups = [];
+    var totalFiles = 0;
+    agentTasks.forEach(function(t) {
+      var taskDir = path.join(ROOT, 'data/tasks', t.id);
+      var taskJson = readJSON(path.join(taskDir, 'task.json'));
+      if (!taskJson) return;
+      var fileMap = {};
+      for (var vn = 1; vn <= 20; vn++) {
+        var vDir = path.join(taskDir, 'v' + vn);
+        if (!fs.existsSync(vDir)) continue;
+        try {
+          var entries = fs.readdirSync(vDir);
+          entries.forEach(function(f) {
+            if (f === 'version.json') return;
+            var fp = path.join(vDir, f);
+            try { if (!fs.statSync(fp).isFile()) return; } catch(e) { return; }
+            var ext = path.extname(f).toLowerCase();
+            var isImage = ['.png','.jpg','.jpeg','.gif','.svg','.webp'].indexOf(ext) >= 0;
+            var safeName = encodeURIComponent(f);
+            var rawUrl = '/api/tasks/' + t.id + '/versions/' + vn + '/files/' + safeName + '/raw';
+            fileMap[f] = { name: f, version: vn, rawUrl: rawUrl, previewUrl: isImage ? rawUrl : '/api/tasks/' + t.id + '/versions/' + vn + '/files/' + safeName, isImage: isImage };
+          });
+        } catch(e) {}
+      }
+      var files = Object.values(fileMap);
+      if (files.length === 0) return;
+      totalFiles += files.length;
+      groups.push({ taskId: t.id, taskTitle: taskJson.title || 'Untitled Task', taskUpdatedAt: taskJson.updatedAt || taskJson.createdAt || '', files: files });
+    });
+    groups.sort(function(a, b) { return (b.taskUpdatedAt || '').localeCompare(a.taskUpdatedAt || ''); });
+    return J(res, { groups: groups, totalFiles: totalFiles });
   }
 
   const am = pn.match(/^\/api\/agents\/([^\/]+)$/);
@@ -1025,7 +721,7 @@ async function handle(pn, m, req, res) {
     const now = new Date().toISOString();
     const t = {
       id: id, title: b.title || 'Untitled', description: b.description || '',
-      assignedTo: b.assignedTo || null, status: b.status || 'draft',
+      assignedTo: b.assignedTo || null, status: b.status || 'planning',
       priority: b.priority || 'medium',
       type: b.type || 'general',
       channel: b.channel || '', version: 1,
@@ -1157,7 +853,7 @@ async function handle(pn, m, req, res) {
     const now = new Date().toISOString();
     const sub = {
       id: subId, title: b.title || 'Untitled', description: b.description || '',
-      assignedTo: b.assignedTo || null, status: b.status || 'draft',
+      assignedTo: b.assignedTo || null, status: b.status || 'planning',
       priority: b.priority || parent.priority || 'medium',
       type: b.type || parent.type || 'general',
       channel: b.channel || '', version: 1,
@@ -1336,7 +1032,7 @@ async function handle(pn, m, req, res) {
         var nextDir = path.join(taskDir, 'v' + nextV);
         fs.mkdirSync(nextDir, { recursive: true });
         writeJSON(path.join(nextDir, 'version.json'), {
-          number: nextV, content: '', status: 'draft',
+          number: nextV, content: '', status: 'planning',
           decision: null, comments: '', submittedAt: null, decidedAt: null
         });
         actionResult = Object.assign({}, ex, { status: 'revision_needed', version: nextV, updatedAt: now });
@@ -1385,7 +1081,7 @@ async function handle(pn, m, req, res) {
       if (actionResult.status === 'accepted' || actionResult.status === 'closed') {
         aix.tasks.forEach(function(t) {
           var dep = readJSON(path.join(ROOT, 'data/tasks', t.id, 'task.json'));
-          if (dep && dep.dependsOn && dep.dependsOn.length > 0 && dep.status === 'draft') {
+          if (dep && dep.dependsOn && dep.dependsOn.length > 0 && dep.status === 'planning') {
             var allMet = dep.dependsOn.every(function(did) {
               var d = readJSON(path.join(ROOT, 'data/tasks', did, 'task.json'));
               return d && (d.status === 'accepted' || d.status === 'closed');
@@ -1970,276 +1666,51 @@ async function handle(pn, m, req, res) {
     return J(res, { ok: true });
   }
 
-  // UPDATES
+  // UPDATES (delegated to lib/upgrade.js)
   if (pn === '/api/updates/check' && m === 'GET') {
-    var result = await checkForUpdates();
+    var result = await upgrade.checkForUpdates(sharedCtx);
     return J(res, result);
   }
+  if (pn === '/api/updates/status' && m === 'GET') {
+    return J(res, upgrade.getUpdateStatus(sharedCtx));
+  }
   if (pn === '/api/updates/upgrade' && m === 'POST') {
-    var result = await performUpgrade();
+    var body = await parseBody(req);
+    var result = await upgrade.performUpgrade(sharedCtx, { force: body && body.force });
+    broadcast('all');
+    return J(res, result, result.success ? 200 : (result.requiresForce ? 409 : 400));
+  }
+  if (pn === '/api/updates/rollback' && m === 'POST') {
+    var body = await parseBody(req);
+    var result = upgrade.rollback(sharedCtx, body && body.version);
     broadcast('all');
     return J(res, result, result.success ? 200 : 400);
   }
 
-  // SKILLS
+  // SKILLS (delegated to lib/skills.js)
   if (pn === '/api/skills' && m === 'GET') {
-    var catalog = readJSON(path.join(ROOT, 'config/skills-catalog.json')) || [];
-    var enabled = readJSON(path.join(ROOT, 'data/skills/enabled.json')) || {};
-    var skills = catalog.map(function(s) {
-      var deps = (s.systemDeps || []).map(function(dep) {
-        return { name: dep, installed: commandExists(dep) };
-      });
-      var missingDeps = deps.filter(function(d) { return !d.installed; }).map(function(d) { return d.name; });
-      var settingValues = {};
-      if (s.settings && s.settings.length) {
-        var sv = readJSON(path.join(ROOT, 'data/skills', s.id + '-settings.json'));
-        if (sv) {
-          // Mask secret values for display
-          s.settings.forEach(function(setting) {
-            if (sv[setting.key]) {
-              settingValues[setting.key] = setting.type === 'secret' ? '********' : sv[setting.key];
-            }
-          });
-        }
-      }
-      return Object.assign({}, s, {
-        enabled: !!enabled[s.id],
-        depsStatus: deps,
-        missingDeps: missingDeps,
-        settingValues: settingValues
-      });
-    });
-    return J(res, { skills: skills });
+    return J(res, skills.handleGetSkills(sharedCtx));
   }
 
-  // Skill settings
   var skillSettingsMatch = pn.match(/^\/api\/skills\/([^\/]+)\/settings$/);
   if (skillSettingsMatch && m === 'PUT') {
-    var ssId = skillSettingsMatch[1];
     var b = await parseBody(req);
-    var settingsPath = path.join(ROOT, 'data/skills', ssId + '-settings.json');
-    var existing = readJSON(settingsPath) || {};
-    // Merge — don't overwrite with masked values
-    for (var key in b) {
-      if (b[key] && b[key] !== '********') existing[key] = b[key];
-    }
-    writeJSON(settingsPath, existing);
-
-    // Update .mcp.json env vars with actual values
-    var catalog = readJSON(path.join(ROOT, 'config/skills-catalog.json')) || [];
-    var skill = catalog.find(function(s) { return s.id === ssId; });
-    if (skill && skill.type === 'mcp' && skill.mcpConfig && skill.mcpConfig.env) {
-      var mcpPath = path.join(ROOT, '.mcp.json');
-      var mcpData = readJSON(mcpPath) || { mcpServers: {} };
-      if (mcpData.mcpServers[ssId]) {
-        var env = {};
-        for (var envKey in skill.mcpConfig.env) {
-          var tmpl = skill.mcpConfig.env[envKey];
-          var match = tmpl.match(/^\$\{(.+)\}$/);
-          env[envKey] = match && existing[match[1]] ? existing[match[1]] : tmpl;
-        }
-        mcpData.mcpServers[ssId].env = env;
-        writeJSON(mcpPath, mcpData);
-      }
-    }
-
-    broadcast('skills');
-    return J(res, { ok: true });
+    return J(res, skills.handleSkillSettings(sharedCtx, skillSettingsMatch[1], b));
   }
 
   var skillMatch = pn.match(/^\/api\/skills\/([^\/]+)\/(enable|disable)$/);
   if (skillMatch && m === 'POST') {
-    var skillId = skillMatch[1];
-    var action = skillMatch[2];
-    var catalog = readJSON(path.join(ROOT, 'config/skills-catalog.json')) || [];
-    var skill = catalog.find(function(s) { return s.id === skillId; });
-    if (!skill) return E(res, 'Skill not found', 404);
-
-    var enabledPath = path.join(ROOT, 'data/skills/enabled.json');
-    var enabled = readJSON(enabledPath) || {};
-
-    if (action === 'enable') {
-      // Step 1: Check and install system dependencies
-      var systemDeps = skill.systemDeps || [];
-      var depResults = [];
-      var depFailed = false;
-
-      for (var i = 0; i < systemDeps.length; i++) {
-        var dep = systemDeps[i];
-        if (commandExists(dep)) {
-          depResults.push({ dep: dep, status: 'already_installed' });
-        } else {
-          // Try to auto-install
-          var installRes = installSystemDep(dep);
-          depResults.push({ dep: dep, status: installRes.success ? 'installed' : 'failed', output: installRes.output });
-          if (!installRes.success) depFailed = true;
-        }
-      }
-
-      if (depFailed) {
-        var missing = depResults.filter(function(r) { return r.status === 'failed'; });
-        var missingNames = missing.map(function(r) { return r.dep; }).join(', ');
-        var details = missing.map(function(r) { return r.dep + ': ' + r.output; }).join('\n');
-        return J(res, {
-          ok: false,
-          error: 'Missing system dependencies: ' + missingNames,
-          details: details,
-          depResults: depResults
-        }, 500);
-      }
-
-      // Step 2: Ensure npm is available
-      if (!commandExists('npm')) {
-        return J(res, { ok: false, error: 'npm is not installed. Please install Node.js from https://nodejs.org' }, 500);
-      }
-
-      // Step 3: Install npm packages (for npm-based skills)
-      if (skill.packages && skill.packages.length > 0) {
-        var installResult = await new Promise(function(resolve) {
-          var args = ['install', '--save'].concat(skill.packages);
-          var proc = spawn('npm', args, { cwd: ROOT, shell: true, timeout: 120000 });
-          var output = '';
-          proc.stdout.on('data', function(ch) { output += ch; });
-          proc.stderr.on('data', function(ch) { output += ch; });
-          proc.on('close', function(code) {
-            resolve({ success: code === 0, output: output });
-          });
-          proc.on('error', function(err) {
-            resolve({ success: false, output: err.message });
-          });
-        });
-
-        if (!installResult.success) {
-          var npmOutput = installResult.output || '';
-          var hint = '';
-          if (npmOutput.match(/gyp ERR|node-gyp|python/i)) {
-            hint = ' You may need Python installed for native module compilation.';
-            if (!commandExists('python') && !commandExists('python3')) {
-              hint += ' Python was not found on your system — installing it may fix this.';
-            }
-          }
-          if (npmOutput.match(/EACCES|permission denied/i)) {
-            hint = ' Try running with administrator/sudo privileges.';
-          }
-          if (npmOutput.match(/ENOTFOUND|network|ETIMEDOUT/i)) {
-            hint = ' Check your internet connection.';
-          }
-          return J(res, { ok: false, error: 'npm install failed.' + hint, output: npmOutput }, 500);
-        }
-      }
-
-      // Step 3b: Git-based skills — clone repo and build
-      if (skill.gitRepo) {
-        var skillDir = path.join(ROOT, 'data/skills', skill.id);
-        fs.mkdirSync(skillDir, { recursive: true });
-
-        // Clone if not already cloned
-        if (!fs.existsSync(path.join(skillDir, '.git'))) {
-          var cloneResult = await new Promise(function(resolve) {
-            var proc = spawn('git', ['clone', skill.gitRepo, '.'], { cwd: skillDir, shell: true, timeout: 120000 });
-            var output = '';
-            proc.stdout.on('data', function(ch) { output += ch; });
-            proc.stderr.on('data', function(ch) { output += ch; });
-            proc.on('close', function(code) { resolve({ success: code === 0, output: output }); });
-            proc.on('error', function(err) { resolve({ success: false, output: err.message }); });
-          });
-          if (!cloneResult.success) {
-            return J(res, { ok: false, error: 'Git clone failed.', details: cloneResult.output }, 500);
-          }
-        }
-
-        // Build
-        if (skill.buildCmd) {
-          var buildResult = await new Promise(function(resolve) {
-            var proc = spawn(skill.buildCmd, [], { cwd: skillDir, shell: true, timeout: 180000 });
-            var output = '';
-            proc.stdout.on('data', function(ch) { output += ch; });
-            proc.stderr.on('data', function(ch) { output += ch; });
-            proc.on('close', function(code) { resolve({ success: code === 0, output: output }); });
-            proc.on('error', function(err) { resolve({ success: false, output: err.message }); });
-          });
-          if (!buildResult.success) {
-            return J(res, { ok: false, error: 'Build failed.', details: buildResult.output }, 500);
-          }
-        }
-      }
-
-      // For MCP skills: write to .mcp.json
-      if (skill.type === 'mcp' && skill.mcpConfig) {
-        var mcpPath = path.join(ROOT, '.mcp.json');
-        var mcpData = readJSON(mcpPath) || { mcpServers: {} };
-        // Resolve env vars from secrets for git-based skills
-        var mcpEntry = JSON.parse(JSON.stringify(skill.mcpConfig));
-        if (skill.gitRepo && mcpEntry.args) {
-          mcpEntry.args = mcpEntry.args.map(function(a) {
-            return a.replace(/^data\/skills\//, path.join(ROOT, 'data/skills/').replace(/\\/g, '/') + '/').replace(/\\/g, '/');
-          });
-        }
-        mcpData.mcpServers[skill.id] = mcpEntry;
-        writeJSON(mcpPath, mcpData);
-      }
-
-      // For CLI skills: ensure data/skills/<id>/ directory
-      if (skill.type === 'cli') {
-        fs.mkdirSync(path.join(ROOT, 'data/skills', skill.id), { recursive: true });
-      }
-
-      enabled[skillId] = true;
-      writeJSON(enabledPath, enabled);
-      broadcast('skills');
-      return J(res, { ok: true, installed: true });
-
-    } else {
-      // Disable
-      // For MCP skills: remove from .mcp.json
-      if (skill.type === 'mcp') {
-        var mcpPath = path.join(ROOT, '.mcp.json');
-        var mcpData = readJSON(mcpPath) || { mcpServers: {} };
-        delete mcpData.mcpServers[skill.id];
-        writeJSON(mcpPath, mcpData);
-      }
-
-      enabled[skillId] = false;
-      writeJSON(enabledPath, enabled);
-      broadcast('skills');
-      return J(res, { ok: true });
-    }
+    var result = await skills.handleSkillToggle(sharedCtx, skillMatch[1], skillMatch[2]);
+    if (result.error) return E(res, result.error, result.status || 400);
+    return J(res, result, result.status || 200);
   }
 
   // SCREEN RECORDER CONTROL
   var recMatch = pn.match(/^\/api\/skills\/screen-recorder\/(start|stop|status)$/);
   if (recMatch) {
-    var recAction = recMatch[1];
-    var recScript = path.join(ROOT, 'data/skills/screen-recorder/record.js');
-    if (!fs.existsSync(recScript)) return E(res, 'Screen recorder not installed', 404);
-
-    var recArgs = [recScript, recAction];
-    // For start, pass through query params as flags
-    if (recAction === 'start' && m === 'POST') {
-      var body = await new Promise(function(resolve) {
-        var d = ''; req.on('data', function(c) { d += c; }); req.on('end', function() {
-          try { resolve(JSON.parse(d)); } catch(e) { resolve({}); }
-        });
-      });
-      if (body.fps) recArgs.push('--fps', String(body.fps));
-      if (body.output) recArgs.push('--output', String(body.output));
-      if (body.window) recArgs.push('--window', String(body.window));
-      if (body.region) recArgs.push('--region', String(body.region));
-    }
-
-    var recResult = await new Promise(function(resolve) {
-      var proc = spawn('node', recArgs, { cwd: ROOT, shell: true, timeout: 10000 });
-      var output = '';
-      proc.stdout.on('data', function(ch) { output += ch; });
-      proc.stderr.on('data', function(ch) { output += ch; });
-      proc.on('close', function(code) {
-        try { resolve(JSON.parse(output)); } catch(e) { resolve({ ok: code === 0, output: output }); }
-      });
-      proc.on('error', function(err) {
-        resolve({ ok: false, error: err.message });
-      });
-    });
-
+    var recBody = (recMatch[1] === 'start' && m === 'POST') ? await parseBody(req) : null;
+    var recResult = await skills.handleScreenRecorder(sharedCtx, recMatch[1], recBody);
+    if (recResult.error && recResult.status) return E(res, recResult.error, recResult.status);
     return J(res, recResult, recResult.error ? 500 : 200);
   }
 
@@ -2258,6 +1729,20 @@ async function handle(pn, m, req, res) {
       });
       proc1.on("error", function() { J(res, result); resolve(); });
     });
+  }
+
+  // HEALTH (delegated to lib/health.js)
+  if (pn === '/api/health' && m === 'GET') {
+    return J(res, health.validateSystem(sharedCtx));
+  }
+
+  // SYSTEM NOTICES (delegated to lib/health.js)
+  if (pn === '/api/system-notices' && m === 'GET') {
+    return J(res, health.listNotices(sharedCtx));
+  }
+  var noticeMatch = pn.match(/^\/api\/system-notices\/([^\/]+)\/dismiss$/);
+  if (noticeMatch && m === 'POST') {
+    return J(res, health.dismissNotice(sharedCtx, decodeURIComponent(noticeMatch[1])));
   }
 
   // MEDIA FILE SERVING
@@ -2362,75 +1847,9 @@ server.on('upgrade', function(req, socket, head) {
   var pathname = urlObj.pathname;
 
   if (pathname === '/ws/terminal') {
-    // ── Terminal WebSocket ──
+    // ── Terminal WebSocket (delegated to lib/pty.js) ──
     if (!doWsHandshake(req, socket)) return;
-
-    var sessionId = urlObj.searchParams.get('session') || genId();
-    var termSessionId = sessionId; // capture for closures
-    var buf = Buffer.alloc(0);
-
-    // Try to reattach or create new
-    var session = termSessions.get(sessionId);
-    if (session) {
-      reattachTermSession(sessionId, socket);
-      wsSend(socket, { type: 'terminal-ready', session: sessionId, reattached: true });
-    } else {
-      session = createTermSession(sessionId, socket);
-      if (session) {
-        wsSend(socket, { type: 'terminal-ready', session: sessionId, reattached: false });
-      }
-    }
-
-    socket.on('data', function(data) {
-      buf = Buffer.concat([buf, data]);
-      while (buf.length > 0) {
-        var frame = parseWsFrame(buf);
-        if (!frame) break;
-        buf = buf.slice(frame.totalLen);
-
-        if (frame.opcode === 0x8) {
-          // Detach session on close (keep PTY alive)
-          detachTermSession(termSessionId);
-          try {
-            var closeFrame = Buffer.alloc(2);
-            closeFrame[0] = 0x88; closeFrame[1] = 0;
-            socket.write(closeFrame);
-          } catch(e) {}
-          socket.destroy();
-          return;
-        }
-
-        if (frame.opcode === 0x9) {
-          var pong = Buffer.alloc(2);
-          pong[0] = 0x8a; pong[1] = 0;
-          try { socket.write(pong); } catch(e) {}
-          continue;
-        }
-
-        if (frame.opcode === 0x1) {
-          try {
-            var msg = JSON.parse(frame.payload.toString('utf8'));
-            var s = termSessions.get(termSessionId);
-            if (msg.type === 'input' && s && s.pty) {
-              s.pty.write(msg.data);
-            } else if (msg.type === 'resize' && s && s.pty) {
-              try { s.pty.resize(msg.cols || 120, msg.rows || 30); } catch(e) {}
-            } else if (msg.type === 'restart') {
-              // Kill existing, create new
-              if (s) { try { s.pty.kill(); } catch(e) {} termSessions.delete(termSessionId); }
-              termSessionId = genId();
-              var newSession = createTermSession(termSessionId, socket);
-              if (newSession) {
-                wsSend(socket, { type: 'terminal-ready', session: termSessionId, reattached: false });
-              }
-            }
-          } catch(e) {}
-        }
-      }
-    });
-
-    socket.on('close', function() { detachTermSession(termSessionId); });
-    socket.on('error', function() { detachTermSession(termSessionId); });
+    ptyMod.handleTerminalWs(socket, urlObj, sharedCtx);
     return;
   }
 
@@ -2536,14 +1955,15 @@ fs.mkdirSync(path.join(ROOT, 'config'), { recursive: true });
     '- Create tasks via `POST /api/tasks` with the appropriate agent assigned\n\n' +
     '## Task Lifecycle (CORRECTED FLOW)\n\n' +
     '### Flow: Prepare -> Review -> Execute -> Verify -> Close\n\n' +
-    '1. **Prepare** (in_progress): Agent creates materials/draft/plan\n' +
+    '1. **Planning** (planning): Agent creates plan/materials\n' +
     '2. **Submit for review** (pending_approval): Agent fills version.json + sets pending_approval\n' +
     '3. **Owner reviews**: Accept (go execute) or Improve (revise)\n' +
     '4. **Execute** (in_progress): Agent executes the approved work (posts content, deploys code, etc.)\n' +
     '5. **Submit proof** (pending_approval): Agent updates version with execution proof + sets pending_approval\n' +
     '6. **Owner verifies**: Checks proof (URL works, code deployed, etc.) and closes\n\n' +
     '### Status Meanings\n' +
-    '- **Working** (`in_progress`): Agent preparing materials OR executing after acceptance\n' +
+    '- **Planning** (`planning`): Agent creating plan/materials before first review\n' +
+    '- **Working** (`in_progress`): Agent executing after acceptance\n' +
     '- **Pending** (`pending_approval`): Either materials ready for review OR execution proof ready for verify\n' +
     '- **Accepted** (`accepted`): Owner approved materials - triggers agent execution immediately\n' +
     '- **Improve** (`revision_needed`): Owner sent feedback - agent revises, resubmits to pending\n' +
@@ -2554,7 +1974,7 @@ fs.mkdirSync(path.join(ROOT, 'config'), { recursive: true });
     '### Phase 1: Prepare\n' +
     '1. Set status to `in_progress`\n' +
     '2. Log progress: "Starting: {what I\'m preparing}"\n' +
-    '3. Create materials (draft post, code, research, etc.)\n' +
+    '3. Create materials (plan, code, research, etc.)\n' +
     '4. Save materials to `data/tasks/{id}/v{n}/`\n' +
     '5. Update version.json: `content` (REQUIRED), `deliverable` (file paths)\n' +
     '6. Set status to `pending_approval`\n' +
@@ -2586,7 +2006,7 @@ fs.mkdirSync(path.join(ROOT, 'config'), { recursive: true });
     '### Phase 1: Execute (do this BEFORE reporting)\n' +
     '1. **Launch agents on accepted tasks** - owner approved materials, agent must EXECUTE (not auto-close)\n' +
     '2. **Launch agents on revision_needed tasks** - owner already gave feedback, agent must act\n' +
-    '3. **Launch agents on draft tasks** that are ready (assigned, dependencies met)\n' +
+    '3. **Launch agents on planning tasks** that are ready (assigned, dependencies met)\n' +
     '4. **Clear blockers** - read blocker field on tasks, report the text directly\n\n' +
     '### Phase 2: Surface blockers\n' +
     '- Tasks with `blocker` field set - report the blocker text directly\n' +
@@ -2630,35 +2050,40 @@ fs.mkdirSync(path.join(ROOT, 'config'), { recursive: true });
 
 ensureOrchestrator();
 
-// ── Migration: done → closed, approved → accepted ──────
-(function migrateTaskStatuses() {
-  var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
-  if (sys.migrationDoneToClosedV3) return;
-  var ip = path.join(ROOT, 'data/tasks/_index.json');
-  var ix = readJSON(ip);
-  if (!ix || !ix.tasks) return;
-  var changed = false;
-  ix.tasks.forEach(function(t) {
-    if (t.status === 'done') { t.status = 'closed'; changed = true; }
-  });
-  if (changed) {
-    writeJSON(ip, ix);
-    // Also update individual task.json files
-    ix.tasks.forEach(function(t) {
-      if (t.status === 'closed') {
-        var tp = path.join(ROOT, 'data/tasks', t.id, 'task.json');
-        var task = readJSON(tp);
-        if (task && task.status === 'done') {
-          task.status = 'closed';
-          writeJSON(tp, task);
-        }
-      }
-    });
+// ── Migrations (from lib/migrations.js) ──────────────────
+var migrationResult = migrations.runPendingMigrations(sharedCtx);
+if (migrationResult.ran > 0) {
+  try { rebuildClaudeMd(); } catch(e) {}
+}
+
+// ── Interrupted upgrade check ────────────────────────────
+var interruptedUpgrade = upgrade.checkInterruptedUpgrade(sharedCtx);
+if (interruptedUpgrade) {
+  console.log('\n  WARNING: Interrupted upgrade detected!');
+  console.log('  Current version: ' + interruptedUpgrade.currentVersion);
+  if (interruptedUpgrade.migrationFailed) {
+    console.log('  Migration failed: ' + interruptedUpgrade.migrationFailed.migration + ' - ' + interruptedUpgrade.migrationFailed.error);
   }
-  sys.migrationDoneToClosedV3 = true;
-  writeJSON(path.join(ROOT, 'config/system.json'), sys);
-  if (changed) console.log('  Migration: done → closed completed.');
-})();
+  if (interruptedUpgrade.availableBackups.length > 0) {
+    console.log('  Available backups: ' + interruptedUpgrade.availableBackups.join(', '));
+    console.log('  Use POST /api/updates/rollback to restore.');
+  }
+  console.log('');
+}
+
+// ── Health Validation (from lib/health.js) ───────────────
+var healthResult = health.validateSystem(sharedCtx);
+if (healthResult.issues.length > 0) {
+  console.log('  System health: ' + healthResult.status.toUpperCase());
+  for (var hi = 0; hi < healthResult.issues.length; hi++) {
+    var issue = healthResult.issues[hi];
+    var prefix = issue.level === 'error' ? '  ERROR' : issue.level === 'warning' ? '  WARN ' : '  INFO ';
+    console.log(prefix + ' [' + issue.check + '] ' + issue.message);
+  }
+  console.log('');
+} else {
+  console.log('  System health: OK');
+}
 
 (async function() {
   var envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : null;

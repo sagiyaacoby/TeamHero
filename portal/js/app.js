@@ -18,10 +18,14 @@
     agentTaskFilter: 'all',
     cachedDashboardTasks: [],
     cachedAgentTasks: [],
-    dashboardViewMode: 'list',
-    agentViewMode: 'list',
+    dashboardViewMode: 'hierarchy',
+    agentViewMode: 'hierarchy',
     hierarchyExpanded: {},
     flowExpanded: {},
+    dashboardSort: JSON.parse(localStorage.getItem('dashboardSort') || '{"new":true,"priority":false}'),
+    agentSort: JSON.parse(localStorage.getItem('agentSort') || '{"new":true,"priority":false}'),
+    dashboardAgentFilter: null,
+    agentAgentFilter: null,
   };
 
   var PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
@@ -137,6 +141,16 @@
   }
 
   // ── Navigation ─────────────────────────────────────
+  var _skipHashUpdate = false;
+
+  function _buildHash(viewId, agentId) {
+    if (viewId === 'agent-detail' && agentId) return '#agent/' + agentId;
+    if (viewId === 'task-detail' && state.currentTaskId) return '#task/' + state.currentTaskId;
+    if (viewId === 'knowledge-detail' && state._currentKnowledgeId) return '#knowledge/' + state._currentKnowledgeId;
+    if (viewId === 'add-agent') return '#add-agent';
+    return '#' + viewId;
+  }
+
   function navigate(viewId, agentId) {
     state.currentView = viewId;
     document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
@@ -186,6 +200,14 @@
       if (viewId === 'help') loadHelp(0);
       if (viewId === 'autopilot') loadAutopilotPage();
     }
+
+    // Update hash unless this navigation was triggered by hashchange
+    if (!_skipHashUpdate) {
+      var newHash = _buildHash(viewId, agentId);
+      if (location.hash !== newHash) {
+        location.hash = newHash;
+      }
+    }
   }
 
   document.addEventListener('click', function(e) {
@@ -199,6 +221,39 @@
     } else if (view) {
       navigate(view);
     }
+  });
+
+  // ── Hash Routing ───────────────────────────────────
+  function _navigateFromHash() {
+    var hash = location.hash || '';
+    if (hash.charAt(0) === '#') hash = hash.substring(1);
+    if (!hash) { navigate('chat'); return; }
+
+    var parts = hash.split('/');
+    var view = parts[0];
+    var id = parts.slice(1).join('/');
+
+    if (view === 'agent' && id) {
+      navigate('agent-detail', id);
+    } else if (view === 'task' && id) {
+      openTask(id);
+    } else if (view === 'knowledge' && id) {
+      openKnowledgeDoc(id);
+    } else {
+      // Direct view names: dashboard, agents, settings, chat, etc.
+      var el = document.getElementById('view-' + view);
+      if (el) {
+        navigate(view);
+      } else {
+        navigate('chat');
+      }
+    }
+  }
+
+  window.addEventListener('hashchange', function() {
+    _skipHashUpdate = true;
+    _navigateFromHash();
+    _skipHashUpdate = false;
   });
 
   // ── Global WebSocket ───────────────────────────────
@@ -405,11 +460,12 @@
         if (t.status === 'pending_approval') { pending++; return; }
         // Other stats count top-level only
         if (t.parentTaskId) return;
-        if (t.status === 'in_progress' || t.status === 'draft' || t.status === 'revision_needed') working++;
+        if (t.status === 'in_progress' || t.status === 'planning' || t.status === 'revision_needed') working++;
         else if (t.status === 'accepted') accepted++;
         else if (t.status === 'closed' || t.status === 'done') closed++;
       });
-      document.getElementById('stat-total').textContent = state.tasks.filter(function(t) { return !t.parentTaskId && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled'; }).length;
+      document.getElementById('stat-total').textContent = state.tasks.filter(function(t) { return !t.parentTaskId && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled' && t.status !== 'hold'; }).length;
+      document.getElementById('stat-hold').textContent = state.tasks.filter(function(t) { return !t.parentTaskId && t.status === 'hold'; }).length;
       document.getElementById('stat-working').textContent = working;
       document.getElementById('stat-pending').textContent = pending;
       document.getElementById('stat-accepted').textContent = accepted;
@@ -424,18 +480,8 @@
         return api.get('/api/tasks/' + t.id).catch(function() { return Object.assign({priority:'medium'}, t); });
       }));
 
-      var statusOrder = { pending_approval: 0, revision_needed: 1, in_progress: 2, draft: 3, accepted: 4, hold: 5, closed: 6, done: 7, cancelled: 8 };
-      fullTasks.sort(function(a, b) {
-        var sa = statusOrder[a.status] !== undefined ? statusOrder[a.status] : 9;
-        var sb = statusOrder[b.status] !== undefined ? statusOrder[b.status] : 9;
-        if (sa !== sb) return sa - sb;
-        var pa = PRIORITY_ORDER[a.priority] !== undefined ? PRIORITY_ORDER[a.priority] : 2;
-        var pb = PRIORITY_ORDER[b.priority] !== undefined ? PRIORITY_ORDER[b.priority] : 2;
-        if (pa !== pb) return pa - pb;
-        return (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || '');
-      });
-
       state.cachedDashboardTasks = fullTasks;
+      updateSortButtons('dashboard');
       renderFilteredTasks('dashboard');
 
       loadRoundTable();
@@ -461,6 +507,11 @@
 
   // ── Agent Detail ───────────────────────────────────
   async function loadAgentDetail(id) {
+    // Invalidate files cache when switching agents
+    if (agentFilesCache.agentId !== id) agentFilesCache = { agentId: null, data: null };
+    // Reset files tab button text
+    var filesBtn = document.querySelector('.tab-btn[data-tab="files"]');
+    if (filesBtn) filesBtn.textContent = 'Files';
     try {
       const agent = await api.get('/api/agents/' + id);
       const [shortMem, longMem] = await Promise.all([
@@ -514,23 +565,26 @@
     var summaryEl = document.getElementById('agent-tasks-summary');
     if (!summaryEl) return;
 
-    var working = 0, pending = 0, accepted = 0, closed = 0;
+    var working = 0, pending = 0, accepted = 0, closed = 0, hold = 0;
     tasks.forEach(function(t) {
-      if (t.status === 'in_progress' || t.status === 'draft' || t.status === 'revision_needed') working++;
+      if (t.status === 'in_progress' || t.status === 'planning' || t.status === 'revision_needed') working++;
       else if (t.status === 'pending_approval') pending++;
       else if (t.status === 'accepted') accepted++;
       else if (t.status === 'closed' || t.status === 'done') closed++;
+      else if (t.status === 'hold') hold++;
     });
     var af = state.agentTaskFilter;
-    var total = tasks.filter(function(t) { return t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled'; }).length;
+    var total = tasks.filter(function(t) { return t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled' && t.status !== 'hold'; }).length;
     summaryEl.innerHTML =
       '<span class="badge badge-pending_approval clickable-badge' + (af === 'pending_approval' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'pending_approval\',\'agent\')">' + pending + ' Pending</span> ' +
       '<span class="badge badge-all clickable-badge' + (af === 'all' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'all\',\'agent\')">' + total + ' Active</span> ' +
       '<span class="badge badge-in_progress clickable-badge' + (af === 'in_progress' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'in_progress\',\'agent\')">' + working + ' Working</span> ' +
       '<span class="badge badge-accepted clickable-badge' + (af === 'accepted' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'accepted\',\'agent\')">' + accepted + ' Accepted</span> ' +
+      '<span class="badge badge-hold clickable-badge' + (af === 'hold' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'hold\',\'agent\')">' + hold + ' Hold</span> ' +
       '<span class="badge badge-closed clickable-badge' + (af === 'closed' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'closed\',\'agent\')">' + closed + ' Closed</span>';
 
     state.cachedAgentTasks = tasks;
+    updateSortButtons('agent');
     renderFilteredTasks('agent');
   }
 
@@ -540,9 +594,9 @@
 
     var filtered;
     if (filter === 'all') {
-      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled'; });
+      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled' && t.status !== 'hold'; });
     } else if (filter === 'in_progress') {
-      filtered = tasks.filter(function(t) { return !t.parentTaskId && (t.status === 'in_progress' || t.status === 'draft' || t.status === 'revision_needed'); });
+      filtered = tasks.filter(function(t) { return !t.parentTaskId && (t.status === 'in_progress' || t.status === 'planning' || t.status === 'revision_needed'); });
     } else if (filter === 'closed') {
       filtered = tasks.filter(function(t) { return !t.parentTaskId && (t.status === 'closed' || t.status === 'done'); });
     } else if (filter === 'pending_approval') {
@@ -550,6 +604,12 @@
       filtered = tasks.filter(function(t) { return t.status === 'pending_approval'; });
     } else {
       filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === filter; });
+    }
+
+    // Apply agent filter
+    var agentFilter = context === 'dashboard' ? state.dashboardAgentFilter : state.agentAgentFilter;
+    if (agentFilter) {
+      filtered = filtered.filter(function(t) { return t.assignedTo === agentFilter; });
     }
 
     // Apply tag filters
@@ -563,14 +623,21 @@
       });
     }
 
-    var statusOrder = { pending_approval: 0, revision_needed: 1, in_progress: 2, draft: 3, accepted: 4, hold: 5, closed: 6, done: 7 };
+    var sortState = context === 'dashboard' ? state.dashboardSort : state.agentSort;
     filtered.sort(function(a, b) {
-      var sa = statusOrder[a.status] !== undefined ? statusOrder[a.status] : 9;
-      var sb = statusOrder[b.status] !== undefined ? statusOrder[b.status] : 9;
-      if (sa !== sb) return sa - sb;
-      var pa = PRIORITY_ORDER[a.priority] !== undefined ? PRIORITY_ORDER[a.priority] : 2;
-      var pb = PRIORITY_ORDER[b.priority] !== undefined ? PRIORITY_ORDER[b.priority] : 2;
-      return pa - pb;
+      // Priority sort (if active): higher priority first
+      if (sortState.priority) {
+        var pa = PRIORITY_ORDER[a.priority] !== undefined ? PRIORITY_ORDER[a.priority] : 2;
+        var pb = PRIORITY_ORDER[b.priority] !== undefined ? PRIORITY_ORDER[b.priority] : 2;
+        if (pa !== pb) return pa - pb;
+      }
+      // New sort (if active): newest first by createdAt
+      if (sortState['new']) {
+        var da = a.createdAt || '';
+        var db = b.createdAt || '';
+        if (da !== db) return db.localeCompare(da);
+      }
+      return 0;
     });
     return filtered;
   }
@@ -596,43 +663,13 @@
     if (filtered.length === 0) {
       var filter = context === 'dashboard' ? state.dashboardTaskFilter : state.agentTaskFilter;
       listEl.innerHTML = '<div class="empty-state">No ' + (filter === 'all' ? '' : filter.replace(/_/g, ' ') + ' ') + 'tasks</div>';
-      return;
-    }
-
-    if (viewMode === 'flow') {
+    } else if (viewMode === 'flow') {
       renderFlowView(listEl, filtered, context);
-    } else if (viewMode === 'hierarchy') {
-      renderHierarchyView(listEl, filtered, context);
     } else {
-      renderListView(listEl, filtered, context);
+      renderHierarchyView(listEl, filtered, context);
     }
+    renderAgentFilterBar(context);
     renderTagFilterBar(context);
-  }
-
-  function renderListView(listEl, filtered, context) {
-    var allTasks = context === 'dashboard' ? state.cachedDashboardTasks : state.cachedAgentTasks;
-    var html = '';
-    filtered.forEach(function(t) {
-      html += renderTaskCard(t, context);
-      if (t.subtasks && t.subtasks.length > 0) {
-        html += renderSubtasksListRecursive(t.subtasks, allTasks, context, 1);
-      }
-    });
-    listEl.innerHTML = html;
-  }
-
-  function renderSubtasksListRecursive(subtaskIds, allTasks, context, depth) {
-    var html = '';
-    subtaskIds.forEach(function(sid) {
-      var sub = allTasks.find(function(st) { return st.id === sid; });
-      if (sub) {
-        html += renderTaskCard(sub, context, true, depth);
-        if (sub.subtasks && sub.subtasks.length > 0) {
-          html += renderSubtasksListRecursive(sub.subtasks, allTasks, context, depth + 1);
-        }
-      }
-    });
-    return html;
   }
 
   // ── Flow View (Node Graph) ─────────────────────────────────
@@ -721,7 +758,7 @@
     nodes.forEach(function(t) { columns[colMap[t.id] || 0].push(t); });
 
     // Sort within columns: active statuses first
-    var statusPriority = { in_progress: 0, revision_needed: 1, pending_approval: 2, draft: 3, accepted: 4, hold: 5, closed: 6, cancelled: 7 };
+    var statusPriority = { in_progress: 0, revision_needed: 1, pending_approval: 2, planning: 3, accepted: 4, hold: 5, closed: 6, cancelled: 7 };
     columns.forEach(function(col) {
       col.sort(function(a, b) {
         var sa = statusPriority[a.status] !== undefined ? statusPriority[a.status] : 8;
@@ -868,7 +905,7 @@
   function renderFlowNode(task, allTasks, context, pos) {
     var blocked = isTaskBlocked(task, allTasks);
     var hasBlocker = !!task.blocker;
-    var statusClass = 'status-' + (task.status || 'draft');
+    var statusClass = 'status-' + (task.status || 'planning');
     var blockedClass = blocked ? ' blocked' : '';
     var blockerClass = hasBlocker ? ' has-blocker' : '';
     var isChild = !!task.parentTaskId;
@@ -877,7 +914,7 @@
       var found = state.agents.find(function(a) { return a.id === task.assignedTo; });
       agentName = found ? found.name : '';
     }
-    var statusLabel = STATUS_LABELS[task.status] || (task.status || 'draft').replace(/_/g, ' ');
+    var statusLabel = STATUS_LABELS[task.status] || (task.status || 'planning').replace(/_/g, ' ');
     var hasOut = task.subtasks && task.subtasks.length > 0;
     var hasIn = isChild || (task.dependsOn && task.dependsOn.length > 0);
 
@@ -923,7 +960,7 @@
     var subs = findSubtasks(task.id, allTasks);
     var hasChildren = subs.length > 0;
     var expanded = state.hierarchyExpanded[task.id] !== false;
-    var statusLabel = STATUS_LABELS[task.status] || (task.status || 'draft').replace(/_/g, ' ');
+    var statusLabel = STATUS_LABELS[task.status] || (task.status || 'planning').replace(/_/g, ' ');
     var agentName = '';
     if (task.assignedTo) {
       var found = state.agents.find(function(a) { return a.id === task.assignedTo; });
@@ -948,7 +985,7 @@
     html += '<div class="hierarchy-meta">';
     html += depBadge + blockerBadge;
     html += '<span class="badge badge-' + (task.priority || 'medium') + '">' + escHtml(task.priority || 'medium') + '</span>';
-    html += '<span class="badge badge-' + (task.status || 'draft') + '">' + escHtml(statusLabel) + '</span>';
+    html += '<span class="badge badge-' + (task.status || 'planning') + '">' + escHtml(statusLabel) + '</span>';
     if (agentName) html += '<span style="font-size:11px;color:var(--text-muted)">' + escHtml(agentName) + '</span>';
     html += '</div></div>';
 
@@ -994,14 +1031,14 @@
   }
 
   var STATUS_LABELS = {
-    draft: 'draft', in_progress: 'working', pending_approval: 'pending',
+    planning: 'planning', in_progress: 'working', pending_approval: 'pending',
     accepted: 'accepted', closed: 'closed', done: 'closed',
     revision_needed: 'improve', hold: 'hold', cancelled: 'cancelled',
     approved: 'execute'
   };
 
   function renderTaskCard(t, context, isSubtask, depth) {
-    var statusClass = 'badge-' + (t.status || 'draft');
+    var statusClass = 'badge-' + (t.status || 'planning');
     var priorityClass = 'badge-' + (t.priority || 'medium');
     var agentName = '';
     if (context === 'dashboard' && t.assignedTo) {
@@ -1020,7 +1057,7 @@
     var subtaskClass = isSubtask ? ' subtask-item' : '';
     var blockerClass = hasBlocker ? ' task-has-blocker' : '';
     var depthStyle = isSubtask && depth ? ' style="padding-left:' + (16 + depth * 16) + 'px;margin-left:' + (depth * 12) + 'px"' : '';
-    var statusLabel = STATUS_LABELS[t.status] || (t.status || 'draft').replace(/_/g, ' ');
+    var statusLabel = STATUS_LABELS[t.status] || (t.status || 'planning').replace(/_/g, ' ');
 
     var tagPills = '';
     if (t.tags && t.tags.length > 0) {
@@ -1047,6 +1084,26 @@
       '</span></div>';
   }
 
+  function toggleSort(dimension, context) {
+    var sortState = context === 'dashboard' ? state.dashboardSort : state.agentSort;
+    var other = dimension === 'new' ? 'priority' : 'new';
+    if (sortState[dimension] && !sortState[other]) return;
+    sortState[dimension] = !sortState[dimension];
+    localStorage.setItem(context + 'Sort', JSON.stringify(sortState));
+    updateSortButtons(context);
+    renderFilteredTasks(context);
+  }
+
+  function updateSortButtons(context) {
+    var sortState = context === 'dashboard' ? state.dashboardSort : state.agentSort;
+    var toggleId = context === 'dashboard' ? 'dashboard-sort-toggle' : 'agent-sort-toggle';
+    var toggle = document.getElementById(toggleId);
+    if (!toggle) return;
+    toggle.querySelectorAll('.sort-btn').forEach(function(btn) {
+      btn.classList.toggle('active', !!sortState[btn.dataset.sort]);
+    });
+  }
+
   function filterTasks(filter, context) {
     if (context === 'dashboard') {
       state.dashboardTaskFilter = filter;
@@ -1057,7 +1114,7 @@
       // Update panel title text without destroying the view-mode-toggle buttons inside the h3
       var titleEl = document.getElementById('dashboard-tasks-title');
       if (titleEl) {
-        var labels = { all: 'All Tasks', pending_approval: 'Pending Review', in_progress: 'Working', accepted: 'Accepted', closed: 'Closed', revision_needed: 'Improve' };
+        var labels = { all: 'All Tasks', pending_approval: 'Pending Review', in_progress: 'Working', accepted: 'Accepted', closed: 'Closed', revision_needed: 'Improve', hold: 'On Hold' };
         var titleText = labels[filter] || filter.replace(/_/g, ' ');
         var firstText = titleEl.firstChild;
         if (firstText && firstText.nodeType === 3) {
@@ -1173,7 +1230,7 @@
         title: title,
         description: desc || title,
         assignedTo: agent || 'orchestrator',
-        status: 'draft',
+        status: 'planning',
         priority: priority,
         type: type,
         autopilot: autopilot,
@@ -1203,6 +1260,60 @@
     document.querySelectorAll('.agent-tab').forEach(function(div) {
       div.classList.toggle('active', div.id === 'agent-tab-' + tab);
     });
+    if (tab === 'files' && state.currentAgentId) {
+      loadAgentFiles(state.currentAgentId);
+    }
+  }
+
+  // ── Agent Files Tab ─────────────────────────────
+  var agentFilesCache = { agentId: null, data: null };
+
+  async function loadAgentFiles(agentId, force) {
+    if (!force && agentFilesCache.agentId === agentId && agentFilesCache.data) {
+      renderAgentFiles(agentFilesCache.data);
+      return;
+    }
+    var container = document.getElementById('agent-files-content');
+    if (container) container.innerHTML = '<p class="empty-state">Loading files...</p>';
+    try {
+      var data = await api.get('/api/agents/' + agentId + '/files');
+      agentFilesCache = { agentId: agentId, data: data };
+      renderAgentFiles(data);
+      // Update tab button text with count
+      var filesBtn = document.querySelector('.tab-btn[data-tab="files"]');
+      if (filesBtn) filesBtn.textContent = 'Files' + (data.totalFiles ? ' (' + data.totalFiles + ')' : '');
+    } catch(e) {
+      if (container) container.innerHTML = '<p class="empty-state">Failed to load files.</p>';
+    }
+  }
+
+  function renderAgentFiles(data) {
+    var container = document.getElementById('agent-files-content');
+    if (!container) return;
+    if (!data.groups || data.groups.length === 0) {
+      container.innerHTML = '<p class="empty-state">No files yet.</p>';
+      return;
+    }
+    var html = '';
+    data.groups.forEach(function(g) {
+      html += '<div class="agent-files-group">';
+      html += '<div class="agent-files-group-title" onclick="App.openTask(\'' + g.taskId + '\')" title="Open task">' + escHtml(g.taskTitle) + '</div>';
+      html += '<div class="agent-files-list">';
+      g.files.forEach(function(f) {
+        var safeName = encodeURIComponent(f.name);
+        html += '<div class="agent-files-item">';
+        if (f.isImage) {
+          html += '<img src="' + f.rawUrl + '" class="agent-files-thumb" alt="' + escHtml(f.name) + '">';
+        }
+        html += '<a href="javascript:void(0)" onclick="App.previewFileInModal(decodeURIComponent(\'' + safeName + '\'),\'' + f.rawUrl + '\',' + f.isImage + ')" class="agent-files-link">' + escHtml(f.name) + '</a>';
+        if (f.version > 1) {
+          html += '<span class="agent-files-version">v' + f.version + '</span>';
+        }
+        html += '</div>';
+      });
+      html += '</div></div>';
+    });
+    container.innerHTML = html;
   }
 
   // ── Task Detail ─────────────────────────────────
@@ -1217,7 +1328,7 @@
       document.getElementById('task-detail-title').textContent = task.title || 'Untitled';
 
       var statusEl = document.getElementById('task-detail-status');
-      var displayStatus = task.status || 'draft';
+      var displayStatus = task.status || 'planning';
       if (displayStatus === 'done') displayStatus = 'closed';
       var statusLabel = STATUS_LABELS[displayStatus] || displayStatus.replace(/_/g, ' ');
       if (displayStatus === 'in_progress') {
@@ -1325,7 +1436,7 @@
       if (!versions) versions = [];
     } catch(e) { versions = []; }
 
-    if (versions.length === 0 && task.status === 'draft' && (!task.progressLog || task.progressLog.length === 0)) {
+    if (versions.length === 0 && task.status === 'planning' && (!task.progressLog || task.progressLog.length === 0)) {
       html += '<div class="session-awaiting">Awaiting agent submission...</div>';
     }
 
@@ -1403,11 +1514,18 @@
                 var ext = f.lastIndexOf('.') >= 0 ? f.slice(f.lastIndexOf('.')).toLowerCase() : '';
                 var rawUrl = '/api/tasks/' + taskId + '/versions/' + v.number + '/files/' + encodeURIComponent(f) + '/raw';
                 var isImage = imageExts.indexOf(ext) >= 0;
+                var textExts = ['.md', '.txt', '.json', '.js', '.css', '.html', '.csv', '.xml', '.yaml', '.yml', '.log'];
+                var isText = textExts.indexOf(ext) >= 0;
                 var linkHtml = '<div class="version-file-item">';
+                var safeName = encodeURIComponent(f);
                 if (isImage) {
-                  linkHtml += '<a href="' + rawUrl + '" target="_blank" class="version-file-thumb-link"><img src="' + rawUrl + '" class="version-file-thumb" alt="' + escHtml(f) + '"></a>';
+                  linkHtml += '<a href="javascript:void(0)" onclick="App.previewFileInModal(decodeURIComponent(\'' + safeName + '\'),\'' + rawUrl + '\',true)" class="version-file-thumb-link"><img src="' + rawUrl + '" class="version-file-thumb" alt="' + escHtml(f) + '"></a>';
                 }
-                linkHtml += '<a href="' + rawUrl + '" target="_blank" class="version-file-link">' + escHtml(f) + '</a>';
+                if (isImage || isText) {
+                  linkHtml += '<a href="javascript:void(0)" onclick="App.previewFileInModal(decodeURIComponent(\'' + safeName + '\'),\'' + rawUrl + '\',' + isImage + ')" class="version-file-link">' + escHtml(f) + '</a>';
+                } else {
+                  linkHtml += '<a href="' + rawUrl + '" target="_blank" class="version-file-link">' + escHtml(f) + '</a>';
+                }
                 linkHtml += '</div>';
                 return linkHtml;
               }).join('') + '</div>';
@@ -1462,12 +1580,12 @@
   }
 
   function buildStatusPipeline(task) {
-    var current = task.status || 'draft';
+    var current = task.status || 'planning';
     // Map legacy 'done' to 'closed' for display
     if (current === 'done') current = 'closed';
 
     var steps = [
-      { key: 'draft',            label: 'Draft',     icon: '&#9998;'  },
+      { key: 'planning',         label: 'Planning',  icon: '&#9998;'  },
       { key: 'in_progress',      label: 'Working',   icon: '&#9881;'  },
       { key: 'pending_approval', label: 'Pending',   icon: '&#9679;'  },
       { key: 'accepted',         label: 'Accepted <span style="color:#6f6;font-size:0.75em;margin-left:2px">&#9654;</span>',  icon: '&#10003;', action: 'accept' },
@@ -1481,15 +1599,17 @@
 
     var html = '<div class="status-pipeline">';
 
+    // Single row: Autopilot | gap | main flow | side actions | ... | prev/next
+    html += '<div class="status-pipeline-row">';
+
     // Autopilot toggle
-    html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
     html += '<button class="autopilot-toggle' + (task.autopilot ? ' active' : '') + '" onclick="App.toggleTaskAutopilot()" title="Toggle autopilot mode">';
     html += '&#9881; Autopilot ' + (task.autopilot ? 'ON' : 'OFF');
     html += '</button>';
-    html += '</div>';
 
-    // Main flow
-    html += '<div class="status-pipeline-row">';
+    html += '<span class="pipeline-gap"></span>';
+
+    // Main flow steps
     for (var i = 0; i < steps.length; i++) {
       var s = steps[i];
       var isActive = s.key === current;
@@ -1505,10 +1625,8 @@
       html += '</button>';
       if (i < steps.length - 1) html += '<span class="status-step-arrow' + (isPast ? ' status-step-arrow-past' : '') + '">&#8250;</span>';
     }
-    html += '</div>';
 
     // Side states (improve, hold, cancel)
-    html += '<div class="status-pipeline-side">';
     for (var j = 0; j < sideStates.length; j++) {
       var ss = sideStates[j];
       var isActiveSide = (ss.key === 'improve' && current === 'revision_needed') || ss.key === current;
@@ -1521,7 +1639,8 @@
       html += '<span class="status-step-label">' + ss.label + '</span>';
       html += '</button>';
     }
-    // Prev/Next navigation buttons inside the pipeline row
+
+    // Prev/Next navigation aligned right
     if ((state.tasks || []).length > 1) {
       html += '<div class="task-nav-buttons">';
       html += '<button class="task-nav-btn" onclick="App.navigateTask(\'prev\')" title="Previous task (Left arrow)">&#8249; Prev</button>';
@@ -1741,7 +1860,7 @@
         await api.put('/api/tasks/' + id, { status: newStatus });
       }
       var labels = {
-        draft: 'Set to draft', pending_approval: 'Pending review',
+        planning: 'Set to planning', pending_approval: 'Pending review',
         in_progress: 'Working', accept: 'Accepted',
         close: 'Closed', hold: 'On hold', cancelled: 'Cancelled'
       };
@@ -1776,16 +1895,38 @@
   async function renderProgressLog(taskId, task) { }
   async function renderVersionTimeline(taskId) { }
 
-  function showFilePreview(filename, content) {
+  function closeFilePreview() {
+    var overlay = document.getElementById('file-preview-overlay');
+    if (overlay) overlay.classList.add('hidden');
+  }
+
+  function showFilePreview(filename, content, rawUrl) {
     var overlay = document.getElementById('file-preview-overlay');
     if (!overlay) {
       overlay = document.createElement('div');
       overlay.id = 'file-preview-overlay';
       overlay.className = 'file-preview-overlay';
-      overlay.innerHTML = '<div class="file-preview-modal"><div class="file-preview-header"><span class="file-preview-title"></span><button class="btn btn-secondary" onclick="document.getElementById(\'file-preview-overlay\').classList.add(\'hidden\')">Close</button></div><div class="file-preview-body"></div></div>';
+      overlay.innerHTML = '<div class="file-preview-modal">' +
+        '<div class="file-preview-header">' +
+          '<span class="file-preview-title"></span>' +
+          '<div class="file-preview-actions">' +
+            '<a class="file-preview-newtab" target="_blank" title="Open in new tab">&#8599;</a>' +
+            '<button class="file-preview-close" onclick="App.closeFilePreview()" title="Close">&times;</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="file-preview-body"></div>' +
+      '</div>';
+      overlay.addEventListener('click', function(e) { if (e.target === overlay) closeFilePreview(); });
       document.body.appendChild(overlay);
     }
     overlay.querySelector('.file-preview-title').textContent = filename;
+    var newtabLink = overlay.querySelector('.file-preview-newtab');
+    if (rawUrl) {
+      newtabLink.href = rawUrl;
+      newtabLink.style.display = '';
+    } else {
+      newtabLink.style.display = 'none';
+    }
     var body = overlay.querySelector('.file-preview-body');
     if (filename.endsWith('.md') && typeof marked !== 'undefined' && marked.parse) {
       body.innerHTML = marked.parse(content);
@@ -1795,13 +1936,58 @@
     overlay.classList.remove('hidden');
   }
 
+  function showImagePreview(filename, rawUrl) {
+    var overlay = document.getElementById('file-preview-overlay');
+    if (!overlay) {
+      showFilePreview(filename, '', rawUrl);
+    }
+    var ov = document.getElementById('file-preview-overlay');
+    if (!ov) return;
+    ov.querySelector('.file-preview-title').textContent = filename;
+    var newtabLink = ov.querySelector('.file-preview-newtab');
+    newtabLink.href = rawUrl;
+    newtabLink.style.display = '';
+    var body = ov.querySelector('.file-preview-body');
+    body.innerHTML = '<div class="file-preview-image-wrap"><img src="' + rawUrl + '" alt="' + escHtml(filename) + '" class="file-preview-image"></div>';
+    ov.classList.remove('hidden');
+  }
+
+  function previewFileInModal(filename, rawUrl, isImage) {
+    if (isImage) {
+      showImagePreview(filename, rawUrl);
+      return;
+    }
+    // Fetch text content and show in modal
+    fetch(rawUrl).then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    }).then(function(text) {
+      showFilePreview(filename, text, rawUrl);
+    }).catch(function() {
+      // Fallback: open in new tab
+      window.open(rawUrl, '_blank');
+    });
+  }
+
+  // Escape key to close file preview
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      var overlay = document.getElementById('file-preview-overlay');
+      if (overlay && !overlay.classList.contains('hidden')) {
+        closeFilePreview();
+        e.stopPropagation();
+      }
+    }
+  });
+
   async function viewVersionFile(el) {
     var taskId = el.dataset.task;
     var version = el.dataset.version;
     var file = el.dataset.file;
+    var rawUrl = '/api/tasks/' + taskId + '/versions/' + version + '/files/' + encodeURIComponent(file) + '/raw';
     try {
       var data = await api.get('/api/tasks/' + taskId + '/versions/' + version + '/files/' + encodeURIComponent(file));
-      showFilePreview(file, data.content);
+      showFilePreview(file, data.content, rawUrl);
     } catch(e) {
       toast('Failed to load file', 'error');
     }
@@ -1953,11 +2139,7 @@
   }
 
   function navigateBack() {
-    if (state.previousView === 'agent-detail' && state.previousAgentId) {
-      navigate('agent-detail', state.previousAgentId);
-    } else {
-      navigate('dashboard');
-    }
+    history.back();
   }
 
   // ── Task Prev/Next Navigation ─────────────────
@@ -2235,6 +2417,7 @@
     checkClaudeStatus();
     loadPermissionMode();
     checkForUpdates();
+    checkSystemHealth();
     loadSecretsStatus();
     loadCredentialsStatus();
     loadTempStatus();
@@ -2722,6 +2905,7 @@
 
     try {
       var result = await api.get('/api/updates/check');
+      _upgradeCheckData = result; // cache for upgrade modal
 
       if (currentEl) currentEl.textContent = result.currentVersion || '-';
       if (latestEl) latestEl.textContent = result.latestVersion || '-';
@@ -2759,28 +2943,172 @@
     }
   }
 
+  // Cached update check result for upgrade modal
+  var _upgradeCheckData = null;
+
   async function performUpgrade() {
-    if (!confirm('Upgrade the platform? This will download and replace platform files only — your agents, tasks, secrets, and project data will NOT be changed. The server will need a restart after upgrading.')) return;
-
-    var upgradeBtn = document.getElementById('update-upgrade-btn');
-    if (upgradeBtn) { upgradeBtn.disabled = true; upgradeBtn.textContent = 'Downloading...'; }
-
+    // Open upgrade modal instead of confirm()
     try {
-      var result = await api.post('/api/updates/upgrade', {});
+      var statusEl = document.getElementById('update-status');
+      if (statusEl) { statusEl.textContent = 'Checking...'; statusEl.className = 'badge badge-inactive'; }
+
+      // Fetch latest check data if not cached
+      if (!_upgradeCheckData) {
+        _upgradeCheckData = await api.get('/api/updates/check');
+      }
+      if (!_upgradeCheckData || !_upgradeCheckData.updateAvailable) {
+        toast('No update available');
+        return;
+      }
+
+      // Populate modal
+      var fromEl = document.getElementById('upgrade-from-version');
+      var toEl = document.getElementById('upgrade-to-version');
+      var notesEl = document.getElementById('upgrade-release-notes');
+      if (fromEl) fromEl.textContent = 'v' + (_upgradeCheckData.currentVersion || '?');
+      if (toEl) toEl.textContent = 'v' + (_upgradeCheckData.latestVersion || '?');
+      if (notesEl) {
+        var notes = _upgradeCheckData.releaseNotes || 'No release notes available.';
+        notesEl.innerHTML = typeof marked !== 'undefined' ? marked.parse(notes) : escHtml(notes);
+      }
+
+      // Check for active tasks
+      var warningEl = document.getElementById('upgrade-active-warning');
+      var warningText = document.getElementById('upgrade-active-text');
+      var forceCheck = document.getElementById('upgrade-force-check');
+      var confirmBtn = document.getElementById('upgrade-confirm-btn');
+      try {
+        var tasks = await api.get('/api/tasks');
+        var activeTasks = (tasks.tasks || []).filter(function(t) {
+          return t.status === 'in_progress' || t.status === 'accepted';
+        });
+        if (activeTasks.length > 0) {
+          if (warningEl) warningEl.classList.remove('hidden');
+          if (warningText) warningText.textContent = activeTasks.length + ' task' + (activeTasks.length > 1 ? 's are' : ' is') + ' currently active. Upgrading may interrupt running agents.';
+          if (forceCheck) forceCheck.checked = false;
+          if (confirmBtn) confirmBtn.disabled = true;
+        } else {
+          if (warningEl) warningEl.classList.add('hidden');
+          if (confirmBtn) confirmBtn.disabled = false;
+        }
+      } catch(e) {
+        if (warningEl) warningEl.classList.add('hidden');
+        if (confirmBtn) confirmBtn.disabled = false;
+      }
+
+      // Reset progress UI
+      var progressContainer = document.getElementById('upgrade-progress-container');
+      if (progressContainer) progressContainer.classList.add('hidden');
+      var steps = document.querySelectorAll('.upgrade-progress-step');
+      steps.forEach(function(s) { s.className = 'upgrade-progress-step'; s.querySelector('.step-icon').innerHTML = '&#9675;'; });
+      var actionsEl = document.getElementById('upgrade-actions');
+      if (actionsEl) actionsEl.style.display = '';
+
+      // Show modal
+      document.getElementById('upgrade-modal').classList.remove('hidden');
+    } catch(e) {
+      toast('Failed to prepare upgrade', 'error');
+      console.error('Upgrade modal error:', e);
+    }
+  }
+
+  function closeUpgradeModal() {
+    document.getElementById('upgrade-modal').classList.add('hidden');
+  }
+
+  function toggleUpgradeBtn() {
+    var forceCheck = document.getElementById('upgrade-force-check');
+    var confirmBtn = document.getElementById('upgrade-confirm-btn');
+    if (confirmBtn && forceCheck) {
+      confirmBtn.disabled = !forceCheck.checked;
+    }
+  }
+
+  async function confirmUpgrade() {
+    var confirmBtn = document.getElementById('upgrade-confirm-btn');
+    var cancelBtn = document.querySelector('#upgrade-actions .btn-secondary');
+    var progressContainer = document.getElementById('upgrade-progress-container');
+    var warningEl = document.getElementById('upgrade-active-warning');
+    var forceCheck = document.getElementById('upgrade-force-check');
+    var needsForce = warningEl && !warningEl.classList.contains('hidden');
+
+    // Disable buttons, show progress
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Upgrading...'; }
+    if (cancelBtn) cancelBtn.disabled = true;
+    if (progressContainer) progressContainer.classList.remove('hidden');
+
+    // Animate progress steps
+    var stepNames = ['check', 'backup', 'download', 'migrate', 'rebuild', 'done'];
+    var stepTimings = [400, 1200, 2500, 1500, 800, 0]; // ms delay before marking done
+    var currentStep = 0;
+    var upgradeFinished = false;
+    var upgradeFailed = false;
+    var upgradeError = '';
+
+    function setStepState(name, state) {
+      var el = document.querySelector('.upgrade-progress-step[data-step="' + name + '"]');
+      if (!el) return;
+      el.className = 'upgrade-progress-step ' + state;
+      var icon = el.querySelector('.step-icon');
+      if (state === 'active') icon.innerHTML = '&#9679;';
+      else if (state === 'done') icon.innerHTML = '&#10003;';
+      else if (state === 'error') icon.innerHTML = '&#10007;';
+    }
+
+    function advanceStep() {
+      if (currentStep >= stepNames.length || upgradeFailed) return;
+      if (currentStep > 0) setStepState(stepNames[currentStep - 1], 'done');
+      setStepState(stepNames[currentStep], 'active');
+      currentStep++;
+      if (!upgradeFinished && currentStep < stepNames.length) {
+        setTimeout(advanceStep, stepTimings[currentStep - 1]);
+      }
+    }
+
+    advanceStep();
+
+    // Fire the actual upgrade
+    try {
+      var body = needsForce ? { force: true } : {};
+      var result = await api.post('/api/updates/upgrade', body);
+      upgradeFinished = true;
+
       if (result.success) {
-        toast('Upgrade complete! Restart the server to apply.');
+        // Mark all remaining steps as done
+        for (var i = 0; i < stepNames.length; i++) {
+          setStepState(stepNames[i], 'done');
+        }
+        toast('Upgrade complete! Server restarting...');
         var statusEl = document.getElementById('update-status');
         if (statusEl) { statusEl.textContent = 'Restart required'; statusEl.className = 'badge badge-pending'; }
+        var upgradeBtn = document.getElementById('update-upgrade-btn');
         if (upgradeBtn) upgradeBtn.classList.add('hidden');
         var banner = document.getElementById('update-banner');
         if (banner) banner.classList.add('hidden');
+        // Hide actions, show done message
+        var actionsEl = document.getElementById('upgrade-actions');
+        if (actionsEl) actionsEl.style.display = 'none';
+        // Auto-close modal after a moment
+        setTimeout(function() { closeUpgradeModal(); }, 2000);
       } else {
-        toast(result.message || 'Upgrade failed', 'error');
-        if (upgradeBtn) { upgradeBtn.disabled = false; upgradeBtn.textContent = 'Upgrade Now'; }
+        upgradeFailed = true;
+        upgradeError = result.message || 'Upgrade failed';
+        // If 409 active tasks conflict
+        if (result.activeTasks) {
+          upgradeError = 'Blocked: ' + result.activeTasks + ' active task(s). Use force option.';
+        }
+        setStepState(stepNames[Math.max(0, currentStep - 1)], 'error');
+        toast(upgradeError, 'error');
+        if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Retry Upgrade'; }
+        if (cancelBtn) cancelBtn.disabled = false;
       }
     } catch(e) {
-      toast('Upgrade failed', 'error');
-      if (upgradeBtn) { upgradeBtn.disabled = false; upgradeBtn.textContent = 'Upgrade Now'; }
+      upgradeFinished = true;
+      upgradeFailed = true;
+      setStepState(stepNames[Math.max(0, currentStep - 1)], 'error');
+      toast('Upgrade failed: ' + (e.message || 'Unknown error'), 'error');
+      if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Retry Upgrade'; }
+      if (cancelBtn) cancelBtn.disabled = false;
       console.error('Upgrade error:', e);
     }
   }
@@ -2788,11 +3116,140 @@
   async function silentUpdateCheck() {
     try {
       var result = await api.get('/api/updates/check');
+      _upgradeCheckData = result; // cache for upgrade modal
       var banner = document.getElementById('update-banner');
       if (result.updateAvailable && banner) {
         banner.classList.remove('hidden');
       }
     } catch(e) {}
+  }
+
+  // ── Post-Upgrade Banner ────────────────────────────
+  async function checkPostUpgradeBanner() {
+    try {
+      var status = await api.get('/api/updates/status');
+      // Check upgrading lock first
+      if (status.upgrading) {
+        showUpgradingOverlay();
+        // Poll until upgrading is done
+        var pollInterval = setInterval(async function() {
+          try {
+            var s = await api.get('/api/updates/status');
+            if (!s.upgrading) {
+              clearInterval(pollInterval);
+              hideUpgradingOverlay();
+              checkPostUpgradeBanner();
+            }
+          } catch(e) {}
+        }, 3000);
+        return;
+      }
+      hideUpgradingOverlay();
+
+      // Check for recent upgrade (within 5 minutes)
+      if (status.lastUpgrade) {
+        var upgradeTime = new Date(status.lastUpgrade.timestamp || status.lastUpgrade);
+        var now = new Date();
+        var diffMs = now - upgradeTime;
+        if (diffMs < 5 * 60 * 1000) {
+          var version = status.lastUpgrade.toVersion || status.lastUpgrade.version || '?';
+          var migrations = status.lastUpgrade.migrationsRun || 0;
+          var dismissedKey = 'upgrade-dismissed-' + version;
+          if (!localStorage.getItem(dismissedKey)) {
+            var textEl = document.getElementById('post-upgrade-text');
+            var bannerEl = document.getElementById('post-upgrade-banner');
+            if (textEl) textEl.textContent = 'Updated to v' + version + ' - ' + migrations + ' migration' + (migrations !== 1 ? 's' : '') + ' applied.';
+            if (bannerEl) {
+              bannerEl.classList.remove('hidden');
+              bannerEl._dismissKey = dismissedKey;
+            }
+          }
+        }
+      }
+    } catch(e) {
+      console.error('Post-upgrade check failed:', e);
+    }
+  }
+
+  function dismissUpgradeBanner() {
+    var bannerEl = document.getElementById('post-upgrade-banner');
+    if (bannerEl) {
+      if (bannerEl._dismissKey) localStorage.setItem(bannerEl._dismissKey, '1');
+      bannerEl.classList.add('hidden');
+    }
+  }
+
+  // ── System Health Indicator ────────────────────────
+  async function checkSystemHealth() {
+    var indicator = document.getElementById('system-health-indicator');
+    var details = document.getElementById('system-health-details');
+    if (!indicator) return;
+
+    try {
+      var status = await api.get('/api/updates/status');
+
+      if (status.migrationFailed) {
+        indicator.innerHTML = '<span class="health-indicator health-red"><span class="health-dot"></span> Migration failed</span>';
+        if (details) {
+          details.className = 'health-details';
+          details.innerHTML = '<div>' + escHtml(status.migrationFailed.error || 'Unknown migration error') + '</div>' +
+            '<div style="margin-top:8px;display:flex;gap:8px;">' +
+            '<button class="btn btn-secondary" onclick="App.retryMigrations()" style="font-size:11px;padding:3px 10px;">Retry</button>' +
+            '<button class="btn btn-cancel" onclick="App.rollbackUpgrade()" style="font-size:11px;padding:3px 10px;">Rollback</button>' +
+            '</div>';
+        }
+      } else if (status.upgrading) {
+        indicator.innerHTML = '<span class="health-indicator health-yellow"><span class="health-dot"></span> Upgrade in progress or interrupted</span>';
+        if (details) { details.className = 'hidden'; details.innerHTML = ''; }
+      } else {
+        indicator.innerHTML = '<span class="health-indicator health-green"><span class="health-dot"></span> System healthy</span>';
+        if (details) { details.className = 'hidden'; details.innerHTML = ''; }
+      }
+    } catch(e) {
+      indicator.innerHTML = '<span class="health-indicator health-yellow"><span class="health-dot"></span> Unable to check</span>';
+    }
+  }
+
+  async function retryMigrations() {
+    toast('Retrying migrations...');
+    try {
+      var result = await api.post('/api/updates/upgrade', { force: true });
+      if (result.success) {
+        toast('Migrations completed successfully');
+        checkSystemHealth();
+      } else {
+        toast(result.message || 'Retry failed', 'error');
+      }
+    } catch(e) {
+      toast('Retry failed', 'error');
+    }
+  }
+
+  async function rollbackUpgrade() {
+    if (!confirm('Rollback to the previous version? This will restore the backup created before the last upgrade.')) return;
+    toast('Rolling back...');
+    try {
+      var result = await api.post('/api/updates/rollback', {});
+      if (result.success) {
+        toast('Rollback complete. Restart the server to apply.');
+        checkSystemHealth();
+      } else {
+        toast(result.message || 'Rollback failed', 'error');
+      }
+    } catch(e) {
+      toast('Rollback failed', 'error');
+    }
+  }
+
+  // ── Upgrading Lock Overlay ─────────────────────────
+  function showUpgradingOverlay() {
+    var overlay = document.getElementById('upgrading-overlay');
+    if (overlay) overlay.classList.remove('hidden');
+  }
+
+  function hideUpgradingOverlay() {
+    var overlay = document.getElementById('upgrading-overlay');
+    if (overlay) overlay.classList.add('hidden');
   }
 
   // ── Claude Account Status ─────────────────────────
@@ -3497,6 +3954,55 @@
     renderFilteredTasks(context);
   }
 
+  // ── Agent Filter Bar ─────────────────────────────────
+  function renderAgentFilterBar(context) {
+    var barId = context === 'dashboard' ? 'dashboard-agent-filter' : 'agent-agent-filter';
+    var bar = document.getElementById(barId);
+    if (!bar) return;
+
+    var tasks = context === 'dashboard' ? state.cachedDashboardTasks : state.cachedAgentTasks;
+    var agentIds = {};
+    (tasks || []).forEach(function(t) {
+      if (t.assignedTo) agentIds[t.assignedTo] = (agentIds[t.assignedTo] || 0) + 1;
+    });
+    var ids = Object.keys(agentIds).sort();
+    if (ids.length <= 1) { bar.innerHTML = ''; return; }
+
+    var activeFilter = context === 'dashboard' ? state.dashboardAgentFilter : state.agentAgentFilter;
+    var html = '';
+    ids.forEach(function(agentId) {
+      var found = state.agents.find(function(a) { return a.id === agentId; });
+      var name = found ? found.name : agentId;
+      var isActive = activeFilter === agentId;
+      html += '<span class="agent-filter-chip' + (isActive ? ' active' : '') + '" onclick="App.toggleAgentFilter(\'' + escHtml(agentId).replace(/'/g, "\\'") + '\',\'' + context + '\')">' +
+        escHtml(name) + '</span>';
+    });
+    if (activeFilter) {
+      html += '<button class="agent-filter-clear" onclick="App.clearAgentFilter(\'' + context + '\')">Clear</button>';
+    }
+    bar.innerHTML = html;
+  }
+
+  function toggleAgentFilter(agentId, context) {
+    if (context === 'dashboard') {
+      state.dashboardAgentFilter = state.dashboardAgentFilter === agentId ? null : agentId;
+    } else {
+      state.agentAgentFilter = state.agentAgentFilter === agentId ? null : agentId;
+    }
+    renderAgentFilterBar(context);
+    renderFilteredTasks(context);
+  }
+
+  function clearAgentFilter(context) {
+    if (context === 'dashboard') {
+      state.dashboardAgentFilter = null;
+    } else {
+      state.agentAgentFilter = null;
+    }
+    renderAgentFilterBar(context);
+    renderFilteredTasks(context);
+  }
+
   // ── Init ───────────────────────────────────────────
   async function init() {
     connectWebSocket();
@@ -3517,9 +4023,16 @@
       } else {
         updateSidebarHeader(sys.teamName);
         await loadSidebarAgents();
-        navigate('chat');
+        // Deep link: navigate from hash or default to chat
+        if (location.hash && location.hash !== '#') {
+          _navigateFromHash();
+        } else {
+          navigate('chat');
+        }
         // Check for updates silently on startup
         silentUpdateCheck();
+        // Check post-upgrade banner and upgrading lock
+        checkPostUpgradeBanner();
         // Re-check every 30 minutes
         setInterval(silentUpdateCheck, 30 * 60 * 1000);
       }
@@ -3969,11 +4482,10 @@
         '<p>The Dashboard is your <strong>mission control</strong>. It shows all tasks, their statuses, and the latest round table summary. It defaults to showing <strong>Pending</strong> tasks - work that needs your attention.</p>' +
         '<h3>Stat Cards</h3>' +
         '<p>Click any stat card to filter: <strong>Pending</strong>, <strong>All</strong>, <strong>Working</strong>, <strong>Accepted</strong>, or <strong>Closed</strong>. The pending count includes subtasks so nothing slips through.</p>' +
-        '<h3>Three View Modes</h3>' +
+        '<h3>Two View Modes</h3>' +
         '<ul>' +
-        '<li><strong>List</strong> - Flat list sorted by priority. Quick scanning.</li>' +
+        '<li><strong>Tree</strong> (default) - Hierarchical view showing parent tasks with their subtasks nested below. Expandable/collapsible.</li>' +
         '<li><strong>Flow</strong> - Visual dependency graph showing how tasks connect. Nodes pulse when in progress, dim when done, glow when pending. Hover any node to highlight its upstream and downstream chain.</li>' +
-        '<li><strong>Tree</strong> - Hierarchical view showing parent tasks with their subtasks nested below. Expandable/collapsible.</li>' +
         '</ul>' +
         '<h3>Round Table Summary</h3>' +
         '<p>The right panel shows the latest round table report - what was executed, what needs your attention, and overall team status.</p>' +
@@ -3997,7 +4509,7 @@
         '</ul>' +
         '<h3>Key Principles</h3>' +
         '<ul>' +
-        '<li>There is no draft state. Tasks start working immediately when created.</li>' +
+        '<li>Tasks start in Planning state. The agent creates a plan, then submits for review.</li>' +
         '<li>Accepted tasks are closed automatically - you never need to close them manually.</li>' +
         '<li>Each submission creates a new version. You can see the full revision history on the task detail page.</li>' +
         '<li>Use the Improve button with specific feedback to tell the agent exactly what to change.</li>' +
@@ -4250,6 +4762,7 @@
     toggleMemoryEdit: toggleMemoryEdit,
     saveMemory: saveMemory,
     switchAgentTab: switchAgentTab,
+    loadAgentFiles: loadAgentFiles,
     openTask: openTask,
     reviewTask: reviewTask,
     navigateBack: navigateBack,
@@ -4289,11 +4802,19 @@
     deleteCredential: deleteCredential,
     checkForUpdates: checkForUpdates,
     performUpgrade: performUpgrade,
+    closeUpgradeModal: closeUpgradeModal,
+    toggleUpgradeBtn: toggleUpgradeBtn,
+    confirmUpgrade: confirmUpgrade,
+    dismissUpgradeBanner: dismissUpgradeBanner,
+    retryMigrations: retryMigrations,
+    rollbackUpgrade: rollbackUpgrade,
     checkClaudeStatus: checkClaudeStatus,
     toggleSkill: toggleSkill,
     saveSkillSettings: saveSkillSettings,
     viewVersionFile: viewVersionFile,
     viewFile: viewFile,
+    previewFileInModal: previewFileInModal,
+    closeFilePreview: closeFilePreview,
     changeTaskStatus: changeTaskStatus,
     toggleFeedback: toggleFeedback,
     pasteImage: pasteImage,
@@ -4326,7 +4847,10 @@
     selectAutoTag: selectAutoTag,
     toggleTagFilter: toggleTagFilter,
     clearTagFilters: clearTagFilters,
+    toggleAgentFilter: toggleAgentFilter,
+    clearAgentFilter: clearAgentFilter,
     selectDep: selectDep,
+    toggleSort: toggleSort,
   };
 
   init();

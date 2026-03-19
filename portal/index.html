@@ -202,21 +202,21 @@
         <h2>Autopilot</h2>
         <div class="header-actions">
           <button class="btn btn-secondary" id="ap-pause-all-btn" onclick="App.pauseAllAutopilot()">Pause All</button>
-          <button class="btn btn-primary" onclick="App.openAutopilotForm()">+ Add Schedule</button>
+          <button class="btn btn-primary" onclick="App.openAutopilotForm()">+ New Recurring Task</button>
         </div>
       </header>
       <div class="panel">
-        <h3>Schedules</h3>
+        <h3>Recurring Autopilot</h3>
         <div id="autopilot-list"></div>
         <div id="autopilot-form" class="hidden">
           <div class="form-grid" style="margin-top:12px">
             <div class="form-group full-width">
-              <label>Name</label>
-              <input type="text" id="ap-name" placeholder="e.g. Daily standup">
+              <label>Task Name</label>
+              <input type="text" id="ap-name" placeholder="e.g. Daily standup check">
             </div>
             <div class="form-group full-width">
-              <label>Prompt</label>
-              <textarea id="ap-prompt" rows="3" placeholder="The prompt to send to the terminal..."></textarea>
+              <label>Description / Prompt</label>
+              <textarea id="ap-prompt" rows="3" placeholder="What should the agent do each run..."></textarea>
             </div>
             <div class="form-group">
               <label>Agent</label>
@@ -228,30 +228,30 @@
             </div>
             <div class="form-group">
               <label>Interval</label>
-              <input type="number" id="ap-interval" min="1" value="60">
+              <input type="number" id="ap-interval" min="1" value="1">
             </div>
             <div class="form-group">
               <label>Unit</label>
               <div class="custom-select" id="ap-unit-select" data-target="ap-interval-unit">
-                <div class="custom-select-trigger">Minutes</div>
+                <div class="custom-select-trigger">Hours</div>
                 <div class="custom-select-dropdown">
-                  <div class="custom-select-option selected" data-value="minutes">Minutes</div>
-                  <div class="custom-select-option" data-value="hours">Hours</div>
+                  <div class="custom-select-option" data-value="minutes">Minutes</div>
+                  <div class="custom-select-option selected" data-value="hours">Hours</div>
                   <div class="custom-select-option" data-value="days">Days</div>
                 </div>
               </div>
-              <input type="hidden" id="ap-interval-unit" value="minutes">
+              <input type="hidden" id="ap-interval-unit" value="hours">
             </div>
           </div>
           <div class="form-actions">
             <button class="btn btn-secondary" onclick="App.cancelAutopilotForm()">Cancel</button>
-            <button class="btn btn-primary" onclick="App.saveAutopilot()">Save</button>
+            <button class="btn btn-primary" onclick="App.saveAutopilot()">Create</button>
           </div>
         </div>
       </div>
       <div class="panel">
-        <h3>Autopilot Tasks</h3>
-        <div id="autopilot-tasks" class="task-list"><div class="empty-state">No autopilot tasks</div></div>
+        <h3>One-time Autopilot</h3>
+        <div id="autopilot-tasks" class="task-list"><div class="empty-state">No one-time autopilot tasks</div></div>
       </div>
     </section>
 
@@ -353,32 +353,15 @@
         </div>
       </div>
       <div id="agent-tab-files" class="agent-tab">
-        <div id="agent-files-content" class="agent-files-container">
-          <p class="empty-state">Click to load files...</p>
+        <div class="agent-files-subtabs">
+          <button class="agent-files-subtab active" data-subtab="content" onclick="App.switchFilesSubTab('content')">Content <span id="agent-files-content-count" class="agent-files-subtab-count">(0)</span></button>
+          <button class="agent-files-subtab" data-subtab="reports" onclick="App.switchFilesSubTab('reports')">Reports <span id="agent-files-reports-count" class="agent-files-subtab-count">(0)</span></button>
         </div>
-      </div>
-    </section>
-
-    <!-- Agent Files Page -->
-    <section id="view-agent-files" class="view">
-      <header class="view-header">
-        <button class="btn btn-secondary" onclick="App.navigateBack()">&#8592; Back</button>
-        <h2 id="agent-files-title">Files</h2>
-      </header>
-      <div class="agent-files-page">
-        <div class="agent-files-section">
-          <h3 class="agent-files-section-header" id="agent-files-reports-header" onclick="App.toggleFilesSection('reports')">
-            <span class="agent-files-section-arrow" id="agent-files-reports-arrow">&#9660;</span>
-            Reports <span class="agent-files-section-count" id="agent-files-reports-count">(0)</span>
-          </h3>
-          <div id="agent-files-reports" class="agent-files-grid"></div>
-        </div>
-        <div class="agent-files-section">
-          <h3 class="agent-files-section-header" id="agent-files-content-header" onclick="App.toggleFilesSection('content')">
-            <span class="agent-files-section-arrow" id="agent-files-content-arrow">&#9660;</span>
-            Content <span class="agent-files-section-count" id="agent-files-content-count">(0)</span>
-          </h3>
+        <div id="agent-files-subtab-content" class="agent-files-subtab-panel active">
           <div id="agent-files-content-list" class="agent-files-grid"></div>
+        </div>
+        <div id="agent-files-subtab-reports" class="agent-files-subtab-panel">
+          <div id="agent-files-reports" class="agent-files-grid"></div>
         </div>
       </div>
     </section>
@@ -951,9 +934,19 @@
         </div>
         <div class="form-group full-width" style="display:flex;align-items:center;gap:16px;padding-top:4px">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text-muted)">
-            <input type="checkbox" id="add-task-autopilot" style="width:auto"> Autopilot
+            <input type="checkbox" id="add-task-autopilot" style="width:auto" onchange="var g=document.getElementById('add-task-interval-group');if(this.checked){g.style.display='flex'}else{g.style.display='none'}"> Autopilot
           </label>
           <a href="#" onclick="document.getElementById('add-task-advanced').classList.toggle('hidden');this.textContent=this.textContent==='+ Advanced'?'- Advanced':'+ Advanced';return false" style="font-size:12px;color:var(--text-dim);text-decoration:none">+ Advanced</a>
+        </div>
+        <div id="add-task-interval-group" style="display:none;gap:8px;align-items:center;padding-top:4px">
+          <label style="margin:0;font-size:12px;color:var(--text-muted)">Repeat every</label>
+          <input type="number" id="add-task-interval" min="1" value="1" style="width:60px">
+          <select id="add-task-interval-unit" style="width:auto;font-size:12px">
+            <option value="">One-time</option>
+            <option value="minutes">Minutes</option>
+            <option value="hours" selected>Hours</option>
+            <option value="days">Days</option>
+          </select>
         </div>
       </div>
       <div class="form-actions">

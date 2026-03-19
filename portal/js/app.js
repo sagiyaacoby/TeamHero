@@ -147,7 +147,6 @@
 
   function _buildHash(viewId, agentId) {
     if (viewId === 'agent-detail' && agentId) return '#agent/' + agentId;
-    if (viewId === 'agent-files' && agentId) return '#agent-files/' + agentId;
     if (viewId === 'task-detail' && state.currentTaskId) return '#task/' + state.currentTaskId;
     if (viewId === 'knowledge-detail' && state._currentKnowledgeId) return '#knowledge/' + state._currentKnowledgeId;
     if (viewId === 'add-agent') return '#add-agent';
@@ -164,12 +163,6 @@
       document.getElementById('view-agent-detail').classList.add('active');
       loadAgentDetail(agentId);
       var navEl = document.querySelector('[data-agent-id="' + agentId + '"]');
-      if (navEl) navEl.classList.add('active');
-    } else if (viewId === 'agent-files' && agentId) {
-      state.currentAgentId = agentId;
-      document.getElementById('view-agent-files').classList.add('active');
-      loadAgentFilesPage(agentId);
-      var navEl = document.querySelector('.nav-link[data-agent-id="' + agentId + '"]');
       if (navEl) navEl.classList.add('active');
     } else if (viewId === 'task-detail') {
       document.getElementById('view-task-detail').classList.add('active');
@@ -250,7 +243,8 @@
     var view = link.dataset.view;
     var agentId = link.dataset.agentId;
     if (view === 'agent-files' && agentId) {
-      navigate('agent-files', agentId);
+      navigate('agent-detail', agentId);
+      setTimeout(function() { switchAgentTab('files'); }, 50);
     } else if (agentId) {
       navigate('agent-detail', agentId);
     } else if (view) {
@@ -271,7 +265,8 @@
     if (view === 'agent' && id) {
       navigate('agent-detail', id);
     } else if (view === 'agent-files' && id) {
-      navigate('agent-files', id);
+      navigate('agent-detail', id);
+      setTimeout(function() { switchAgentTab('files'); }, 50);
     } else if (view === 'task' && id) {
       openTask(id);
     } else if (view === 'knowledge' && id) {
@@ -405,8 +400,7 @@
       if (v === 'knowledge') loadKnowledge();
       if (v === 'knowledge-detail' && state._currentKnowledgeId) openKnowledgeDoc(state._currentKnowledgeId);
     }
-    if (scope === 'all' || scope === 'autopilot') {
-      if (v === 'settings') loadAutopilot();
+    if (scope === 'all' || scope === 'autopilot' || scope === 'tasks') {
       if (v === 'autopilot') loadAutopilotPage();
     }
     if (scope === 'all') {
@@ -459,7 +453,7 @@
     });
 
     subAgents.forEach(function(a) {
-      var isActive = (state.currentView === 'agent-detail' || state.currentView === 'agent-files') && state.currentAgentId === a.id;
+      var isActive = state.currentView === 'agent-detail' && state.currentAgentId === a.id;
       var dotClass = 'agent-dot' + (workingAgents[a.id] ? ' agent-dot-working' : '');
       var dotTitle = workingAgents[a.id] ? 'Working on task' : 'Idle';
       var nameHtml = escHtml(a.name);
@@ -471,12 +465,12 @@
       html += '<div class="nav-agent-row">';
       html += '<span class="nav-agent-arrow' + (isExpanded ? ' expanded' : '') + '" data-agent-id="' + a.id + '" title="Show files">&#9654;</span>';
       html += '<a href="#" data-agent-id="' + a.id + '" class="nav-link' + (isActive ? ' active' : '') + '" style="flex:1">' +
-        '<span class="icon">&#9670;</span> ' + nameHtml + '<span class="' + dotClass + '" title="' + dotTitle + '"></span></a>';
+        nameHtml + '<span class="' + dotClass + '" title="' + dotTitle + '"></span></a>';
       html += '</div>';
       var countText = state.agentFileCounts && state.agentFileCounts[a.id] != null ? state.agentFileCounts[a.id] : '-';
       html += '<div class="nav-agent-sub' + (isExpanded ? '' : ' hidden') + '" data-agent-sub="' + a.id + '">';
       html += '<a href="#" data-view="agent-files" data-agent-id="' + a.id + '" class="nav-link nav-sub-link">' +
-        '<span class="icon">&#128193;</span> Files <span class="nav-badge-sm">' + countText + '</span></a>';
+        '<span class="icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Files <span class="nav-badge-sm">' + countText + '</span></a>';
       html += '</div>';
       html += '</div>';
     });
@@ -1128,7 +1122,7 @@
       agentName = found ? found.name : t.assignedTo;
     }
     var hasOutput = t.knowledgeDocId || t.hasDeliverable;
-    var outputIcon = hasOutput ? '<span class="task-output-icon" title="Has output">&#128196;</span>' : '';
+    var outputIcon = hasOutput ? '<span class="task-output-icon" title="Has output"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>' : '';
     var isWorking = t.status === 'in_progress';
     var workingDot = isWorking ? '<span class="agent-working-dot" title="Working"></span>' : '';
     var autopilotIcon = t.autopilot ? '<span class="autopilot-badge" title="Autopilot">&#9881;</span>' : '';
@@ -1319,6 +1313,15 @@
         autopilot: autopilot,
         tags: tags
       };
+      // Add interval fields if autopilot is checked and interval is set
+      if (autopilot) {
+        var intervalVal = parseInt((document.getElementById('add-task-interval') || {}).value) || 0;
+        var intervalUnit = (document.getElementById('add-task-interval-unit') || {}).value || '';
+        if (intervalVal > 0 && intervalUnit) {
+          taskBody.interval = intervalVal;
+          taskBody.intervalUnit = intervalUnit;
+        }
+      }
       if (dueDate) taskBody.dueDate = dueDate;
       if (dependsOn.length > 0) taskBody.dependsOn = dependsOn;
 
@@ -1348,80 +1351,49 @@
     }
   }
 
+  function switchFilesSubTab(subtab) {
+    document.querySelectorAll('.agent-files-subtab').forEach(function(btn) {
+      btn.classList.toggle('active', btn.dataset.subtab === subtab);
+    });
+    document.querySelectorAll('.agent-files-subtab-panel').forEach(function(panel) {
+      panel.classList.toggle('active', panel.id === 'agent-files-subtab-' + subtab);
+    });
+  }
+
   // ── Agent Files Tab ─────────────────────────────
   var agentFilesCache = { agentId: null, data: null };
 
   async function loadAgentFiles(agentId, force) {
     if (!force && agentFilesCache.agentId === agentId && agentFilesCache.data) {
-      renderAgentFiles(agentFilesCache.data);
+      renderAgentFiles(agentFilesCache.data, agentId);
       return;
     }
-    var container = document.getElementById('agent-files-content');
-    if (container) container.innerHTML = '<p class="empty-state">Loading files...</p>';
+    document.getElementById('agent-files-content-list').innerHTML = '<p class="empty-state">Loading...</p>';
+    document.getElementById('agent-files-reports').innerHTML = '<p class="empty-state">Loading...</p>';
     try {
       var data = await api.get('/api/agents/' + agentId + '/files');
       agentFilesCache = { agentId: agentId, data: data };
-      renderAgentFiles(data);
+      renderAgentFiles(data, agentId);
       // Update tab button text with count
       var filesBtn = document.querySelector('.tab-btn[data-tab="files"]');
       if (filesBtn) filesBtn.textContent = 'Files' + (data.totalFiles ? ' (' + data.totalFiles + ')' : '');
     } catch(e) {
-      if (container) container.innerHTML = '<p class="empty-state">Failed to load files.</p>';
-    }
-  }
-
-  function renderAgentFiles(data) {
-    var container = document.getElementById('agent-files-content');
-    if (!container) return;
-    if (!data.groups || data.groups.length === 0) {
-      container.innerHTML = '<p class="empty-state">No files yet.</p>';
-      return;
-    }
-    var html = '';
-    data.groups.forEach(function(g) {
-      html += '<div class="agent-files-group">';
-      html += '<div class="agent-files-group-title" onclick="App.openTask(\'' + g.taskId + '\')" title="Open task">' + escHtml(g.taskTitle) + '</div>';
-      html += '<div class="agent-files-list">';
-      g.files.forEach(function(f) {
-        var safeName = encodeURIComponent(f.name);
-        html += '<div class="agent-files-item">';
-        if (f.isImage) {
-          html += '<img src="' + f.rawUrl + '" class="agent-files-thumb" alt="' + escHtml(f.name) + '">';
-        }
-        html += '<a href="javascript:void(0)" onclick="App.previewFileInModal(decodeURIComponent(\'' + safeName + '\'),\'' + f.rawUrl + '\',' + f.isImage + ')" class="agent-files-link">' + escHtml(f.name) + '</a>';
-        if (f.version > 1) {
-          html += '<span class="agent-files-version">v' + f.version + '</span>';
-        }
-        html += '</div>';
-      });
-      html += '</div></div>';
-    });
-    container.innerHTML = html;
-  }
-
-  // ── Agent Files Page ─────────────────────────────
-  async function loadAgentFilesPage(agentId) {
-    var agent = state.agents.find(function(a) { return a.id === agentId; });
-    document.getElementById('agent-files-title').textContent = (agent ? agent.name : 'Agent') + ' - Files';
-    document.getElementById('agent-files-reports').innerHTML = '<p class="empty-state">Loading...</p>';
-    document.getElementById('agent-files-content-list').innerHTML = '<p class="empty-state">Loading...</p>';
-    try {
-      var data = await api.get('/api/agents/' + agentId + '/files');
-      var reportCount = 0;
-      (data.reports || []).forEach(function(g) { reportCount += g.files.length; });
-      var contentCount = 0;
-      (data.content || []).forEach(function(g) { contentCount += g.files.length; });
-      document.getElementById('agent-files-reports-count').textContent = '(' + reportCount + ')';
-      document.getElementById('agent-files-content-count').textContent = '(' + contentCount + ')';
-      renderFilesSection('agent-files-reports', data.reports || []);
-      renderFilesSection('agent-files-content-list', data.content || []);
-      // Restore collapsed state from localStorage
-      restoreFilesSectionState('reports', agentId);
-      restoreFilesSectionState('content', agentId);
-    } catch(e) {
+      document.getElementById('agent-files-content-list').innerHTML = '<p class="empty-state">Failed to load files.</p>';
       document.getElementById('agent-files-reports').innerHTML = '<p class="empty-state">Failed to load files.</p>';
-      document.getElementById('agent-files-content-list').innerHTML = '';
     }
+  }
+
+  function renderAgentFiles(data, agentId) {
+    var reportCount = 0;
+    (data.reports || []).forEach(function(g) { reportCount += g.files.length; });
+    var contentCount = 0;
+    (data.content || []).forEach(function(g) { contentCount += g.files.length; });
+    var rcEl = document.getElementById('agent-files-reports-count');
+    var ccEl = document.getElementById('agent-files-content-count');
+    if (rcEl) rcEl.textContent = '(' + reportCount + ')';
+    if (ccEl) ccEl.textContent = '(' + contentCount + ')';
+    renderFilesSection('agent-files-content-list', data.content || []);
+    renderFilesSection('agent-files-reports', data.reports || []);
   }
 
   function renderFilesSection(containerId, groups) {
@@ -1456,29 +1428,7 @@
   }
 
   function toggleFilesSection(section) {
-    var agentId = state.currentAgentId;
-    var grid = document.getElementById('agent-files-' + (section === 'content' ? 'content-list' : section));
-    var arrow = document.getElementById('agent-files-' + section + '-arrow');
-    if (!grid) return;
-    var isCollapsed = grid.classList.toggle('collapsed');
-    if (arrow) arrow.classList.toggle('collapsed', isCollapsed);
-    // Persist to localStorage
-    if (agentId) {
-      try { localStorage.setItem('agentFiles_' + agentId + '_' + section + '_collapsed', isCollapsed ? '1' : '0'); } catch(e) {}
-    }
-  }
-
-  function restoreFilesSectionState(section, agentId) {
-    try {
-      var key = 'agentFiles_' + agentId + '_' + section + '_collapsed';
-      var val = localStorage.getItem(key);
-      if (val === '1') {
-        var grid = document.getElementById('agent-files-' + (section === 'content' ? 'content-list' : section));
-        var arrow = document.getElementById('agent-files-' + section + '-arrow');
-        if (grid) grid.classList.add('collapsed');
-        if (arrow) arrow.classList.add('collapsed');
-      }
-    } catch(e) {}
+    // Legacy - no longer used with sub-tabs
   }
 
   // ── Task Detail ─────────────────────────────────
@@ -1545,7 +1495,7 @@
       var knowledgeLink = document.getElementById('task-knowledge-link');
       if (task.knowledgeDocId) {
         promoteBar.classList.add('hidden');
-        knowledgeLink.innerHTML = '&#128218; <a onclick="App.openKnowledgeDoc(\'' + task.knowledgeDocId + '\')">View in Knowledge Base</a>';
+        knowledgeLink.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> <a onclick="App.openKnowledgeDoc(\'' + task.knowledgeDocId + '\')">View in Knowledge Base</a>';
         knowledgeLink.classList.remove('hidden');
       } else if (task.status === 'accepted' || task.status === 'closed' || task.status === 'done') {
         promoteBar.classList.remove('hidden');
@@ -1775,6 +1725,16 @@
     html += '<button class="autopilot-toggle' + (task.autopilot ? ' active' : '') + '" onclick="App.toggleTaskAutopilot()" title="Toggle autopilot mode">';
     html += '&#9881; Autopilot ' + (task.autopilot ? 'ON' : 'OFF');
     html += '</button>';
+
+    // Recurring autopilot info
+    if (task.autopilot && task.interval && task.intervalUnit) {
+      html += '<div class="autopilot-recurring-info" style="display:inline-flex;align-items:center;gap:8px;margin-left:8px;font-size:12px;color:var(--text-muted)">';
+      html += '<span>Every ' + task.interval + (task.intervalUnit === 'minutes' ? 'm' : task.intervalUnit === 'hours' ? 'h' : 'd') + '</span>';
+      if (task.lastRun) html += '<span>Last: ' + new Date(task.lastRun).toLocaleString() + '</span>';
+      if (task.nextRun) html += '<span>Next: ' + new Date(task.nextRun).toLocaleString() + '</span>';
+      if (task.runCount) html += '<span>Runs: ' + task.runCount + '</span>';
+      html += '</div>';
+    }
 
     html += '<span class="pipeline-gap"></span>';
 
@@ -3758,9 +3718,9 @@
   var DOC_EXTS = ['pdf','doc','docx','txt','md','csv','xls','xlsx'];
 
   function mediaTypeIcon(ext) {
-    if (VIDEO_EXTS.indexOf(ext) >= 0) return '\uD83C\uDFAC';
-    if (DOC_EXTS.indexOf(ext) >= 0) return '\uD83D\uDCC4';
-    return '\uD83D\uDCC1';
+    if (VIDEO_EXTS.indexOf(ext) >= 0) return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>';
+    if (DOC_EXTS.indexOf(ext) >= 0) return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';
+    return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
   }
 
   async function loadMedia() {
@@ -4709,42 +4669,53 @@
     var container = document.getElementById('autopilot-list');
     if (!container) return;
     try {
-      var schedules = await api.get('/api/autopilot');
+      var tasksData = await api.get('/api/tasks');
       var agentsData = await api.get('/api/agents');
       var agentMap = {};
       (agentsData.agents || []).forEach(function(a) { agentMap[a.id] = a.name; });
       agentMap['orchestrator'] = agentMap['orchestrator'] || 'Orchestrator';
 
-      if (!schedules || schedules.length === 0) {
-        container.innerHTML = '<div class="empty-state" style="padding:16px 0;font-size:13px">No autopilot schedules yet</div>';
+      // Filter recurring autopilot tasks (have interval)
+      var recurring = (tasksData.tasks || []).filter(function(t) {
+        return t.autopilot && t.interval && t.intervalUnit && t.status !== 'cancelled';
+      });
+
+      if (recurring.length === 0) {
+        container.innerHTML = '<div class="empty-state" style="padding:16px 0;font-size:13px">No recurring autopilot tasks yet</div>';
         return;
       }
 
-      var html = '<table class="autopilot-table"><thead><tr><th>Name</th><th>Agent</th><th>Interval</th><th>Last Run</th><th>Next Run</th><th>Controls</th></tr></thead><tbody>';
-      schedules.forEach(function(s) {
-        var agentName = agentMap[s.agentId] || s.agentId;
-        var interval = formatInterval(s.intervalMinutes);
-        var lastRun = s.lastRun ? new Date(s.lastRun).toLocaleString() : 'Never';
-        var nextRun = s.enabled && s.nextRun ? new Date(s.nextRun).toLocaleString() : '-';
-        var toggleIcon = s.enabled ? '\u23F8' : '\u25B6';
-        var toggleTitle = s.enabled ? 'Pause' : 'Resume';
-        var rowClass = s.enabled ? '' : ' class="ap-disabled"';
-        html += '<tr' + rowClass + '>' +
-          '<td>' + escHtml(s.name) + '</td>' +
+      var html = '<table class="autopilot-table"><thead><tr><th>Name</th><th>Agent</th><th>Interval</th><th>Last Run</th><th>Next Run</th><th>Status</th><th>Controls</th></tr></thead><tbody>';
+      // Need full task data for lastRun/nextRun - fetch each
+      for (var i = 0; i < recurring.length; i++) {
+        var entry = recurring[i];
+        var task;
+        try { task = await api.get('/api/tasks/' + entry.id); } catch(e) { continue; }
+        var agentName = agentMap[task.assignedTo] || task.assignedTo || '-';
+        var interval = formatIntervalFields(task.interval, task.intervalUnit);
+        var lastRun = task.lastRun ? new Date(task.lastRun).toLocaleString() : 'Never';
+        var nextRun = task.nextRun ? new Date(task.nextRun).toLocaleString() : '-';
+        var isPaused = task.status === 'hold';
+        var statusLabel = isPaused ? '<span style="color:var(--warning)">Paused</span>' : '<span style="color:var(--success)">' + escHtml(task.status) + '</span>';
+        var toggleIcon = isPaused ? '\u25B6' : '\u23F8';
+        var toggleTitle = isPaused ? 'Resume' : 'Pause';
+        html += '<tr' + (isPaused ? ' class="ap-disabled"' : '') + '>' +
+          '<td><a href="#" onclick="App.openTask(\'' + task.id + '\');return false" style="color:var(--text-primary);text-decoration:underline">' + escHtml(task.title) + '</a></td>' +
           '<td>' + escHtml(agentName) + '</td>' +
           '<td>' + interval + '</td>' +
           '<td>' + lastRun + '</td>' +
           '<td>' + nextRun + '</td>' +
+          '<td>' + statusLabel + (task.runCount ? ' (#' + task.runCount + ')' : '') + '</td>' +
           '<td class="ap-controls">' +
-            '<button class="btn-icon" title="' + toggleTitle + '" onclick="App.toggleAutopilot(\'' + s.id + '\',' + !s.enabled + ')">' + toggleIcon + '</button>' +
-            '<button class="btn-icon" title="Edit" onclick="App.editAutopilot(\'' + s.id + '\')">&#9998;</button>' +
-            '<button class="btn-icon" title="Delete" onclick="App.deleteAutopilot(\'' + s.id + '\')">&#10005;</button>' +
+            '<button class="btn-icon" title="' + toggleTitle + '" onclick="App.toggleAutopilot(\'' + task.id + '\',' + isPaused + ')">' + toggleIcon + '</button>' +
+            '<button class="btn-icon" title="Edit interval" onclick="App.editAutopilot(\'' + task.id + '\')">&#9998;</button>' +
+            '<button class="btn-icon" title="Cancel task" onclick="App.deleteAutopilot(\'' + task.id + '\')">&#10005;</button>' +
           '</td></tr>';
-      });
+      }
       html += '</tbody></table>';
       container.innerHTML = html;
     } catch(e) {
-      container.innerHTML = '<div class="empty-state" style="padding:16px 0;font-size:13px">No autopilot schedules yet</div>';
+      container.innerHTML = '<div class="empty-state" style="padding:16px 0;font-size:13px">No recurring autopilot tasks yet</div>';
     }
   }
 
@@ -4754,6 +4725,12 @@
     return div.innerHTML;
   }
 
+  function formatIntervalFields(interval, unit) {
+    if (!interval || !unit) return '-';
+    return interval + (unit === 'minutes' ? 'm' : unit === 'hours' ? 'h' : unit === 'days' ? 'd' : unit);
+  }
+
+  // Keep old formatInterval for compatibility
   function formatInterval(mins) {
     if (mins >= 1440 && mins % 1440 === 0) return (mins / 1440) + 'd';
     if (mins >= 60 && mins % 60 === 0) return (mins / 60) + 'h';
@@ -4764,8 +4741,8 @@
     autopilotEditId = null;
     document.getElementById('ap-name').value = '';
     document.getElementById('ap-prompt').value = '';
-    document.getElementById('ap-interval').value = '60';
-    setCustomSelect('ap-unit-select', 'minutes', 'Minutes');
+    document.getElementById('ap-interval').value = '1';
+    setCustomSelect('ap-unit-select', 'hours', 'Hours');
     await populateAutopilotAgents();
     document.getElementById('autopilot-form').classList.remove('hidden');
   }
@@ -4851,70 +4828,81 @@
 
     if (!name || !prompt) { toast('Name and prompt are required', 'error'); return; }
 
-    var intervalMinutes = intervalNum;
-    if (unit === 'hours') intervalMinutes = intervalNum * 60;
-    else if (unit === 'days') intervalMinutes = intervalNum * 1440;
-
     try {
       if (autopilotEditId) {
-        await api.put('/api/autopilot/' + autopilotEditId, { name: name, prompt: prompt, agentId: agentId, intervalMinutes: intervalMinutes });
-        toast('Schedule updated');
+        // Update existing task's interval fields
+        await api.put('/api/tasks/' + autopilotEditId, {
+          title: name,
+          description: prompt,
+          assignedTo: agentId,
+          interval: intervalNum,
+          intervalUnit: unit
+        });
+        toast('Recurring task updated');
       } else {
-        await api.post('/api/autopilot', { name: name, prompt: prompt, agentId: agentId, intervalMinutes: intervalMinutes });
-        toast('Schedule created');
+        // Create new task with autopilot + interval
+        await api.post('/api/tasks', {
+          title: name,
+          description: prompt,
+          assignedTo: agentId,
+          status: 'planning',
+          autopilot: true,
+          interval: intervalNum,
+          intervalUnit: unit
+        });
+        toast('Recurring task created');
       }
       cancelAutopilotForm();
-      loadAutopilot();
-    } catch(e) { toast('Failed to save schedule', 'error'); }
+      loadAutopilotPage();
+    } catch(e) { toast('Failed to save: ' + (e.message || 'Unknown error'), 'error'); }
   }
 
-  async function toggleAutopilot(id, enabled) {
+  async function toggleAutopilot(id, isPaused) {
     try {
-      await api.put('/api/autopilot/' + id, { enabled: enabled });
-      loadAutopilot();
-    } catch(e) { toast('Failed to update schedule', 'error'); }
+      if (isPaused) {
+        // Resume: set back to closed so scheduler can pick it up on next interval
+        await api.put('/api/tasks/' + id, { status: 'closed' });
+        toast('Recurring task resumed');
+      } else {
+        // Pause: set to hold
+        await api.put('/api/tasks/' + id, { status: 'hold' });
+        toast('Recurring task paused');
+      }
+      loadAutopilotPage();
+    } catch(e) { toast('Failed to update task', 'error'); }
   }
 
   async function editAutopilot(id) {
     try {
-      var schedules = await api.get('/api/autopilot');
-      var sched = schedules.find(function(s) { return s.id === id; });
-      if (!sched) return;
+      var task = await api.get('/api/tasks/' + id);
+      if (!task) return;
       autopilotEditId = id;
       await populateAutopilotAgents();
-      document.getElementById('ap-name').value = sched.name || '';
-      document.getElementById('ap-prompt').value = sched.prompt || '';
+      document.getElementById('ap-name').value = task.title || '';
+      document.getElementById('ap-prompt').value = task.description || '';
       // Set agent custom select
-      var agentOpt = document.querySelector('#ap-agent-options .custom-select-option[data-value="' + sched.agentId + '"]');
-      if (agentOpt) setCustomSelect('ap-agent-select', sched.agentId, agentOpt.textContent);
-      // Decompose intervalMinutes into value + unit
-      var mins = sched.intervalMinutes;
-      if (mins >= 1440 && mins % 1440 === 0) {
-        document.getElementById('ap-interval').value = mins / 1440;
-        setCustomSelect('ap-unit-select', 'days', 'Days');
-      } else if (mins >= 60 && mins % 60 === 0) {
-        document.getElementById('ap-interval').value = mins / 60;
-        setCustomSelect('ap-unit-select', 'hours', 'Hours');
-      } else {
-        document.getElementById('ap-interval').value = mins;
-        setCustomSelect('ap-unit-select', 'minutes', 'Minutes');
-      }
+      var agentOpt = document.querySelector('#ap-agent-options .custom-select-option[data-value="' + task.assignedTo + '"]');
+      if (agentOpt) setCustomSelect('ap-agent-select', task.assignedTo, agentOpt.textContent);
+      // Set interval fields
+      document.getElementById('ap-interval').value = task.interval || 1;
+      var unitLabel = task.intervalUnit === 'minutes' ? 'Minutes' : task.intervalUnit === 'hours' ? 'Hours' : task.intervalUnit === 'days' ? 'Days' : 'Hours';
+      setCustomSelect('ap-unit-select', task.intervalUnit || 'hours', unitLabel);
       document.getElementById('autopilot-form').classList.remove('hidden');
-    } catch(e) { toast('Failed to load schedule', 'error'); }
+    } catch(e) { toast('Failed to load task', 'error'); }
   }
 
   async function deleteAutopilot(id) {
     var ok = await confirmAction({
-      title: 'Delete Schedule',
-      message: 'Are you sure you want to delete this autopilot schedule?',
-      confirmLabel: 'Delete'
+      title: 'Cancel Recurring Task',
+      message: 'Are you sure you want to cancel this recurring autopilot task?',
+      confirmLabel: 'Cancel Task'
     });
     if (!ok) return;
     try {
-      await api.del('/api/autopilot/' + id);
-      toast('Schedule deleted');
-      loadAutopilot();
-    } catch(e) { toast('Failed to delete schedule', 'error'); }
+      await api.put('/api/tasks/' + id, { status: 'cancelled' });
+      toast('Recurring task cancelled');
+      loadAutopilotPage();
+    } catch(e) { toast('Failed to cancel task', 'error'); }
   }
 
   async function loadAutopilotPage() {
@@ -4928,11 +4916,12 @@
     if (!container) return;
     try {
       var tasksData = await api.get('/api/tasks');
+      // One-time autopilot tasks: autopilot=true but NO interval
       var tasks = (tasksData.tasks || []).filter(function(t) {
-        return t.autopilot && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled';
+        return t.autopilot && !t.interval && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled';
       });
       if (tasks.length === 0) {
-        container.innerHTML = '<div class="empty-state">No active autopilot tasks</div>';
+        container.innerHTML = '<div class="empty-state">No active one-time autopilot tasks</div>';
         return;
       }
       var html = '';
@@ -4945,7 +4934,6 @@
 
   async function updateAutopilotBadge() {
     try {
-      // Count active autopilot tasks for the badge
       var tasksData = state.tasks && state.tasks.length > 0 ? { tasks: state.tasks } : await api.get('/api/tasks');
       var apTasks = (tasksData.tasks || []).filter(function(t) {
         return t.autopilot && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled';
@@ -4960,24 +4948,30 @@
 
   async function pauseAllAutopilot() {
     try {
-      var schedules = await api.get('/api/autopilot');
-      await Promise.all(schedules.filter(function(s) { return s.enabled; }).map(function(s) {
-        return api.put('/api/autopilot/' + s.id, { enabled: false });
+      var tasksData = await api.get('/api/tasks');
+      var recurring = (tasksData.tasks || []).filter(function(t) {
+        return t.autopilot && t.interval && t.intervalUnit && t.status !== 'cancelled' && t.status !== 'hold';
+      });
+      await Promise.all(recurring.map(function(t) {
+        return api.put('/api/tasks/' + t.id, { status: 'hold' });
       }));
-      toast('All schedules paused');
+      toast('All recurring tasks paused');
       loadAutopilotPage();
-    } catch(e) { toast('Failed to pause schedules', 'error'); }
+    } catch(e) { toast('Failed to pause tasks', 'error'); }
   }
 
   async function resumeAllAutopilot() {
     try {
-      var schedules = await api.get('/api/autopilot');
-      await Promise.all(schedules.filter(function(s) { return !s.enabled; }).map(function(s) {
-        return api.put('/api/autopilot/' + s.id, { enabled: true });
+      var tasksData = await api.get('/api/tasks');
+      var paused = (tasksData.tasks || []).filter(function(t) {
+        return t.autopilot && t.interval && t.intervalUnit && t.status === 'hold';
+      });
+      await Promise.all(paused.map(function(t) {
+        return api.put('/api/tasks/' + t.id, { status: 'closed' });
       }));
-      toast('All schedules resumed');
+      toast('All recurring tasks resumed');
       loadAutopilotPage();
-    } catch(e) { toast('Failed to resume schedules', 'error'); }
+    } catch(e) { toast('Failed to resume tasks', 'error'); }
   }
 
   // ── Help Section ─────────────────────────────────────
@@ -5363,8 +5357,8 @@
     toggleMemoryEdit: toggleMemoryEdit,
     saveMemory: saveMemory,
     switchAgentTab: switchAgentTab,
+    switchFilesSubTab: switchFilesSubTab,
     loadAgentFiles: loadAgentFiles,
-    loadAgentFilesPage: loadAgentFilesPage,
     toggleFilesSection: toggleFilesSection,
     openTask: openTask,
     reviewTask: reviewTask,

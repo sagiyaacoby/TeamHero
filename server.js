@@ -832,9 +832,19 @@ async function handle(pn, m, req, res) {
       dependsOn: Array.isArray(b.dependsOn) ? b.dependsOn : [],
       dueDate: b.dueDate || null,
       blocker: b.blocker || null,
+      interval: b.interval || null,
+      intervalUnit: b.intervalUnit || null,
+      lastRun: b.lastRun || null,
+      nextRun: null,
+      runCount: b.runCount || 0,
       progressLog: [],
       createdAt: now, updatedAt: now
     };
+    // Compute nextRun for recurring autopilot tasks
+    if (t.autopilot && t.interval && t.intervalUnit) {
+      var ms = t.interval * ({ minutes: 60000, hours: 3600000, days: 86400000 }[t.intervalUnit] || 60000);
+      t.nextRun = new Date(Date.now() + ms).toISOString();
+    }
     writeJSON(path.join(dir, 'task.json'), t);
     // Write initial v1/version.json
     writeJSON(path.join(dir, 'v1/version.json'), {
@@ -844,7 +854,7 @@ async function handle(pn, m, req, res) {
     });
     const ip = path.join(ROOT, 'data/tasks/_index.json');
     const ix = readJSON(ip) || { tasks: [] };
-    ix.tasks.push({ id: id, title: t.title, status: t.status, assignedTo: t.assignedTo, priority: t.priority, type: t.type, autopilot: t.autopilot, parentTaskId: t.parentTaskId, blocker: t.blocker });
+    ix.tasks.push({ id: id, title: t.title, status: t.status, assignedTo: t.assignedTo, priority: t.priority, type: t.type, autopilot: t.autopilot, parentTaskId: t.parentTaskId, blocker: t.blocker, interval: t.interval || null, intervalUnit: t.intervalUnit || null });
     writeJSON(ip, ix);
     // If this is a subtask, auto-link to parent
     if (t.parentTaskId) {
@@ -1164,11 +1174,18 @@ async function handle(pn, m, req, res) {
             return sub && (sub.status === 'accepted' || sub.status === 'closed');
           });
           if (allDone && parentTask2.status !== 'pending_approval' && parentTask2.status !== 'accepted' && parentTask2.status !== 'closed') {
-            parentTask2.status = 'pending_approval';
+            // Autopilot parent: auto-close instead of pending_approval
+            if (parentTask2.autopilot) {
+              parentTask2.status = 'closed';
+              if (!parentTask2.progressLog) parentTask2.progressLog = [];
+              parentTask2.progressLog.push({ message: 'Autopilot: auto-closed (all subtasks done)', agentId: parentTask2.assignedTo || null, timestamp: now });
+            } else {
+              parentTask2.status = 'pending_approval';
+            }
             parentTask2.updatedAt = now;
             writeJSON(parentTp2, parentTask2);
             var pi = aix.tasks.findIndex(function(x) { return x.id === checkParentId; });
-            if (pi >= 0) { aix.tasks[pi].status = 'pending_approval'; writeJSON(aip, aix); }
+            if (pi >= 0) { aix.tasks[pi].status = parentTask2.status; writeJSON(aip, aix); }
             checkParentId = parentTask2.parentTaskId;
           } else {
             break;
@@ -1215,8 +1232,27 @@ async function handle(pn, m, req, res) {
       }
     }
 
+    // Autopilot auto-close: if task is autopilot and being set to pending_approval, auto-close it
+    var autopilotClosed = false;
+    if (b.status === 'pending_approval' && ex.status !== 'pending_approval' && (b.autopilot || ex.autopilot)) {
+      b.status = 'closed';
+      autopilotClosed = true;
+    }
+
     // Default: merge update
     var merged = Object.assign({}, ex, b, { id: id, updatedAt: now });
+
+    // Recompute nextRun if interval fields changed
+    if ((b.interval !== undefined || b.intervalUnit !== undefined) && merged.autopilot && merged.interval && merged.intervalUnit) {
+      var intMs = merged.interval * ({ minutes: 60000, hours: 3600000, days: 86400000 }[merged.intervalUnit] || 60000);
+      merged.nextRun = new Date(Date.now() + intMs).toISOString();
+    }
+
+    // Autopilot auto-close: log progress
+    if (autopilotClosed) {
+      if (!merged.progressLog) merged.progressLog = [];
+      merged.progressLog.push({ message: 'Autopilot: auto-closed', agentId: merged.assignedTo || null, timestamp: now });
+    }
 
     // Blocker field handling: auto-log progress when blocker changes
     if (b.blocker !== undefined && b.blocker !== ex.blocker) {
@@ -1232,7 +1268,7 @@ async function handle(pn, m, req, res) {
     var mip = path.join(ROOT, 'data/tasks/_index.json');
     var mix = readJSON(mip) || { tasks: [] };
     var mi = mix.tasks.findIndex(function(x) { return x.id === id; });
-    if (mi >= 0) mix.tasks[mi] = { id: id, title: merged.title, status: merged.status, assignedTo: merged.assignedTo, priority: merged.priority, type: merged.type || 'general', autopilot: merged.autopilot || false, parentTaskId: merged.parentTaskId || null, blocker: merged.blocker || null };
+    if (mi >= 0) mix.tasks[mi] = { id: id, title: merged.title, status: merged.status, assignedTo: merged.assignedTo, priority: merged.priority, type: merged.type || 'general', autopilot: merged.autopilot || false, parentTaskId: merged.parentTaskId || null, blocker: merged.blocker || null, interval: merged.interval || null, intervalUnit: merged.intervalUnit || null };
     writeJSON(mip, mix);
     broadcast('tasks');
     return J(res, merged);
@@ -1747,58 +1783,7 @@ async function handle(pn, m, req, res) {
     return J(res, { ok: true });
   }
 
-  // AUTOPILOT
-  if (pn === '/api/autopilot' && m === 'GET') {
-    var schedules = readJSON(path.join(ROOT, 'config/autopilot.json')) || [];
-    return J(res, schedules);
-  }
-  if (pn === '/api/autopilot' && m === 'POST') {
-    var b = await parseBody(req);
-    if (!b.name || !b.prompt || !b.agentId || !b.intervalMinutes) return E(res, 'name, prompt, agentId, and intervalMinutes required');
-    var now = new Date();
-    var schedule = {
-      id: genId(),
-      name: b.name,
-      prompt: b.prompt,
-      agentId: b.agentId,
-      intervalMinutes: b.intervalMinutes,
-      enabled: true,
-      lastRun: null,
-      nextRun: new Date(now.getTime() + b.intervalMinutes * 60000).toISOString(),
-      createdAt: now.toISOString()
-    };
-    var schedules = readJSON(path.join(ROOT, 'config/autopilot.json')) || [];
-    schedules.push(schedule);
-    writeJSON(path.join(ROOT, 'config/autopilot.json'), schedules);
-    broadcast('autopilot');
-    return J(res, schedule, 201);
-  }
-
-  var apMatch = pn.match(/^\/api\/autopilot\/([^\/]+)$/);
-  if (apMatch && m === 'PUT') {
-    var apId = apMatch[1];
-    var schedules = readJSON(path.join(ROOT, 'config/autopilot.json')) || [];
-    var idx = schedules.findIndex(function(s) { return s.id === apId; });
-    if (idx < 0) return E(res, 'Not found', 404);
-    var b = await parseBody(req);
-    var merged = Object.assign({}, schedules[idx], b, { id: apId });
-    // If intervalMinutes changed and enabled, recompute nextRun
-    if (b.intervalMinutes !== undefined && merged.enabled) {
-      merged.nextRun = new Date(Date.now() + merged.intervalMinutes * 60000).toISOString();
-    }
-    schedules[idx] = merged;
-    writeJSON(path.join(ROOT, 'config/autopilot.json'), schedules);
-    broadcast('autopilot');
-    return J(res, merged);
-  }
-  if (apMatch && m === 'DELETE') {
-    var apId = apMatch[1];
-    var schedules = readJSON(path.join(ROOT, 'config/autopilot.json')) || [];
-    schedules = schedules.filter(function(s) { return s.id !== apId; });
-    writeJSON(path.join(ROOT, 'config/autopilot.json'), schedules);
-    broadcast('autopilot');
-    return J(res, { ok: true });
-  }
+  // AUTOPILOT API - removed: schedules are now tasks with autopilot + interval fields
 
   // UPDATES (delegated to lib/upgrade.js)
   if (pn === '/api/updates/check' && m === 'GET') {
@@ -2036,41 +2021,88 @@ server.on('upgrade', function(req, socket, head) {
 });
 
 // ── Autopilot Scheduler Engine ───────────────────────────
+function computeNextRun(from, interval, unit) {
+  var ms = interval * ({ minutes: 60000, hours: 3600000, days: 86400000 }[unit] || 60000);
+  return new Date(from.getTime() + ms).toISOString();
+}
+
 setInterval(function() {
-  var schedules = readJSON(path.join(ROOT, 'config/autopilot.json'));
-  if (!schedules || !schedules.length) return;
+  var index = readJSON(path.join(ROOT, 'data/tasks/_index.json'));
+  if (!index || !index.tasks) return;
   var now = new Date();
   var changed = false;
-  schedules.forEach(function(sched) {
-    if (!sched.enabled || !sched.nextRun) return;
-    if (new Date(sched.nextRun) > now) return;
 
-    // Find an active terminal PTY session to write to
+  index.tasks.forEach(function(entry) {
+    // Only process recurring autopilot tasks
+    if (!entry.autopilot || !entry.interval || !entry.intervalUnit) return;
+    if (entry.status === 'cancelled') return;
+
+    // Read full task
+    var taskPath = path.join(ROOT, 'data/tasks', entry.id, 'task.json');
+    var task = readJSON(taskPath);
+    if (!task) return;
+
+    // Skip if not due yet
+    if (!task.nextRun || new Date(task.nextRun) > now) return;
+
+    // Skip if still running (overlap protection) or on hold
+    if (task.status === 'in_progress' || task.status === 'hold' || task.status === 'planning' || task.status === 'pending_approval') return;
+
+    // Reset task to in_progress for next run
+    task.status = 'in_progress';
+    task.lastRun = now.toISOString();
+    task.nextRun = computeNextRun(now, task.interval, task.intervalUnit);
+    task.updatedAt = now.toISOString();
+    task.runCount = (task.runCount || 0) + 1;
+    if (!task.progressLog) task.progressLog = [];
+    task.progressLog.push({
+      message: 'Recurring autopilot triggered (run #' + task.runCount + ')',
+      agentId: 'system',
+      timestamp: now.toISOString()
+    });
+    writeJSON(taskPath, task);
+
+    // Update index entry
+    entry.status = 'in_progress';
+    changed = true;
+
+    // Send prompt to terminal PTY
     var sentTo = null;
     termSessions.forEach(function(session, sid) {
       if (sentTo) return;
       if (session.pty) {
-        var prompt = sched.prompt;
-        if (sched.agentId !== 'orchestrator') {
-          // Resolve agent name from registry
+        var prompt = task.description || task.title;
+        // Append task ID so orchestrator can track it
+        prompt = prompt + ' [Task ID: ' + task.id + ']';
+        if (task.assignedTo && task.assignedTo !== 'orchestrator') {
           var reg = readJSON(path.join(ROOT, 'agents/_registry.json')) || { agents: [] };
-          var agent = reg.agents.find(function(a) { return a.id === sched.agentId; });
-          var agentName = agent ? agent.name : sched.agentId;
-          prompt = 'Work as agent ' + agentName + ' (ID: ' + sched.agentId + '): ' + prompt;
+          var agent = reg.agents.find(function(a) { return a.id === task.assignedTo; });
+          var agentName = agent ? agent.name : task.assignedTo;
+          prompt = 'Work as agent ' + agentName + ' (ID: ' + task.assignedTo + '): ' + prompt;
         }
         session.pty.write(prompt + '\r');
         sentTo = sid;
       }
     });
 
-    // Update timing regardless of whether a terminal was found
-    sched.lastRun = now.toISOString();
-    sched.nextRun = new Date(now.getTime() + sched.intervalMinutes * 60000).toISOString();
-    changed = true;
+    // If no terminal found, set blocker
+    if (!sentTo) {
+      task.blocker = 'No active terminal session found - cannot send autopilot prompt';
+      task.status = 'in_progress';
+      if (!task.progressLog) task.progressLog = [];
+      task.progressLog.push({
+        message: 'BLOCKER: No active terminal session found',
+        agentId: 'system',
+        timestamp: now.toISOString()
+      });
+      writeJSON(taskPath, task);
+      entry.blocker = task.blocker;
+    }
   });
+
   if (changed) {
-    writeJSON(path.join(ROOT, 'config/autopilot.json'), schedules);
-    broadcast('autopilot');
+    writeJSON(path.join(ROOT, 'data/tasks/_index.json'), index);
+    broadcast('tasks');
   }
 }, 60000);
 

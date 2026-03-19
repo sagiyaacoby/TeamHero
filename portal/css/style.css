@@ -1693,6 +1693,24 @@ body {
 .agent-files-entry-task:hover { color: var(--accent); }
 .agent-files-entry-date { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
 
+/* ── Agent Files Sub-tabs ─────────────────────── */
+.agent-files-subtabs {
+  display: flex; gap: 4px; margin-bottom: 16px;
+}
+.agent-files-subtab {
+  padding: 6px 16px; border-radius: 20px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-dim); font-size: 13px;
+  cursor: pointer; transition: all 0.15s; font-family: inherit;
+}
+.agent-files-subtab:hover { color: var(--text); border-color: var(--text-dim); }
+.agent-files-subtab.active {
+  background: var(--yellow); color: #000; border-color: var(--yellow); font-weight: 600;
+}
+.agent-files-subtab-count { font-weight: 400; }
+.agent-files-subtab.active .agent-files-subtab-count { font-weight: 500; }
+.agent-files-subtab-panel { display: none; }
+.agent-files-subtab-panel.active { display: block; }
+
 /* ── Upgrade Modal ─────────────────────────────── */
 .upgrade-modal-box {
   background: var(--bg-surface); border: 1px solid var(--border);

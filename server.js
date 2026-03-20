@@ -386,8 +386,8 @@ function rebuildClaudeMd() {
     '## Identity\n\n' +
     'You are the **orchestrator** of the "' + tn + '" team.\n' +
     'Your job is to coordinate all agents, manage tasks, run round tables, and serve the team owner.\n\n' +
-    '## Startup Checks\n\n' +
-    'On every new CLI session, FIRST run: `curl -s http://localhost:' + port + '/api/health`\n\n' +
+    '## Startup Checks (MANDATORY - DO THIS FIRST)\n\n' +
+    '**BEFORE doing anything else**, run: `curl -s http://localhost:' + port + '/api/health`\n\n' +
     'If `upgradePending` is not null:\n' +
     '1. Report to owner: "System upgraded from v{previousVersion} to v{version}"\n' +
     '2. Check `status` and `issues` - report any warnings or errors\n' +
@@ -398,7 +398,7 @@ function rebuildClaudeMd() {
     '   - "directory" issues: already auto-created by health check\n' +
     '4. Clear flag: `curl -X POST http://localhost:' + port + '/api/health/clear-upgrade`\n' +
     '5. Confirm: "Post-upgrade health check complete. All systems operational."\n\n' +
-    'If `upgradePending` is null: skip. Only run health checks on owner request or during round tables.\n\n' +
+    'If `upgradePending` is null: no upgrade detected - proceed normally.\n\n' +
     '## HARD RULE: Orchestrator Bash Restrictions\n\n' +
     'The orchestrator may ONLY use the Bash tool for `curl` calls to `http://localhost:' + port + '/api/...`.\n' +
     'ALL other bash commands (git, cp, rm, mv, node, file edits, etc.) MUST be delegated to agents via tasks.\n\n' +
@@ -2374,9 +2374,55 @@ ensureOrchestrator();
 
 // ── Migrations (from lib/migrations.js) ──────────────────
 var migrationResult = migrations.runPendingMigrations(sharedCtx);
-if (migrationResult.ran > 0) {
-  try { rebuildClaudeMd(); } catch(e) {}
+
+// Always rebuild CLAUDE.md on startup to ensure latest template is applied.
+// This fixes the chicken-and-egg problem where an upgrade replaces server.js
+// (with new CLAUDE.md template) but the old in-memory rebuildClaudeMd ran during
+// the upgrade, so the on-disk CLAUDE.md still has the old template until restart.
+try { rebuildClaudeMd(); } catch(e) {
+  console.error('  Warning: Failed to rebuild CLAUDE.md on startup: ' + e.message);
 }
+
+// ── Post-upgrade flag recovery ───────────────────────────
+// When upgrading from an older version, the OLD upgrade.js runs in memory
+// (it was already loaded before the new files were extracted). If the old code
+// didn't know about the .upgrade-pending flag, it never gets written.
+// Fix: detect that an upgrade happened (lastUpgrade exists, flag file missing)
+// and write the flag retroactively so the orchestrator picks it up.
+(function ensureUpgradeFlag() {
+  var sysJson = readJSON(path.join(ROOT, 'config/system.json')) || {};
+  var flagPath = path.join(ROOT, 'config/.upgrade-pending');
+  if (sysJson.lastUpgrade && sysJson.lastUpgrade.version && !fs.existsSync(flagPath)) {
+    // Check if the upgrade is recent (within 24 hours) to avoid flagging old upgrades
+    var upgradeDate = sysJson.lastUpgrade.date ? new Date(sysJson.lastUpgrade.date) : null;
+    var now = new Date();
+    var hoursSinceUpgrade = upgradeDate ? (now - upgradeDate) / (1000 * 60 * 60) : Infinity;
+    if (hoursSinceUpgrade < 24) {
+      // Determine previous version from backup dirs or lastUpgrade data
+      var previousVersion = 'unknown';
+      try {
+        var backupsDir = path.join(ROOT, 'data/backups');
+        if (fs.existsSync(backupsDir)) {
+          var backups = fs.readdirSync(backupsDir).filter(function(d) { return d.startsWith('v'); }).sort();
+          if (backups.length > 0) previousVersion = backups[backups.length - 1].slice(1);
+        }
+      } catch (e) {}
+      try {
+        fs.writeFileSync(flagPath, JSON.stringify({
+          version: sysJson.lastUpgrade.version,
+          previousVersion: previousVersion,
+          upgradeDate: sysJson.lastUpgrade.date,
+          migrationsRun: sysJson.lastUpgrade.migrationsRun || 0,
+          filesUpdated: sysJson.lastUpgrade.filesUpdated || 0,
+          recoveredFlag: true
+        }, null, 2));
+        console.log('  Upgrade flag recovered: v' + previousVersion + ' -> v' + sysJson.lastUpgrade.version);
+      } catch (e) {
+        console.error('  Warning: Could not write recovered upgrade flag: ' + e.message);
+      }
+    }
+  }
+})();
 
 // ── Interrupted upgrade check ────────────────────────────
 var interruptedUpgrade = upgrade.checkInterruptedUpgrade(sharedCtx);

@@ -42,7 +42,14 @@
 7. Execute the approved work
 8. If blocker: `PUT /api/tasks/{id} {"blocker":"reason"}` and STOP
 9. Update version.json: `content` (summary) + `result` (proof - URLs, file paths, verification)
-10. **Auto-close if proof is concrete** (live URL, merged PR, deployed code). Otherwise `pending_approval`.
+10. **Auto-close when execution is complete.** Do NOT leave tasks in pending_approval after execution.
+
+### Auto-close Rule (HARD RULE - NO NOISE)
+- **After execution, agents MUST set status to `closed` directly** - not `pending_approval`
+- Concrete proof (submitted PRs, deployed code, live URLs, file changes) = close immediately
+- Do not create unnecessary pending_approval states that require owner to manually close
+- The system must stay clean - no stale tasks sitting in pending_approval after work is done
+- Exception: only use pending_approval after execution if the deliverable genuinely needs owner review (e.g., content that will be published publicly under owner's name)
 
 ### Status Meanings
 - **planning**: Creating plan/materials before first review
@@ -56,7 +63,7 @@
 
 ### Two pending_approval phases
 1. **First** (after planning): version has plan, no execution result yet
-2. **Second** (after execute): version has proof (URLs, screenshots, final files)
+2. **Second** (after execute): ONLY if deliverable needs owner sign-off (public content, external communications)
 
 ### Rules
 - Tasks start in `planning`. Agent creates plan before submitting.

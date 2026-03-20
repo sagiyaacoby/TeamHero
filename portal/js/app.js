@@ -89,11 +89,13 @@
 
   // ── Confirmation Modal ─────────────────────────────
   function confirmAction(opts) {
-    // opts: { title, message, confirmLabel, requireText, onConfirm }
+    // opts: { title, message, confirmLabel, requireText, variant, onConfirm }
+    // variant: 'neutral' hides warning icon and uses neutral button style
     return new Promise(function(resolve) {
       var overlay = document.getElementById('confirm-modal');
       var titleEl = document.getElementById('confirm-title');
       var msgEl = document.getElementById('confirm-message');
+      var iconEl = document.getElementById('confirm-icon');
       var inputWrap = document.getElementById('confirm-input-wrap');
       var inputEl = document.getElementById('confirm-input');
       var hintEl = document.getElementById('confirm-hint');
@@ -103,6 +105,15 @@
       titleEl.textContent = opts.title || 'Are you sure?';
       msgEl.textContent = opts.message || '';
       okBtn.textContent = opts.confirmLabel || 'Delete';
+
+      // Apply variant styling
+      if (opts.variant === 'neutral') {
+        iconEl.classList.add('hidden');
+        okBtn.className = 'btn btn-primary';
+      } else {
+        iconEl.classList.remove('hidden');
+        okBtn.className = 'btn btn-cancel';
+      }
 
       if (opts.requireText) {
         inputWrap.classList.remove('hidden');
@@ -1515,7 +1526,28 @@
 
   function renderMarkdown(text) {
     try {
-      return (typeof marked !== 'undefined' && marked.parse) ? marked.parse(text) : escHtml(text).replace(/\n/g, '<br>');
+      if (typeof marked !== 'undefined' && marked.parse) {
+        var renderer = new marked.Renderer();
+        // Rewrite image src for local paths to use /api/raw/
+        renderer.image = function(href, title, altText) {
+          // marked v4+ may pass an object as first arg
+          if (typeof href === 'object') { title = href.title; altText = href.text; href = href.href; }
+          if (href && !href.match(/^https?:\/\//) && (href.match(/^(data|temp)\//) || href.startsWith('/api/'))) {
+            if (!href.startsWith('/api/')) href = '/api/raw/' + href;
+          }
+          var t = title ? ' title="' + escHtml(title) + '"' : '';
+          return '<img src="' + escHtml(href) + '" alt="' + escHtml(altText || '') + '"' + t + ' style="max-width:100%;border-radius:6px;margin:8px 0;cursor:pointer" onclick="window.open(this.src,\'_blank\')">';
+        };
+        var html = marked.parse(text, { renderer: renderer });
+        // Also render plain-text image paths as clickable thumbnails
+        html = html.replace(/(^|[>\s])((?:data|temp)\/[^\s<"']+\.(?:png|jpg|jpeg|gif|webp|svg))(?=[\s<]|$)/gi, function(m, pre, path) {
+          // Skip if already inside an HTML tag attribute
+          if (pre === '"' || pre === "'") return m;
+          return pre + '<a href="/api/raw/' + path + '" target="_blank" style="display:inline-block;margin:4px 0"><img src="/api/raw/' + path + '" alt="' + escHtml(path) + '" style="max-width:320px;max-height:200px;border-radius:6px;border:1px solid var(--border)"></a>';
+        });
+        return html;
+      }
+      return escHtml(text).replace(/\n/g, '<br>');
     } catch(e) {
       return escHtml(text).replace(/\n/g, '<br>');
     }
@@ -1529,7 +1561,7 @@
     if (task.blocker) {
       html += '<div class="blocker-banner">';
       html += '<span class="blocker-banner-icon">&#9888;</span>';
-      html += '<span class="blocker-banner-text"><strong>BLOCKER:</strong> ' + escHtml(task.blocker) + '</span>';
+      html += '<span class="blocker-banner-text"><strong>BLOCKER:</strong> ' + linkifyText(escHtml(task.blocker)) + '</span>';
       html += '</div>';
     }
 
@@ -1600,6 +1632,7 @@
           var isImproved = v.decision === 'improve';
 
           html += '<div class="session-version' + (isLatest ? ' latest' : '') + '">';
+          html += '<div class="tl-accent tl-accent-version">';
           html += '<div class="session-version-header">';
           html += '<div class="session-version-id">';
           html += '<span class="session-dot' + (isApproved ? ' dot-approved' : isImproved ? ' dot-improved' : '') + '"></span>';
@@ -1615,16 +1648,17 @@
           } else {
             html += '<div class="session-content"><span class="empty-state" style="padding:8px">Awaiting submission...</span></div>';
           }
+          html += '</div>'; // close tl-accent-version
 
           if (v.deliverable) {
-            html += '<div class="version-deliverable"><div class="version-deliverable-label">Deliverable</div>' + linkifyText(escHtml(v.deliverable)).replace(/\n/g, '<br>') + '</div>';
+            html += '<div class="tl-accent tl-accent-deliverable"><div class="version-deliverable"><div class="version-deliverable-label">Deliverable</div>' + linkifyText(escHtml(v.deliverable)).replace(/\n/g, '<br>') + '</div></div>';
           }
           if (v.result) {
-            html += '<div class="version-result"><div class="version-result-label">Result</div>' + linkifyText(escHtml(v.result)).replace(/\n/g, '<br>') + '</div>';
+            html += '<div class="tl-accent tl-accent-result"><div class="version-result"><div class="version-result-label">Result</div>' + linkifyText(escHtml(v.result)).replace(/\n/g, '<br>') + '</div></div>';
           }
           if (v.files && v.files.length > 0) {
             var imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
-            html += '<div class="version-files"><div class="version-files-label">Deliverable Files</div>' +
+            html += '<div class="tl-accent tl-accent-files"><div class="version-files"><div class="version-files-label">Deliverable Files</div>' +
               v.files.map(function(f) {
                 var ext = f.lastIndexOf('.') >= 0 ? f.slice(f.lastIndexOf('.')).toLowerCase() : '';
                 var rawUrl = '/api/tasks/' + taskId + '/versions/' + v.number + '/files/' + encodeURIComponent(f) + '/raw';
@@ -1643,15 +1677,17 @@
                 }
                 linkHtml += '</div>';
                 return linkHtml;
-              }).join('') + '</div>';
+              }).join('') + '</div></div>';
           }
 
           html += '</div>'; // close session-version
 
         } else if (evt.type === 'feedback') {
           var v = evt.data;
+          var fbAccentClass = (v.decision === 'done' || v.decision === 'closed') ? 'tl-accent-closed' : 'tl-accent-feedback';
           var fbClass = v.decision === 'improve' ? 'session-feedback-improve' : (v.decision === 'approved' || v.decision === 'accepted') ? 'session-feedback-approved' : (v.decision === 'done' || v.decision === 'closed') ? 'session-feedback-done' : '';
           html += '<div class="session-feedback ' + fbClass + '">';
+          html += '<div class="tl-accent ' + fbAccentClass + '">';
           html += '<div class="session-feedback-label">Owner Feedback';
           if (v.decision) {
             var decisionLabels = { accepted: 'Accepted', approved: 'Execute', improve: 'Improve', done: 'Closed', closed: 'Closed', hold: 'Hold', cancelled: 'Cancelled' };
@@ -1660,8 +1696,9 @@
           if (v.decidedAt) html += '<span class="session-feedback-date">' + new Date(v.decidedAt).toLocaleDateString() + '</span>';
           html += '</div>';
           if (v.comments) {
-            html += '<div class="session-feedback-text">' + escHtml(v.comments).replace(/\n/g, '<br>') + '</div>';
+            html += '<div class="session-feedback-text">' + linkifyText(escHtml(v.comments)).replace(/\n/g, '<br>') + '</div>';
           }
+          html += '</div>'; // close tl-accent
           html += '</div>';
 
         } else if (evt.type === 'progress') {
@@ -1678,11 +1715,13 @@
           }
           var timeStr = entry.timestamp ? new Date(entry.timestamp).toLocaleDateString() : '';
 
+          var progressAccent = isBlocker ? 'tl-accent-blocker' : 'tl-accent-progress';
           html += '<div class="' + entryClass + '">';
+          html += '<div class="tl-accent ' + progressAccent + '">';
           if (isBlocker) html += '<span class="progress-blocker-badge">BLOCKER</span> ';
           html += '<span class="timeline-progress-message">' + linkifyText(escHtml(entry.message)) + '</span>';
           html += '<span class="timeline-progress-meta">' + escHtml(agentLabel) + (timeStr ? ' - ' + timeStr : '') + '</span>';
-          html += '</div>';
+          html += '</div></div>';
         }
       });
       html += '</div>'; // close unified-timeline
@@ -1992,7 +2031,8 @@
       var ok = await confirmAction({
         title: 'Accept this task?',
         message: 'This will approve the work and trigger the agent to execute.',
-        confirmLabel: 'Accept'
+        confirmLabel: 'Accept',
+        variant: 'neutral'
       });
       if (!ok) return;
     }
@@ -2044,7 +2084,8 @@
     var ok = await confirmAction({
       title: 'Send revision feedback?',
       message: 'This will request the agent to revise their work with your feedback.',
-      confirmLabel: 'Send Feedback'
+      confirmLabel: 'Send Feedback',
+      variant: 'neutral'
     });
     if (!ok) return;
 
@@ -2107,7 +2148,8 @@
     var ok = await confirmAction({
       title: 'Send revision feedback?',
       message: 'This will request the agent to revise their work with your feedback.',
-      confirmLabel: 'Send Feedback'
+      confirmLabel: 'Send Feedback',
+      variant: 'neutral'
     });
     if (!ok) return;
 
@@ -2236,7 +2278,7 @@
     }
     var body = overlay.querySelector('.file-preview-body');
     if (filename.endsWith('.md') && typeof marked !== 'undefined' && marked.parse) {
-      body.innerHTML = marked.parse(content);
+      body.innerHTML = renderMarkdown(content);
     } else {
       body.innerHTML = '<pre>' + escHtml(content) + '</pre>';
     }
@@ -2323,10 +2365,18 @@
   }
 
   async function viewFile(filePath) {
+    var filename = filePath.split('/').pop();
+    var imageExts = ['.png','.jpg','.jpeg','.gif','.webp','.svg'];
+    var ext = '.' + filename.split('.').pop().toLowerCase();
+    // For image files, use /api/raw/ endpoint and show image preview
+    if (imageExts.indexOf(ext) >= 0) {
+      var rawUrl = '/api/raw/' + filePath;
+      showImagePreview(filename, rawUrl);
+      return;
+    }
     try {
       var data = await api.get('/api/file/' + encodeURIComponent(filePath));
-      var filename = filePath.split('/').pop();
-      showFilePreview(filename, data.content);
+      showFilePreview(filename, data.content, '/api/raw/' + filePath);
     } catch(e) {
       toast('Failed to load file', 'error');
     }
@@ -2438,7 +2488,7 @@
       var contentEl = document.getElementById('knowledge-detail-content');
       var raw = contentData.content || '';
       try {
-        contentEl.innerHTML = (typeof marked !== 'undefined' && marked.parse) ? marked.parse(raw) : raw.replace(/</g, '&lt;').replace(/\n/g, '<br>');
+        contentEl.innerHTML = renderMarkdown(raw);
       } catch(e) {
         contentEl.innerHTML = raw.replace(/</g, '&lt;').replace(/\n/g, '<br>');
       }
@@ -3723,11 +3773,26 @@
     return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
   }
 
+  async function loadMediaRecursive(dir, prefix) {
+    var items = await api.get('/api/ls/' + dir);
+    var result = [];
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      var relPath = prefix ? prefix + '/' + item.name : item.name;
+      if (item.isDir) {
+        var sub = await loadMediaRecursive(dir + '/' + item.name, relPath);
+        result = result.concat(sub);
+      } else {
+        result.push({ name: relPath });
+      }
+    }
+    return result;
+  }
+
   async function loadMedia() {
     try {
-      var files = await api.get('/api/ls/data/media');
+      var mediaFiles = await loadMediaRecursive('data/media', '');
       var el = document.getElementById('media-grid');
-      var mediaFiles = files.filter(function(f) { return !f.isDir; });
       if (state.mediaFilter && state.mediaFilter !== 'all') {
         var extMap = { image: IMAGE_EXTS, video: VIDEO_EXTS, document: DOC_EXTS };
         var allowedExts = extMap[state.mediaFilter] || [];
@@ -3745,15 +3810,20 @@
         var ext = f.name.split('.').pop().toLowerCase();
         var isImage = IMAGE_EXTS.indexOf(ext) >= 0;
         var typeStr = isImage ? 'image' : (VIDEO_EXTS.indexOf(ext) >= 0 ? 'video' : 'document');
-        var truncName = f.name.length > 20 ? f.name.slice(0, 17) + '...' : f.name;
+        var displayName = f.name.split('/').pop();
+        var truncName = displayName.length > 20 ? displayName.slice(0, 17) + '...' : displayName;
+        var subdir = f.name.indexOf('/') >= 0 ? f.name.substring(0, f.name.lastIndexOf('/')) : '';
+        var subdirBadge = subdir ? '<span style="font-size:10px;color:var(--text-muted);display:block;overflow:hidden;text-overflow:ellipsis">' + escHtml(subdir) + '</span>' : '';
+        // Encode path segments individually to support subdirectories
+        var encodedPath = f.name.split('/').map(encodeURIComponent).join('/');
         if (isImage) {
           return '<div class="media-thumb" onclick="App.openMediaPreview(\'' + escHtml(f.name.replace(/'/g, "\\'")) + '\',\'' + typeStr + '\')">' +
-            '<img src="/api/media/files/' + encodeURIComponent(f.name) + '" alt="' + escHtml(f.name) + '">' +
-            '<div class="media-thumb-info"><span class="media-thumb-name" title="' + escHtml(f.name) + '">' + escHtml(truncName) + '</span></div></div>';
+            '<img src="/api/media/files/' + encodedPath + '" alt="' + escHtml(f.name) + '">' +
+            '<div class="media-thumb-info">' + subdirBadge + '<span class="media-thumb-name" title="' + escHtml(f.name) + '">' + escHtml(truncName) + '</span></div></div>';
         }
         return '<div class="media-thumb" onclick="App.openMediaPreview(\'' + escHtml(f.name.replace(/'/g, "\\'")) + '\',\'' + typeStr + '\')">' +
           '<div class="media-thumb-icon">' + mediaTypeIcon(ext) + '</div>' +
-          '<div class="media-thumb-info"><span class="media-thumb-name" title="' + escHtml(f.name) + '">' + escHtml(truncName) + '</span></div></div>';
+          '<div class="media-thumb-info">' + subdirBadge + '<span class="media-thumb-name" title="' + escHtml(f.name) + '">' + escHtml(truncName) + '</span></div></div>';
       }).join('');
     } catch(e) {
       document.getElementById('media-grid').innerHTML = '<div class="empty-state">No media files yet</div>';
@@ -3763,16 +3833,19 @@
   function openMediaPreview(filename, type) {
     state.currentMediaFile = filename;
     var content = document.getElementById('media-preview-content');
+    var encodedPath = filename.split('/').map(encodeURIComponent).join('/');
     if (type === 'image') {
-      content.innerHTML = '<img src="/api/media/files/' + encodeURIComponent(filename) + '" alt="' + escHtml(filename) + '" style="max-width:100%;max-height:70vh;display:block;margin:0 auto 12px;border-radius:6px">' +
-        '<p style="text-align:center;color:var(--text-muted);font-size:13px">' + escHtml(filename) + '</p>';
+      content.innerHTML = '<img src="/api/media/files/' + encodedPath + '" alt="' + escHtml(filename) + '" style="max-width:100%;max-height:70vh;display:block;margin:0 auto 12px;border-radius:6px">' +
+        '<p style="text-align:center;color:var(--text-muted);font-size:13px">' + escHtml(filename) + '</p>' +
+        '<button onclick="App.openMediaFolder()" style="display:block;margin:8px auto 0;padding:4px 12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text-muted);cursor:pointer;font-size:12px">Open Location</button>';
     } else {
       var ext = filename.split('.').pop().toLowerCase();
       var icon = mediaTypeIcon(ext);
       content.innerHTML = '<div style="text-align:center;padding:32px">' +
         '<div style="font-size:64px;margin-bottom:16px">' + icon + '</div>' +
         '<p style="font-size:16px;font-weight:500;margin-bottom:8px">' + escHtml(filename) + '</p>' +
-        '<p style="color:var(--text-muted);font-size:13px">Type: ' + escHtml(ext.toUpperCase()) + '</p></div>';
+        '<p style="color:var(--text-muted);font-size:13px">Type: ' + escHtml(ext.toUpperCase()) + '</p>' +
+        '<button onclick="App.openMediaFolder()" style="display:block;margin:12px auto 0;padding:4px 12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text-muted);cursor:pointer;font-size:12px">Open Location</button></div>';
     }
     document.getElementById('media-preview-modal').classList.remove('hidden');
   }
@@ -4082,9 +4155,14 @@
   }
 
   function linkifyText(text) {
+    var imageExts = ['png','jpg','jpeg','gif','webp','svg'];
     // Convert URLs to clickable links that open in new tab
     return text.replace(/(https?:\/\/[^\s<&]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:var(--accent)">$1</a>')
-      .replace(/(data\/[^\s<&]+\.(md|txt|json|html|pdf|png|jpg|jpeg|gif|svg|mp4|csv))/gi, function(match) {
+      .replace(/((?:data|temp)\/[^\s<&]+\.(md|txt|json|html|pdf|png|jpg|jpeg|gif|svg|webp|mp4|csv))/gi, function(match) {
+        var ext = match.split('.').pop().toLowerCase();
+        if (imageExts.indexOf(ext) >= 0) {
+          return '<a href="/api/raw/' + match + '" target="_blank" style="color:var(--accent)">' + match + '</a>';
+        }
         return '<a href="#" onclick="App.viewFile(\'' + match.replace(/'/g, "\\'") + '\');return false;" style="color:var(--accent)">' + match + '</a>';
       });
   }

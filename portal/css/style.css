@@ -637,13 +637,13 @@ body {
 
 /* ── Session Version Cards ─────────────────────── */
 .session-version {
-  position: relative; padding: 20px 0 20px 28px;
-  border-left: 2px solid var(--border); margin-left: 4px;
+  position: relative; padding: 14px 0 14px 28px;
+  margin-left: 0;
 }
 .session-version::before {
-  content: ''; position: absolute; left: -4px; top: 24px;
+  content: ''; position: absolute; left: -4px; top: 18px;
   width: 7px; height: 7px; border-radius: 50%;
-  background: var(--text-dim); border: 2px solid var(--bg);
+  background: var(--text-dim); border: 2px solid var(--bg); z-index: 1;
 }
 .session-version.latest::before {
   background: var(--green);
@@ -678,14 +678,13 @@ body {
 .session-content th { font-weight: 600; color: var(--text-dim); border-bottom-width: 2px; }
 
 /* Owner feedback label + text (layout defined in unified timeline section) */
-.session-feedback-improve { border-left-color: var(--yellow); }
 .session-feedback-label {
   font-size: 10px; font-weight: 700; color: var(--yellow);
   text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
   display: flex; align-items: center; gap: 8px;
 }
-.session-feedback-approved .session-feedback-label,
-.session-feedback-done .session-feedback-label { color: var(--green); }
+.session-feedback-approved .session-feedback-label { color: var(--green); }
+.session-feedback-done .session-feedback-label { color: #7f8c8d; }
 .session-feedback-text { font-size: 13px; color: var(--text); line-height: 1.6; }
 
 /* ── Status Pipeline ───────────────────────────── */
@@ -1015,28 +1014,25 @@ body {
 
 /* ── Version Deliverable & Result ────────────── */
 .version-deliverable, .version-result {
-  margin-top: 10px; padding: 10px 0 10px 14px;
-  border-left: 2px solid var(--border);
+  padding: 6px 0;
   font-size: 13px; color: var(--text);
 }
-.version-deliverable { border-left-color: var(--accent); }
-.version-result { border-left-color: var(--green); }
 .version-deliverable-label {
-  font-size: 10px; font-weight: 600; color: var(--text-dim);
+  font-size: 10px; font-weight: 600; color: #3498db;
   text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;
 }
 .version-result-label {
-  font-size: 10px; font-weight: 600; color: var(--green);
+  font-size: 10px; font-weight: 600; color: #2ecc71;
   text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;
 }
 
 /* ── Version Files ───────────────────────────────── */
 .version-files {
-  margin-top: 10px; padding: 10px 0 10px 14px;
-  border-left: 2px solid var(--yellow); font-size: 13px;
+  padding: 6px 0;
+  font-size: 13px;
 }
 .version-files-label {
-  font-size: 10px; font-weight: 600; color: var(--yellow);
+  font-size: 10px; font-weight: 600; color: #3498db;
   text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
 }
 .version-file-item {
@@ -1044,7 +1040,7 @@ body {
 }
 .version-file-link {
   display: inline-block; padding: 3px 8px; margin: 2px 4px 2px 0;
-  color: var(--yellow); text-decoration: none;
+  color: #3498db; text-decoration: none;
   font-size: 12px; cursor: pointer; transition: color 0.15s;
   font-family: 'SFMono-Regular', Consolas, monospace;
 }
@@ -1057,28 +1053,39 @@ body {
 
 /* ── Unified Timeline ────────────────────────────── */
 .unified-timeline {
-  margin-left: 4px;
+  position: relative; margin-left: 4px; padding-left: 0;
 }
+.unified-timeline::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+  width: 2px; background: rgba(255,255,255,0.08);
+}
+
+/* Timeline accent bars (colored left border on content blocks) */
+.tl-accent {
+  border-left: 3px solid var(--border); padding-left: 12px; border-radius: 2px;
+}
+.tl-accent-version { border-left-color: var(--accent); }
+.tl-accent-deliverable { border-left-color: #3498db; margin-top: 8px; }
+.tl-accent-result { border-left-color: #2ecc71; margin-top: 8px; }
+.tl-accent-files { border-left-color: #3498db; margin-top: 8px; }
+.tl-accent-feedback { border-left-color: #f1c40f; }
+.tl-accent-closed { border-left-color: #7f8c8d; }
+.tl-accent-blocker { border-left-color: #e74c3c; }
+.tl-accent-progress { border-left-color: rgba(255,255,255,0.06); }
 
 /* Progress entries in timeline */
 .timeline-progress {
   position: relative; padding: 10px 0 10px 28px;
-  border-left: 2px solid rgba(255,255,255,0.08); margin-left: 0;
+  margin-left: 0;
   font-size: 13px; color: var(--text-muted);
 }
 .timeline-progress::before {
   content: ''; position: absolute; left: -4px; top: 14px;
   width: 7px; height: 7px; border-radius: 50%;
-  background: var(--text-dim); border: 2px solid var(--bg);
-}
-.timeline-progress-blocker {
-  border-left-color: var(--red);
+  background: var(--text-dim); border: 2px solid var(--bg); z-index: 1;
 }
 .timeline-progress-blocker::before {
   background: var(--red);
-}
-.timeline-progress-url {
-  border-left-color: var(--green);
 }
 .timeline-progress-url::before {
   background: var(--green);
@@ -1097,16 +1104,16 @@ body {
 
 /* Feedback in timeline */
 .session-feedback {
-  position: relative; padding: 12px 0 12px 28px;
-  border-left: 2px solid var(--yellow); margin-left: 0;
+  position: relative; padding: 10px 0 10px 28px;
+  margin-left: 0;
 }
 .session-feedback::before {
-  content: ''; position: absolute; left: -4px; top: 16px;
+  content: ''; position: absolute; left: -4px; top: 14px;
   width: 7px; height: 7px; border-radius: 50%;
-  background: var(--yellow); border: 2px solid var(--bg);
+  background: var(--yellow); border: 2px solid var(--bg); z-index: 1;
 }
-.session-feedback-approved, .session-feedback-done { border-left-color: var(--green); }
-.session-feedback-approved::before, .session-feedback-done::before { background: var(--green); }
+.session-feedback-approved::before { background: var(--green); }
+.session-feedback-done::before { background: #7f8c8d; }
 .session-feedback-date {
   font-size: 11px; color: var(--text-dim); font-weight: 400;
   margin-left: 8px; text-transform: none; letter-spacing: 0;
@@ -1519,7 +1526,7 @@ body {
 .sort-btn.active { color: var(--accent); background: rgba(99,102,241,0.10); }
 
 /* ── Flow View (Node Graph) ───────────────────── */
-.flow-view { position: relative; overflow: auto; padding: 0; min-height: 200px; }
+.flow-view { position: relative; overflow: auto; padding: 0; min-height: 200px; width: 100%; }
 .flow-canvas {
   position: relative;
   background-image: radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px);

@@ -1870,10 +1870,10 @@ async function handle(pn, m, req, res) {
     return J(res, health.dismissNotice(sharedCtx, decodeURIComponent(noticeMatch[1])));
   }
 
-  // MEDIA FILE SERVING
+  // MEDIA FILE SERVING (supports subdirectories like social-images/)
   if (pn.startsWith('/api/media/files/') && m === 'GET') {
     const filename = decodeURIComponent(pn.slice('/api/media/files/'.length));
-    if (filename.indexOf('..') >= 0 || filename.indexOf('/') >= 0 || filename.indexOf('\\') >= 0) {
+    if (filename.indexOf('..') >= 0 || filename.indexOf('\\') >= 0) {
       res.writeHead(403); return res.end('Forbidden');
     }
     const filePath = path.join(ROOT, 'data', 'media', filename);
@@ -1896,10 +1896,11 @@ async function handle(pn, m, req, res) {
     const b = await parseBody(req);
     if (!b.filename) return E(res, 'filename required');
     const filename = b.filename;
-    if (filename.indexOf('..') >= 0 || filename.indexOf('/') >= 0 || filename.indexOf('\\') >= 0) {
+    if (filename.indexOf('..') >= 0 || filename.indexOf('\\') >= 0) {
       return E(res, 'Invalid filename', 403);
     }
     const filePath = path.join(ROOT, 'data', 'media', filename);
+    if (!filePath.startsWith(path.join(ROOT, 'data', 'media'))) return E(res, 'Forbidden', 403);
     if (!fs.existsSync(filePath)) return E(res, 'File not found', 404);
     try {
       const plat = process.platform;
@@ -1912,6 +1913,26 @@ async function handle(pn, m, req, res) {
       }
     } catch(e) { /* explorer returns non-zero sometimes, ignore */ }
     return J(res, { ok: true });
+  }
+
+  // RAW BINARY FILE SERVING (for inline images, etc.)
+  if (pn.startsWith('/api/raw/') && m === 'GET') {
+    const rawRel = decodeURIComponent(pn.slice('/api/raw/'.length));
+    // Only allow data/ and temp/ directories
+    if (!rawRel.startsWith('data/') && !rawRel.startsWith('temp/')) {
+      res.writeHead(403); return res.end('Forbidden: only data/ and temp/ allowed');
+    }
+    const rawResolved = safePath(rawRel);
+    if (!rawResolved) { res.writeHead(403); return res.end('Forbidden'); }
+    try {
+      const rawData = fs.readFileSync(rawResolved);
+      const rawExt = path.extname(rawResolved).toLowerCase();
+      res.writeHead(200, {
+        'Content-Type': MIME[rawExt] || 'application/octet-stream',
+        'Cache-Control': 'no-cache'
+      });
+      return res.end(rawData);
+    } catch(e) { res.writeHead(404); return res.end('Not found'); }
   }
 
   // LEGACY FILE READ

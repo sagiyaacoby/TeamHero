@@ -170,7 +170,7 @@
 
     <!-- Dashboard -->
     <section id="view-dashboard" class="view active">
-      <header class="view-header"><div class="header-left"><h2>Dashboard</h2><button id="btn-round-table" class="btn btn-secondary btn-rt" onclick="App.runRoundTable()">Round Table <span style="color:#86efac;margin-left:4px;">&#9654;</span></button></div><div class="header-actions"><button class="btn btn-secondary" onclick="App.openAddTask()">+ Add Task</button></div></header>
+      <header class="view-header"><div class="header-left"><h2>Dashboard</h2><button id="btn-round-table" class="btn btn-secondary btn-rt" onclick="App.runRoundTable()">Round Table <span style="color:#86efac;margin-left:4px;">&#9654;</span></button></div><div class="header-actions"><button id="btn-global-autopilot" class="btn btn-autopilot-toggle" onclick="App.toggleGlobalAutopilot()" title="Global Autopilot"><span class="autopilot-icon">&#9889;</span> Autopilot <span id="autopilot-status-label">OFF</span></button><button class="btn btn-secondary" onclick="App.openAddTask()">+ Add Task</button></div></header>
       <div class="stats-row">
         <div class="stat-card clickable-stat" data-filter="all" onclick="App.filterTasks('all','dashboard')"><div class="stat-value" id="stat-total">0</div><div class="stat-label">Active</div></div>
         <div class="stat-card clickable-stat" data-filter="pending_approval" onclick="App.filterTasks('pending_approval','dashboard')"><div class="stat-value" id="stat-pending">0</div><div class="stat-label">Pending</div></div>
@@ -833,7 +833,28 @@
     <section id="view-skills" class="view">
       <header class="view-header"><h2>Skills</h2></header>
       <p class="form-hint" style="margin-bottom:20px">Enable curated capabilities for your agents. Skills install dependencies and configure integrations automatically.</p>
-      <div id="skills-grid" class="skills-grid"><div class="empty-state">Loading skills...</div></div>
+      <div class="agent-tabs" id="skills-tabs">
+        <button class="tab-btn active" onclick="App.switchSkillsTab('installed')">Installed Skills</button>
+        <button class="tab-btn" onclick="App.switchSkillsTab('discover')">Discover Skills</button>
+      </div>
+      <div id="skills-tab-installed" class="skills-tab-content active">
+        <div id="skills-grid" class="skills-grid"><div class="empty-state">Loading skills...</div></div>
+      </div>
+      <div id="skills-tab-discover" class="skills-tab-content">
+        <div class="skills-search-bar">
+          <input type="text" id="skills-search-input" placeholder="Search MCP servers..." onkeydown="if(event.key==='Enter')App.searchDiscoverSkills()">
+          <button class="btn btn-primary" onclick="App.searchDiscoverSkills()">Search</button>
+        </div>
+        <div id="skills-search-results" class="skills-grid">
+          <div class="empty-state">Search for MCP servers to extend your agents' capabilities</div>
+        </div>
+        <div id="skills-search-loading" class="empty-state" style="display:none">
+          <span class="spinner"></span> Searching...
+        </div>
+        <div id="skills-search-more" style="display:none;text-align:center;padding:20px 0">
+          <button class="btn btn-secondary" onclick="App.loadMoreSkills()">Load More</button>
+        </div>
+      </div>
     </section>
 
     <!-- Help -->
@@ -846,6 +867,19 @@
     </section>
 
   </main>
+
+  <!-- Global Autopilot Confirmation Modal -->
+  <div id="autopilot-confirm-modal" class="modal-overlay hidden" onclick="if(event.target===this)App.cancelAutopilotConfirm()">
+    <div class="modal-box autopilot-confirm-box">
+      <h3 id="autopilot-confirm-title">Toggle Autopilot</h3>
+      <p class="autopilot-confirm-text">When Autopilot is ON, agents plan and execute tasks without waiting for your approval. Completed tasks stay in Done for 2 days so you can review before they close. You can still intervene at any time.</p>
+      <p class="autopilot-confirm-warning">This means agents will act without your explicit approval.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="App.cancelAutopilotConfirm()">Cancel</button>
+        <button class="btn btn-primary" id="autopilot-confirm-btn" onclick="App.confirmGlobalAutopilot()">Confirm</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Add Task Modal -->
   <div id="add-task-modal" class="modal-overlay hidden" onclick="if(event.target===this)App.closeAddTask()">
@@ -1030,6 +1064,12 @@
   <div id="post-upgrade-banner" class="post-upgrade-banner hidden">
     <span id="post-upgrade-text"></span>
     <button class="banner-dismiss" onclick="App.dismissUpgradeBanner()">&times;</button>
+  </div>
+
+  <!-- Voice Input (fixed position) -->
+  <div id="voice-input-container" class="voice-input-container" style="display:none">
+    <span id="voice-transcript-preview" class="voice-transcript-preview"></span>
+    <button id="voice-input-btn" class="voice-input-btn" onclick="App.toggleVoiceInput()" title="Voice input (Speech-to-Text)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
   </div>
 
   <!-- Toast -->

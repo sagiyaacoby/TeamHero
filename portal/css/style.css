@@ -208,6 +208,16 @@ body {
 .btn-inline { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 12px; padding: 0; margin-left: 8px; }
 .btn-inline:hover { color: var(--text); }
 
+/* ── Global Autopilot Toggle ─────────────────────── */
+.btn-autopilot-toggle { background: transparent; color: var(--text-dim); border: 1px solid var(--border); transition: all 0.3s ease; margin-right: 8px; }
+.btn-autopilot-toggle:hover { color: var(--text-muted); border-color: var(--text-dim); }
+.btn-autopilot-toggle.active { color: #4ade80; border-color: #4ade80; box-shadow: 0 0 12px rgba(74, 222, 128, 0.3), 0 0 4px rgba(74, 222, 128, 0.15); }
+.btn-autopilot-toggle.active:hover { box-shadow: 0 0 16px rgba(74, 222, 128, 0.4), 0 0 6px rgba(74, 222, 128, 0.2); }
+.btn-autopilot-toggle .autopilot-icon { margin-right: 4px; }
+.autopilot-confirm-box { max-width: 480px; }
+.autopilot-confirm-text { color: var(--text-muted); font-size: 14px; line-height: 1.6; margin: 16px 0 12px; }
+.autopilot-confirm-warning { color: var(--yellow); font-size: 13px; font-weight: 500; margin-bottom: 20px; }
+
 /* ── Confirmation Modal ──────────────────────────── */
 .confirm-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 10000; }
 .confirm-box { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 32px; max-width: 420px; width: 90%; text-align: center; }
@@ -269,9 +279,14 @@ body {
 .badge-inactive { background: transparent; color: var(--text-dim); }
 .badge-pending { background: transparent; color: var(--yellow); }
 .badge-planning { background: transparent; color: #5ba8c8; }
-.badge-in_progress { background: transparent; color: var(--accent); }
+.badge-in_progress { background: transparent; color: var(--green); }
+.badge-in_progress:not(.clickable-badge) { animation: badge-pulse 2s ease-in-out infinite; }
+@keyframes badge-pulse {
+  0%, 100% { text-shadow: 0 0 4px rgba(76,175,80,0.3); }
+  50% { text-shadow: 0 0 10px rgba(76,175,80,0.7), 0 0 20px rgba(76,175,80,0.3); }
+}
 .badge-revision_needed { background: transparent; color: var(--yellow); }
-.badge-done { background: transparent; color: var(--green); }
+.badge-done { background: rgba(184,230,184,0.1); color: var(--green); font-weight: 600; }
 .badge-approved { background: transparent; color: var(--green); }
 .badge-accepted { background: transparent; color: var(--green); }
 .badge-closed { background: transparent; color: var(--text-dim); }
@@ -866,6 +881,58 @@ body {
 .status-dot.red { background: var(--red, #e74c3c); }
 .github-status-panel code { background: var(--bg-secondary, #2a2a2a); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
 
+/* Skills Tab Content */
+.skills-tab-content { display: none; }
+.skills-tab-content.active { display: block; }
+
+/* Skills Search Bar */
+.skills-search-bar { display: flex; gap: 10px; margin-bottom: 20px; }
+.skills-search-bar input {
+  flex: 1; padding: 10px 14px; background: transparent;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text); font-size: 14px;
+}
+.skills-search-bar input::placeholder { color: var(--text-dim); }
+.skills-search-bar input:focus { border-color: var(--focus-border); outline: none; }
+
+/* Skill card meta row (search results) */
+.skill-card-meta {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  font-size: 11px; color: var(--text-dim);
+}
+.skill-card-meta a { color: var(--accent); text-decoration: none; }
+.skill-card-meta a:hover { text-decoration: underline; }
+
+/* Source badge (User / Built-in) */
+.skill-source-badge {
+  padding: 2px 6px; border-radius: var(--radius-sm);
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.skill-source-badge.user { color: var(--purple); }
+.skill-source-badge.builtin { color: var(--text-dim); }
+
+/* Install button in search results */
+.skill-install-btn {
+  padding: 6px 16px; border: 1px solid var(--green);
+  background: transparent; color: var(--green);
+  border-radius: var(--radius); cursor: pointer;
+  font-size: 12px; font-weight: 500; transition: all 0.15s;
+  white-space: nowrap;
+}
+.skill-install-btn:hover { background: var(--green); color: #131519; }
+.skill-install-btn.installing { opacity: 0.6; cursor: wait; }
+.skill-install-btn.installed { border-color: var(--text-dim); color: var(--text-dim); cursor: default; }
+.skill-install-btn.installed:hover { background: transparent; color: var(--text-dim); }
+
+/* Uninstall button */
+.skill-uninstall-btn {
+  padding: 4px 10px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-dim);
+  border-radius: var(--radius); cursor: pointer;
+  font-size: 11px; transition: all 0.15s;
+}
+.skill-uninstall-btn:hover { border-color: var(--red, #e74c3c); color: var(--red, #e74c3c); }
+
 /* Toggle Switch */
 .toggle-switch {
   position: relative; width: 40px; height: 22px; flex-shrink: 0;
@@ -1452,6 +1519,33 @@ body {
   transition: all 0.15s; white-space: nowrap;
 }
 .focus-terminal-btn:hover { border-color: var(--green); color: var(--green); background: rgba(184,230,184,0.06); }
+/* Voice input — fixed position, button must NEVER move */
+.voice-input-container {
+  position: fixed; bottom: 24px; right: 24px; z-index: 1000;
+  width: 40px; height: 40px; /* exact button size, no flex/grid */
+}
+.voice-input-btn {
+  position: absolute; bottom: 0; right: 0; /* pinned within container */
+  background: var(--bg-card); border: 1px solid var(--border);
+  color: var(--text-muted); width: 40px; height: 40px; border-radius: 50%;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.voice-input-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-surface); }
+.voice-input-btn.recording { border-color: #e53e3e; color: #e53e3e; animation: voice-pulse 1.2s ease-in-out infinite; }
+.voice-input-btn.recording:hover { border-color: #c53030; color: #c53030; }
+@keyframes voice-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(229,62,62,0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(229,62,62,0); }
+}
+.voice-transcript-preview {
+  display: none; position: absolute; bottom: 48px; right: 0; /* above button, out of flow */
+  font-size: 12px; color: var(--text); background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 12px;
+  max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-style: italic; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.voice-transcript-preview.active { display: block; }
 .feedback-image-preview {
   max-height: 60px; max-width: 100px; border-radius: var(--radius-sm);
   border: 1px solid var(--border); object-fit: contain; margin-top: 6px;
@@ -1555,6 +1649,7 @@ body {
 .flow-node.status-in_progress { border-left: 3px solid var(--green); box-shadow: 0 0 12px rgba(76,175,80,0.35); animation: flow-pulse 2s ease-in-out infinite; }
 .flow-node.status-pending_approval { border-left: 3px solid var(--yellow); box-shadow: 0 0 8px rgba(212,169,74,0.25); }
 .flow-node.status-accepted { border-left: 3px solid var(--green); opacity: 0.5; }
+.flow-node.status-done { border-left: 3px solid var(--green); opacity: 0.65; box-shadow: 0 0 6px rgba(184,230,184,0.15); }
 .flow-node.status-closed { border-left: 3px solid var(--text-dim); opacity: 0.5; }
 .flow-node.status-revision_needed { border-left: 3px solid var(--yellow); }
 .flow-node.status-hold { border-left: 3px solid var(--purple); }
@@ -1562,7 +1657,7 @@ body {
 .flow-node.blocked { border-color: var(--red); box-shadow: 0 0 12px rgba(224, 96, 96, 0.4); }
 
 /* Done/closed nodes restore opacity on hover for readability */
-.flow-node.status-accepted:hover, .flow-node.status-closed:hover, .flow-node.status-cancelled:hover { opacity: 0.85; }
+.flow-node.status-accepted:hover, .flow-node.status-done:hover, .flow-node.status-closed:hover, .flow-node.status-cancelled:hover { opacity: 0.85; }
 
 /* Pulse animation for in-progress nodes */
 @keyframes flow-pulse {

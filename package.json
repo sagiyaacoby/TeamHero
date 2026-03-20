@@ -1,6 +1,6 @@
 {
   "name": "teamhero",
-  "version": "2.8.3",
+  "version": "2.8.4",
   "description": "Multi-agent orchestration platform powered by Claude CLI",
   "main": "server.js",
   "scripts": {
@@ -30,7 +30,9 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@playwright/mcp": "^0.0.68",
+    "@playwright/mcp": "^0.0.68"
+  },
+  "optionalDependencies": {
     "@remotion/bundler": "^4.0.436",
     "@remotion/cli": "^4.0.436",
     "@remotion/renderer": "^4.0.436",

@@ -121,7 +121,7 @@ trap "kill $SERVER_PID 2>/dev/null" EXIT
 sleep 3
 
 # Read port from config/system.json
-PORTAL_PORT=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('config/system.json','utf8')).port||3777)}catch(e){console.log(3777)}" 2>/dev/null)
+PORTAL_PORT=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('config/system.json','utf8')).port||3796)}catch(e){console.log(3796)}" 2>/dev/null)
 
 echo "  Opening dashboard in browser..."
 if command -v xdg-open &>/dev/null; then

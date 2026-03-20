@@ -115,10 +115,10 @@ echo.
 
 echo  Starting portal server...
 start "%SERVER_TITLE%" /min node server.js
-timeout /t 3 /noq 1>NUL
+timeout /t 3 /nobreak >NUL 2>&1
 
 :: Read port from config/system.json
-set "PORTAL_PORT=3777"
+set "PORTAL_PORT=3796"
 for /f "tokens=2 delims=:, " %%a in ('findstr /c:"\"port\"" config\system.json 2^>NUL') do set "PORTAL_PORT=%%a"
 
 echo  Opening portal in browser...

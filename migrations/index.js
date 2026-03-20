@@ -10,4 +10,5 @@ module.exports = [
   { version: '2.7.0', name: 'normalize-statuses', run: require('./2.7.0-normalize-statuses') },
   { version: '2.8.1', name: 'autopilot-tasks', run: require('./2.8.1-autopilot-tasks') },
   { version: '2.8.2', name: 'backfill-subtask-links', run: require('./2.8.2-backfill-subtask-links') },
+  { version: '2.8.4', name: 'agent-os-layer', run: require('./2.8.4-agent-os-layer') },
 ];

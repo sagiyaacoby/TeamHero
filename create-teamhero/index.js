@@ -172,7 +172,7 @@ if (!hasClaude) {
   log('');
 }
 
-log('  The dashboard will open at ' + c.cyan + 'http://localhost:3777' + c.reset);
+log('  The dashboard will open at ' + c.cyan + 'http://localhost:3796' + c.reset);
 log('  Complete the setup wizard, then ask your orchestrator to build a team.');
 log('');
 

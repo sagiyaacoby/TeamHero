@@ -201,6 +201,21 @@ function J(res, data, s) { s=s||200; res.writeHead(s, {'Content-Type':'applicati
 function E(res, msg, s) { J(res, {error:msg}, s||400); }
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
 
+// ── Task Lifecycle Constants ─────────────────────────────
+var VALID_STATUSES = ['planning', 'pending_approval', 'accepted', 'in_progress', 'done', 'closed', 'revision_needed', 'hold', 'cancelled'];
+
+var VALID_TRANSITIONS = {
+  planning:          ['pending_approval', 'in_progress', 'hold', 'cancelled'],
+  pending_approval:  ['accepted', 'revision_needed', 'hold', 'cancelled', 'closed'],
+  accepted:          ['in_progress', 'hold', 'cancelled'],
+  in_progress:       ['pending_approval', 'done', 'hold', 'cancelled'],
+  done:              ['closed'],
+  closed:            [],  // terminal
+  revision_needed:   ['in_progress', 'pending_approval', 'hold', 'cancelled'],
+  hold:              ['planning', 'in_progress', 'pending_approval', 'closed', 'cancelled'],
+  cancelled:         []   // terminal
+};
+
 // ── Encrypted Secrets Manager ────────────────────────────
 var secretsCache = null;   // decrypted { name: value } map, null when locked
 var masterKeyCache = null; // derived key buffer
@@ -371,6 +386,19 @@ function rebuildClaudeMd() {
     '## Identity\n\n' +
     'You are the **orchestrator** of the "' + tn + '" team.\n' +
     'Your job is to coordinate all agents, manage tasks, run round tables, and serve the team owner.\n\n' +
+    '## Startup Checks\n\n' +
+    'On every new CLI session, FIRST run: `curl -s http://localhost:' + port + '/api/health`\n\n' +
+    'If `upgradePending` is not null:\n' +
+    '1. Report to owner: "System upgraded from v{previousVersion} to v{version}"\n' +
+    '2. Check `status` and `issues` - report any warnings or errors\n' +
+    '3. Self-heal if possible:\n' +
+    '   - "claude-md" issue: `curl -X POST http://localhost:' + port + '/api/rebuild-context`\n' +
+    '   - "agent-os" / "agent-md" / "agent-folder" issue: delegate to Dev\n' +
+    '   - "migration-failed" / "interrupted-upgrade": report to owner, suggest rollback\n' +
+    '   - "directory" issues: already auto-created by health check\n' +
+    '4. Clear flag: `curl -X POST http://localhost:' + port + '/api/health/clear-upgrade`\n' +
+    '5. Confirm: "Post-upgrade health check complete. All systems operational."\n\n' +
+    'If `upgradePending` is null: skip. Only run health checks on owner request or during round tables.\n\n' +
     '## HARD RULE: Orchestrator Bash Restrictions\n\n' +
     'The orchestrator may ONLY use the Bash tool for `curl` calls to `http://localhost:' + port + '/api/...`.\n' +
     'ALL other bash commands (git, cp, rm, mv, node, file edits, etc.) MUST be delegated to agents via tasks.\n\n' +
@@ -396,6 +424,7 @@ function rebuildClaudeMd() {
     'Use Claude Code\'s **Agent tool** to delegate work to subagents. Never do agent work yourself.\n\n' +
     'When the owner asks you to perform work that matches a specific agent\'s role:\n' +
     '1. Launch a subagent via the **Agent tool** with a prompt that includes:\n' +
+    '   - FIRST: "Read the Platform OS at `config/agent-os.md` - these are your operational rules"\n' +
     '   - The agent identity: "You are {name}, read your definition at `agents/{id}/agent.md`"\n' +
     '   - Memory files to read: `agents/{id}/short-memory.md` and `agents/{id}/long-memory.md`\n' +
     '   - The task to execute and its ID\n' +
@@ -404,6 +433,14 @@ function rebuildClaudeMd() {
     '2. For independent tasks, launch **multiple Agent tool calls in one message** for parallel execution\n' +
     '3. Use `run_in_background: true` for tasks that don\'t need immediate results\n' +
     '4. Each subagent has full tool access (Read, Edit, Write, Bash, Grep, Glob)\n\n' +
+    '### On-Demand Context Loading\n\n' +
+    'Only include extra context files when the task genuinely needs them:\n' +
+    '- **Subtask/complex planning**: add `config/team-rules.md` (full task structure rules)\n' +
+    '- **External posting/communications**: add `config/security-rules.md`\n' +
+    '- **Agent needs work history**: add `agents/{id}/work-log.md`\n' +
+    '- **Migration tasks**: add migration system docs\n' +
+    '- **Platform feature questions**: add `config/capabilities.md`\n\n' +
+    'Do NOT load these by default. The OS layer covers all critical rules.\n\n' +
     '## System API\n\n' +
     'IMPORTANT: When creating agents, tasks, or updating data, you MUST use these API endpoints.\n' +
     'The dashboard portal reads from these same endpoints. Using the API keeps everything in sync.\n' +
@@ -538,26 +575,9 @@ function rebuildAgentMd(aid, a) {
     '- **Style:** ' + (p.style || 'not specified') + '\n\n' +
     '## Rules\n' + ((a.rules||[]).map(function(r){return '- '+r;}).join('\n') || '_No specific rules._') + '\n\n' +
     '## Capabilities\n' + ((a.capabilities||[]).join(', ') || '_No capabilities defined._') + '\n\n' +
-    (a.isOrchestrator ? '' :
-    '## Task Workflow (MANDATORY)\n\n' +
-    '### Two-Phase Flow: Prepare -> Review -> Execute -> Verify\n\n' +
-    '**Phase 1 (Prepare):** Set `in_progress`, do the work, update version.json with `content` (REQUIRED) and `deliverable`. Set `pending_approval`. STOP and wait for owner review.\n\n' +
-    '**Phase 2 (Execute - after owner accepts):** Set `in_progress`, log "Executing: {action}". Execute the approved work. Update version.json `result` with proof (URLs, file paths, verification). Set `pending_approval` for owner to verify.\n\n' +
-    '**Blocker:** If blocked, set blocker field immediately: `PUT /api/tasks/{id} {"blocker":"reason"}` and STOP. Do not continue past a blocker.\n\n' +
-    '- NEVER touch tasks with status `closed`, `hold`, or `cancelled`.\n' +
-    '- If status is `revision_needed` (Improve): read owner feedback comments, revise, then set back to `pending_approval`.\n' +
-    '- NEVER create a new version (v2, v3...) unless the owner explicitly sent revision feedback.\n' +
-    '- Server rejects `pending_approval` if version content is empty - always fill version.json first.\n' +
-    '- If a task has `autopilot: true`, the orchestrator handles acceptance automatically.\n\n') +
-    '## Memory Management\n\n' +
-    'Read `short-memory.md` and `long-memory.md` at task start. Update via API: `PUT /api/agents/' + aid + '/memory/short` or `/long` with `{"content":"..."}`.\n\n' +
-    '**Key rules:**\n' +
-    '- Update short-memory before finishing any task phase (planning, execution)\n' +
-    '- On task CLOSE: promote completed work to long-memory (work log entry, lessons learned, new platform/tool knowledge, owner preference patterns). Remove closed task from short-memory Active Tasks.\n' +
-    '- On task START: prune short-memory entries older than 14 days, remove resolved blockers\n' +
-    '- This applies to ALL task modes: normal, direct execution, and autopilot\n\n' +
-    'Files: `agents/' + aid + '/short-memory.md`, `agents/' + aid + '/long-memory.md`, `agents/' + aid + '/rules.md`\n' +
-    'For full templates and detailed rules, read `config/memory-templates.md`.\n';
+    '## Memory\n' +
+    '- Short: `agents/' + aid + '/short-memory.md`\n' +
+    '- Long: `agents/' + aid + '/long-memory.md`\n';
   writeText(path.join(ROOT, 'agents', aid, 'agent.md'), md);
 }
 
@@ -567,6 +587,11 @@ function rebuildAgentMd(aid, a) {
 
 // ── PTY Terminal (from lib/pty.js) ────────────────────────
 var termSessions = ptyMod.getTermSessions();
+
+// Restart PTY sessions with updated secrets (called after vault unlock / secret changes)
+function syncSecretsToTerminals() {
+  ptyMod.injectSecretsIntoTerminals(sharedCtx);
+}
 
 // ── Shared Context for Extracted Modules ─────────────────
 var sharedCtx = {
@@ -618,6 +643,20 @@ async function handle(pn, m, req, res) {
   if (pn === '/api/rebuild-context' && m === 'POST') {
     rebuildClaudeMd();
     return J(res, { ok: true });
+  }
+
+  // GLOBAL AUTOPILOT CONFIG
+  if (pn === '/api/config/autopilot' && m === 'GET') {
+    var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
+    return J(res, { enabled: sys.globalAutopilot === true });
+  }
+  if (pn === '/api/config/autopilot' && m === 'PUT') {
+    const b = await parseBody(req);
+    var sysCfg = readJSON(path.join(ROOT, 'config/system.json')) || {};
+    sysCfg.globalAutopilot = b.enabled === true;
+    writeJSON(path.join(ROOT, 'config/system.json'), sysCfg);
+    broadcast('config');
+    return J(res, { enabled: sysCfg.globalAutopilot });
   }
 
   // PROFILE
@@ -826,7 +865,7 @@ async function handle(pn, m, req, res) {
       channel: b.channel || '', version: 1,
       tags: Array.isArray(b.tags) ? b.tags : [],
       brief: b.brief || '',
-      autopilot: b.autopilot || false,
+      autopilot: b.autopilot != null ? !!b.autopilot : ((readJSON(path.join(ROOT, 'config/system.json')) || {}).globalAutopilot === true),
       parentTaskId: b.parentTaskId || null,
       subtasks: Array.isArray(b.subtasks) ? b.subtasks : [],
       dependsOn: Array.isArray(b.dependsOn) ? b.dependsOn : [],
@@ -968,7 +1007,7 @@ async function handle(pn, m, req, res) {
       channel: b.channel || '', version: 1,
       tags: Array.isArray(b.tags) ? b.tags : [],
       brief: b.brief || '',
-      autopilot: b.autopilot || false,
+      autopilot: b.autopilot != null ? !!b.autopilot : ((readJSON(path.join(ROOT, 'config/system.json')) || {}).globalAutopilot === true),
       parentTaskId: parentId,
       subtasks: [],
       dependsOn: Array.isArray(b.dependsOn) ? b.dependsOn : [],
@@ -1119,9 +1158,9 @@ async function handle(pn, m, req, res) {
       vData.decidedAt = now;
 
       if (b.action === 'done') {
-        vData.decision = 'closed';
+        vData.decision = 'done';
         writeJSON(vPath, vData);
-        actionResult = Object.assign({}, ex, { status: 'closed', updatedAt: now });
+        actionResult = Object.assign({}, ex, { status: 'done', updatedAt: now });
       } else if (b.action === 'accept') {
         vData.decision = 'accepted';
         writeJSON(vPath, vData);
@@ -1162,8 +1201,8 @@ async function handle(pn, m, req, res) {
       if (ai >= 0) aix.tasks[ai] = { id: id, title: actionResult.title, status: actionResult.status, assignedTo: actionResult.assignedTo, priority: actionResult.priority, type: actionResult.type || 'general', autopilot: actionResult.autopilot || false, parentTaskId: actionResult.parentTaskId || null, blocker: actionResult.blocker || null };
       writeJSON(aip, aix);
 
-      // Auto-advance parent task when all subtasks are accepted/closed (recursive for deep nesting)
-      if ((actionResult.status === 'accepted' || actionResult.status === 'closed') && actionResult.parentTaskId) {
+      // Auto-advance parent task when all subtasks are accepted/closed/done (recursive for deep nesting)
+      if ((actionResult.status === 'accepted' || actionResult.status === 'closed' || actionResult.status === 'done') && actionResult.parentTaskId) {
         var checkParentId = actionResult.parentTaskId;
         while (checkParentId) {
           var parentTp2 = path.join(ROOT, 'data/tasks', checkParentId, 'task.json');
@@ -1171,7 +1210,7 @@ async function handle(pn, m, req, res) {
           if (!parentTask2 || !parentTask2.subtasks || parentTask2.subtasks.length === 0) break;
           var allDone = parentTask2.subtasks.every(function(sid) {
             var sub = readJSON(path.join(ROOT, 'data/tasks', sid, 'task.json'));
-            return sub && (sub.status === 'accepted' || sub.status === 'closed');
+            return sub && (sub.status === 'accepted' || sub.status === 'closed' || sub.status === 'done');
           });
           if (allDone && parentTask2.status !== 'pending_approval' && parentTask2.status !== 'accepted' && parentTask2.status !== 'closed') {
             // Autopilot parent: auto-close instead of pending_approval
@@ -1193,14 +1232,14 @@ async function handle(pn, m, req, res) {
         }
       }
 
-      // Auto-start dependent tasks when all dependencies are accepted/closed
-      if (actionResult.status === 'accepted' || actionResult.status === 'closed') {
+      // Auto-start dependent tasks when all dependencies are accepted/closed/done
+      if (actionResult.status === 'accepted' || actionResult.status === 'closed' || actionResult.status === 'done') {
         aix.tasks.forEach(function(t) {
           var dep = readJSON(path.join(ROOT, 'data/tasks', t.id, 'task.json'));
           if (dep && dep.dependsOn && dep.dependsOn.length > 0 && dep.status === 'planning') {
             var allMet = dep.dependsOn.every(function(did) {
               var d = readJSON(path.join(ROOT, 'data/tasks', did, 'task.json'));
-              return d && (d.status === 'accepted' || d.status === 'closed');
+              return d && (d.status === 'accepted' || d.status === 'closed' || d.status === 'done');
             });
             if (allMet) {
               dep.status = 'in_progress';
@@ -1229,6 +1268,18 @@ async function handle(pn, m, req, res) {
       var vData2 = readJSON(path.join(taskDir2, 'v' + latestV2, 'version.json'));
       if (!vData2 || !vData2.content || !vData2.content.trim()) {
         return E(res, 'Cannot submit: version content is empty. Update version first.', 400);
+      }
+    }
+
+    // Enforce valid status transitions
+    if (b.status && b.status !== ex.status) {
+      var allowed = VALID_TRANSITIONS[ex.status];
+      if (allowed && allowed.indexOf(b.status) === -1) {
+        // Special case: autopilot auto-close (pending_approval -> closed) is allowed
+        var isAutopilotClose = b.status === 'closed' && ex.status === 'pending_approval' && (b.autopilot || ex.autopilot);
+        if (!isAutopilotClose) {
+          return E(res, 'Invalid status transition: ' + ex.status + ' -> ' + b.status, 400);
+        }
       }
     }
 
@@ -1626,6 +1677,7 @@ async function handle(pn, m, req, res) {
       masterKeyCache = result.key;
       secretsSalt = result.salt;
       rebuildClaudeMd();
+      syncSecretsToTerminals();
       return J(res, { ok: true, count: Object.keys(secretsCache).length });
     } catch(e) {
       return E(res, 'Invalid master password', 403);
@@ -1649,6 +1701,7 @@ async function handle(pn, m, req, res) {
     secretsCache = {};
     saveSecretsFile();
     rebuildClaudeMd();
+    syncSecretsToTerminals();
     broadcast('secrets');
     return J(res, { ok: true });
   }
@@ -1687,6 +1740,7 @@ async function handle(pn, m, req, res) {
     secretsCache[nameUpper] = b.value;
     saveSecretsFile();
     rebuildClaudeMd();
+    syncSecretsToTerminals();
     broadcast('secrets');
     return J(res, { ok: true });
   }
@@ -1698,6 +1752,7 @@ async function handle(pn, m, req, res) {
     if (!b.value) return E(res, 'Value required');
     secretsCache[name] = b.value;
     saveSecretsFile();
+    syncSecretsToTerminals();
     broadcast('secrets');
     return J(res, { ok: true });
   }
@@ -1711,6 +1766,7 @@ async function handle(pn, m, req, res) {
       secretsCache = null; masterKeyCache = null; secretsSalt = null;
     }
     rebuildClaudeMd();
+    syncSecretsToTerminals();
     broadcast('secrets');
     return J(res, { ok: true });
   }
@@ -1740,6 +1796,7 @@ async function handle(pn, m, req, res) {
     secretsCache._credentials = creds;
     saveSecretsFile();
     rebuildClaudeMd();
+    syncSecretsToTerminals();
     broadcast('secrets');
     return J(res, { ok: true });
   }
@@ -1762,6 +1819,7 @@ async function handle(pn, m, req, res) {
     secretsCache._credentials = creds;
     saveSecretsFile();
     rebuildClaudeMd();
+    syncSecretsToTerminals();
     broadcast('secrets');
     return J(res, { ok: true });
   }
@@ -1779,6 +1837,7 @@ async function handle(pn, m, req, res) {
       secretsCache = null; masterKeyCache = null; secretsSalt = null;
     }
     rebuildClaudeMd();
+    syncSecretsToTerminals();
     broadcast('secrets');
     return J(res, { ok: true });
   }
@@ -1809,6 +1868,32 @@ async function handle(pn, m, req, res) {
   // SKILLS (delegated to lib/skills.js)
   if (pn === '/api/skills' && m === 'GET') {
     return J(res, skills.handleGetSkills(sharedCtx));
+  }
+
+  // SKILL SEARCH (MCP Registry / npm proxy)
+  if (pn === '/api/skills/search' && m === 'GET') {
+    var searchParams = new URL(req.url, 'http://localhost').searchParams;
+    var searchResult = await skills.handleSkillSearch(sharedCtx,
+      searchParams.get('q') || '',
+      searchParams.get('source') || 'registry',
+      searchParams.get('cursor') || '');
+    return J(res, searchResult);
+  }
+
+  // USER SKILL INSTALL
+  if (pn === '/api/skills/user/install' && m === 'POST') {
+    var b = await parseBody(req);
+    var installResult = await skills.handleUserSkillInstall(sharedCtx, b);
+    if (installResult.error) return E(res, installResult.error, installResult.status || 400);
+    return J(res, installResult);
+  }
+
+  // USER SKILL UNINSTALL
+  var userSkillMatch = pn.match(/^\/api\/skills\/user\/([^\/]+)$/);
+  if (userSkillMatch && m === 'DELETE') {
+    var uninstallResult = skills.handleUserSkillUninstall(sharedCtx, userSkillMatch[1]);
+    if (uninstallResult.error) return E(res, uninstallResult.error, uninstallResult.status || 400);
+    return J(res, uninstallResult);
   }
 
   var skillSettingsMatch = pn.match(/^\/api\/skills\/([^\/]+)\/settings$/);
@@ -1859,6 +1944,17 @@ async function handle(pn, m, req, res) {
   // HEALTH (delegated to lib/health.js)
   if (pn === '/api/health' && m === 'GET') {
     return J(res, health.validateSystem(sharedCtx));
+  }
+
+  // Clear upgrade-pending flag
+  if (pn === '/api/health/clear-upgrade' && m === 'POST') {
+    var flagPath = path.join(ROOT, 'config/.upgrade-pending');
+    try {
+      if (fs.existsSync(flagPath)) fs.unlinkSync(flagPath);
+      return J(res, { ok: true, message: 'Upgrade flag cleared.' });
+    } catch (e) {
+      return J(res, { ok: false, message: 'Failed to clear flag: ' + e.message }, 500);
+    }
   }
 
   // SYSTEM NOTICES (delegated to lib/health.js)
@@ -2040,6 +2136,39 @@ server.on('upgrade', function(req, socket, head) {
 
   socket.destroy();
 });
+
+// ── Auto-Close Done Tasks ────────────────────────────────
+function autoCloseDoneTasks() {
+  var indexPath = path.join(ROOT, 'data/tasks/_index.json');
+  var index = readJSON(indexPath);
+  if (!index || !index.tasks) return;
+  var now = Date.now();
+  var twoDays = 2 * 24 * 60 * 60 * 1000;
+  var changed = false;
+  index.tasks.forEach(function(t) {
+    if (t.status !== 'done') return;
+    var taskPath = path.join(ROOT, 'data/tasks', t.id, 'task.json');
+    var task = readJSON(taskPath);
+    if (!task || task.status !== 'done') return;
+    var updatedAt = new Date(task.updatedAt || task.createdAt).getTime();
+    if (now - updatedAt >= twoDays) {
+      task.status = 'closed';
+      task.updatedAt = new Date().toISOString();
+      if (!task.progressLog) task.progressLog = [];
+      task.progressLog.push({ message: 'Auto-closed: done for 2+ days', agentId: null, timestamp: task.updatedAt });
+      writeJSON(taskPath, task);
+      t.status = 'closed';
+      changed = true;
+    }
+  });
+  if (changed) { writeJSON(indexPath, index); broadcast('tasks'); }
+}
+
+// Run auto-close on startup
+autoCloseDoneTasks();
+
+// Run auto-close every hour
+setInterval(autoCloseDoneTasks, 60 * 60 * 1000);
 
 // ── Autopilot Scheduler Engine ───────────────────────────
 function computeNextRun(from, interval, unit) {

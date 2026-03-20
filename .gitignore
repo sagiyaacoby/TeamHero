@@ -4,7 +4,11 @@ profile/owner.md
 CLAUDE.md
 config/system.json
 config/credentials.md
+config/credentials.json
 config/secrets.enc
+config/secrets.json
+config/.upgrade-pending
+*.bak
 
 # Agent data (generated at runtime via API, not platform files)
 agents/_registry.json
@@ -35,6 +39,10 @@ temp/
 
 # Node
 node_modules/
+
+# Environment files
+.env
+.env.*
 
 # OS
 .DS_Store

@@ -28,6 +28,7 @@
     agentAgentFilter: null,
     tagsVisible: localStorage.getItem('tagsVisible') !== 'false',
     tagFilterExpanded: false,
+    globalAutopilot: false,
   };
 
   var PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
@@ -414,6 +415,9 @@
     if (scope === 'all' || scope === 'autopilot' || scope === 'tasks') {
       if (v === 'autopilot') loadAutopilotPage();
     }
+    if (scope === 'all' || scope === 'config') {
+      loadGlobalAutopilot();
+    }
     if (scope === 'all') {
       if (v === 'media') loadMedia();
     }
@@ -528,7 +532,7 @@
       renderSidebarAgents();
 
       document.getElementById('stat-agents').textContent = state.agents.length;
-      var working = 0, pending = 0, accepted = 0, closed = 0;
+      var working = 0, pending = 0, accepted = 0, done = 0, closed = 0;
       state.tasks.forEach(function(t) {
         // Pending counts ALL tasks (including subtasks) - owner must see everything needing review
         if (t.status === 'pending_approval') { pending++; return; }
@@ -536,14 +540,15 @@
         if (t.parentTaskId) return;
         if (t.status === 'in_progress' || t.status === 'planning' || t.status === 'revision_needed') working++;
         else if (t.status === 'accepted') accepted++;
-        else if (t.status === 'closed' || t.status === 'done') closed++;
+        else if (t.status === 'done') done++;
+        else if (t.status === 'closed') closed++;
       });
       document.getElementById('stat-total').textContent = state.tasks.filter(function(t) { return !t.parentTaskId && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled' && t.status !== 'hold'; }).length;
       document.getElementById('stat-hold').textContent = state.tasks.filter(function(t) { return !t.parentTaskId && t.status === 'hold'; }).length;
       document.getElementById('stat-working').textContent = working;
       document.getElementById('stat-pending').textContent = pending;
       document.getElementById('stat-accepted').textContent = accepted;
-      document.getElementById('stat-closed').textContent = closed;
+      document.getElementById('stat-closed').textContent = done + closed;
       // Highlight active filter stat card
       document.querySelectorAll('.stat-card[data-filter]').forEach(function(card) {
         card.classList.toggle('stat-card-active', card.dataset.filter === state.dashboardTaskFilter);
@@ -639,12 +644,13 @@
     var summaryEl = document.getElementById('agent-tasks-summary');
     if (!summaryEl) return;
 
-    var working = 0, pending = 0, accepted = 0, closed = 0, hold = 0;
+    var working = 0, pending = 0, accepted = 0, agentDone = 0, closed = 0, hold = 0;
     tasks.forEach(function(t) {
       if (t.status === 'in_progress' || t.status === 'planning' || t.status === 'revision_needed') working++;
       else if (t.status === 'pending_approval') pending++;
       else if (t.status === 'accepted') accepted++;
-      else if (t.status === 'closed' || t.status === 'done') closed++;
+      else if (t.status === 'done') agentDone++;
+      else if (t.status === 'closed') closed++;
       else if (t.status === 'hold') hold++;
     });
     var af = state.agentTaskFilter;
@@ -655,7 +661,7 @@
       '<span class="badge badge-in_progress clickable-badge' + (af === 'in_progress' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'in_progress\',\'agent\')">' + working + ' Working</span> ' +
       '<span class="badge badge-accepted clickable-badge' + (af === 'accepted' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'accepted\',\'agent\')">' + accepted + ' Accepted</span> ' +
       '<span class="badge badge-hold clickable-badge' + (af === 'hold' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'hold\',\'agent\')">' + hold + ' Hold</span> ' +
-      '<span class="badge badge-closed clickable-badge' + (af === 'closed' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'closed\',\'agent\')">' + closed + ' Closed</span>';
+      '<span class="badge badge-closed clickable-badge' + (af === 'closed' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'closed\',\'agent\')">' + (agentDone + closed) + ' Closed</span>';
 
     state.cachedAgentTasks = tasks;
     updateSortButtons('agent');
@@ -728,7 +734,7 @@
     if (!task.dependsOn || task.dependsOn.length === 0) return false;
     return task.dependsOn.some(function(depId) {
       var dep = allTasks.find(function(t) { return t.id === depId; });
-      return !dep || (dep.status !== 'accepted' && dep.status !== 'closed');
+      return !dep || (dep.status !== 'accepted' && dep.status !== 'closed' && dep.status !== 'done');
     });
   }
 
@@ -840,7 +846,7 @@
     nodes.forEach(function(t) { columns[colMap[t.id] || 0].push(t); });
 
     // Sort within columns: active statuses first
-    var statusPriority = { in_progress: 0, revision_needed: 1, pending_approval: 2, planning: 3, accepted: 4, hold: 5, closed: 6, cancelled: 7 };
+    var statusPriority = { in_progress: 0, revision_needed: 1, pending_approval: 2, planning: 3, accepted: 4, done: 5, hold: 6, closed: 7, cancelled: 8 };
     columns.forEach(function(col) {
       col.sort(function(a, b) {
         var sa = statusPriority[a.status] !== undefined ? statusPriority[a.status] : 8;
@@ -1119,7 +1125,7 @@
 
   var STATUS_LABELS = {
     planning: 'planning', in_progress: 'working', pending_approval: 'pending',
-    accepted: 'accepted', closed: 'closed', done: 'closed',
+    accepted: 'accepted', done: 'done', closed: 'closed',
     revision_needed: 'improve', hold: 'hold', cancelled: 'cancelled',
     approved: 'execute'
   };
@@ -1202,7 +1208,7 @@
       // Update panel title text without destroying the view-mode-toggle buttons inside the h3
       var titleEl = document.getElementById('dashboard-tasks-title');
       if (titleEl) {
-        var labels = { all: 'All Tasks', pending_approval: 'Pending Review', in_progress: 'Working', accepted: 'Accepted', closed: 'Closed', revision_needed: 'Improve', hold: 'On Hold' };
+        var labels = { all: 'All Tasks', pending_approval: 'Pending Review', in_progress: 'Working', accepted: 'Accepted', done: 'Done', closed: 'Closed', revision_needed: 'Improve', hold: 'On Hold' };
         var titleText = labels[filter] || filter.replace(/_/g, ' ');
         var firstText = titleEl.firstChild;
         if (firstText && firstText.nodeType === 3) {
@@ -1455,7 +1461,6 @@
 
       var statusEl = document.getElementById('task-detail-status');
       var displayStatus = task.status || 'planning';
-      if (displayStatus === 'done') displayStatus = 'closed';
       var statusLabel = STATUS_LABELS[displayStatus] || displayStatus.replace(/_/g, ' ');
       if (displayStatus === 'in_progress') {
         statusEl.innerHTML = escHtml(statusLabel) + ' <span class="agent-working-dot"></span>';
@@ -1735,12 +1740,11 @@
 
   function buildStatusPipeline(task) {
     var current = task.status || 'planning';
-    // Map legacy 'done' to 'closed' for display
-    if (current === 'done') current = 'closed';
 
     var steps = [
       { key: 'pending_approval', label: 'Pending',   icon: '&#9679;'  },
       { key: 'accepted',         label: 'Accepted <span style="color:#6f6;font-size:0.75em;margin-left:2px">&#9654;</span>',  icon: '&#10003;', action: 'accept' },
+      { key: 'done',             label: 'Done',      icon: '&#10004;', action: 'done'  },
       { key: 'closed',           label: 'Closed',    icon: '&#9632;', action: 'close'  }
     ];
     var sideStates = [
@@ -2039,7 +2043,7 @@
 
     try {
       // Actions that go through the action handler (write version timeline)
-      var actionStatuses = { accept: true, close: true };
+      var actionStatuses = { accept: true, done: true, close: true };
       if (actionStatuses[newStatus]) {
         await api.put('/api/tasks/' + id, { action: newStatus });
       } else {
@@ -2048,7 +2052,7 @@
       var labels = {
         planning: 'Set to planning', pending_approval: 'Pending review',
         in_progress: 'Working', accept: 'Accepted',
-        close: 'Closed', hold: 'On hold', cancelled: 'Cancelled'
+        done: 'Done', close: 'Closed', hold: 'On hold', cancelled: 'Cancelled'
       };
       toast(labels[newStatus] || 'Status updated');
 
@@ -3818,7 +3822,7 @@
         var encodedPath = f.name.split('/').map(encodeURIComponent).join('/');
         if (isImage) {
           return '<div class="media-thumb" onclick="App.openMediaPreview(\'' + escHtml(f.name.replace(/'/g, "\\'")) + '\',\'' + typeStr + '\')">' +
-            '<img src="/api/media/files/' + encodedPath + '" alt="' + escHtml(f.name) + '">' +
+            '<img src="/api/raw/data/media/' + encodedPath + '" alt="' + escHtml(f.name) + '">' +
             '<div class="media-thumb-info">' + subdirBadge + '<span class="media-thumb-name" title="' + escHtml(f.name) + '">' + escHtml(truncName) + '</span></div></div>';
         }
         return '<div class="media-thumb" onclick="App.openMediaPreview(\'' + escHtml(f.name.replace(/'/g, "\\'")) + '\',\'' + typeStr + '\')">' +
@@ -3835,7 +3839,7 @@
     var content = document.getElementById('media-preview-content');
     var encodedPath = filename.split('/').map(encodeURIComponent).join('/');
     if (type === 'image') {
-      content.innerHTML = '<img src="/api/media/files/' + encodedPath + '" alt="' + escHtml(filename) + '" style="max-width:100%;max-height:70vh;display:block;margin:0 auto 12px;border-radius:6px">' +
+      content.innerHTML = '<img src="/api/raw/data/media/' + encodedPath + '" alt="' + escHtml(filename) + '" style="max-width:100%;max-height:70vh;display:block;margin:0 auto 12px;border-radius:6px">' +
         '<p style="text-align:center;color:var(--text-muted);font-size:13px">' + escHtml(filename) + '</p>' +
         '<button onclick="App.openMediaFolder()" style="display:block;margin:8px auto 0;padding:4px 12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text-muted);cursor:pointer;font-size:12px">Open Location</button>';
     } else {
@@ -4563,9 +4567,144 @@
     renderFilteredTasks(context);
   }
 
+  // ── Voice Input ────────────────────────────────────
+  var voiceRecognition = null;
+  var voiceIsRecording = false;
+
+  function toggleVoiceInput() {
+    var btn = document.getElementById('voice-input-btn');
+    var preview = document.getElementById('voice-transcript-preview');
+    if (!btn) return;
+
+    if (voiceIsRecording) {
+      // Stop recording
+      if (voiceRecognition) voiceRecognition.stop();
+      return;
+    }
+
+    // Start recording
+    var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    var recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = navigator.language || 'en-US';
+
+    var finalTranscript = '';
+
+    recognition.onstart = function() {
+      voiceIsRecording = true;
+      finalTranscript = '';
+      btn.classList.add('recording');
+      btn.title = 'Stop recording';
+      if (preview) { preview.textContent = ''; preview.classList.add('active'); }
+    };
+
+    recognition.onresult = function(event) {
+      var interim = '';
+      for (var i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript;
+        } else {
+          interim += event.results[i][0].transcript;
+        }
+      }
+      if (preview) {
+        preview.textContent = finalTranscript + interim;
+        preview.classList.add('active');
+      }
+    };
+
+    recognition.onend = function() {
+      voiceIsRecording = false;
+      btn.classList.remove('recording');
+      btn.title = 'Voice input (Speech-to-Text)';
+      if (preview) { preview.textContent = ''; preview.classList.remove('active'); }
+      voiceRecognition = null;
+
+      // Send final transcript to terminal
+      var text = finalTranscript.trim();
+      if (text && termWs && termWs.readyState === 1) {
+        termWs.send(JSON.stringify({ type: 'input', data: text }));
+      }
+    };
+
+    recognition.onerror = function(event) {
+      voiceIsRecording = false;
+      btn.classList.remove('recording');
+      btn.title = 'Voice input (Speech-to-Text)';
+      if (preview) { preview.textContent = ''; preview.classList.remove('active'); }
+      voiceRecognition = null;
+      if (event.error !== 'aborted' && event.error !== 'no-speech') {
+        toast('Voice input error: ' + event.error, 'error');
+      }
+    };
+
+    voiceRecognition = recognition;
+    recognition.start();
+  }
+
+  // ── Global Autopilot ─────────────────────────────────
+  async function loadGlobalAutopilot() {
+    try {
+      var data = await api.get('/api/config/autopilot');
+      state.globalAutopilot = data.enabled === true;
+      renderAutopilotButton();
+    } catch(e) {
+      console.error('Failed to load autopilot state:', e);
+    }
+  }
+
+  function renderAutopilotButton() {
+    var btn = document.getElementById('btn-global-autopilot');
+    var label = document.getElementById('autopilot-status-label');
+    if (!btn || !label) return;
+    if (state.globalAutopilot) {
+      btn.classList.add('active');
+      label.textContent = 'ON';
+    } else {
+      btn.classList.remove('active');
+      label.textContent = 'OFF';
+    }
+  }
+
+  function toggleGlobalAutopilot() {
+    var modal = document.getElementById('autopilot-confirm-modal');
+    var title = document.getElementById('autopilot-confirm-title');
+    if (modal) {
+      title.textContent = state.globalAutopilot ? 'Turn Off Autopilot' : 'Turn On Autopilot';
+      modal.classList.remove('hidden');
+    }
+  }
+
+  function cancelAutopilotConfirm() {
+    var modal = document.getElementById('autopilot-confirm-modal');
+    if (modal) modal.classList.add('hidden');
+  }
+
+  async function confirmGlobalAutopilot() {
+    var newVal = !state.globalAutopilot;
+    try {
+      await api.put('/api/config/autopilot', { enabled: newVal });
+      state.globalAutopilot = newVal;
+      renderAutopilotButton();
+    } catch(e) {
+      console.error('Failed to toggle autopilot:', e);
+    }
+    cancelAutopilotConfirm();
+  }
+
   // ── Init ───────────────────────────────────────────
   async function init() {
     connectWebSocket();
+
+    // Voice input: show container only if Web Speech API is supported
+    var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    var voiceContainer = document.getElementById('voice-input-container');
+    if (SpeechRecognition && voiceContainer) {
+      voiceContainer.style.display = 'block';
+    }
 
     // Prevent hints-bar buttons from stealing terminal focus
     var hintsBar = document.querySelector('.terminal-hints-bar');
@@ -4583,6 +4722,7 @@
       } else {
         updateSidebarHeader(sys.teamName);
         await loadSidebarAgents();
+        loadGlobalAutopilot();
         // Deep link: navigate from hash or default to chat
         if (location.hash && location.hash !== '#') {
           _navigateFromHash();
@@ -4622,11 +4762,17 @@
       grid.innerHTML = '<div class="empty-state">No skills available</div>';
       return;
     }
+    // Track loaded skill IDs for cross-referencing in Discover tab
+    loadedSkillIds = new Set();
+    skills.forEach(function(s) { loadedSkillIds.add(s.id); if (s.sourceId) loadedSkillIds.add(s.sourceId); if (s.npmPackage) loadedSkillIds.add(s.npmPackage); });
     grid.innerHTML = skills.map(function(s) {
       var installing = !!skillsInstalling[s.id];
       var statusText = installing ? 'Installing...' : (s.enabled ? 'Enabled' : 'Not installed');
       var statusClass = installing ? 'installing' : (s.enabled ? 'enabled' : '');
       var cardClass = s.enabled ? 'skill-card enabled' : 'skill-card';
+      var isUser = !!s.userInstalled;
+      var sourceBadge = isUser ? '<span class="skill-source-badge user">User</span>' : '<span class="skill-source-badge builtin">Built-in</span>';
+      var uninstallBtn = isUser ? ' <button class="skill-uninstall-btn" onclick="event.stopPropagation();App.uninstallUserSkill(' + q + s.id + q + ')">Uninstall</button>' : '';
       return '<div class="' + cardClass + '" data-skill-id="' + s.id + '">' +
         '<div class="skill-card-header">' +
           '<div class="skill-card-info">' +
@@ -4646,7 +4792,9 @@
         (s.id === 'github' && s.enabled ? '<div class="github-status-panel" id="github-status-panel"><span class="text-muted">Checking connection...</span></div>' : '') +
         '<div class="skill-card-footer">' +
           '<span class="skill-type-badge skill-type-' + s.type + '">' + s.type + '</span>' +
+          sourceBadge +
           '<span class="skill-status ' + statusClass + '">' + statusText + '</span>' +
+          uninstallBtn +
         '</div>' +
       '</div>';
     }).join('');
@@ -4737,6 +4885,178 @@
       toast(msg, 'error');
       console.error('Skill ' + action + ' failed:', e && e.body ? e.body : e);
       loadSkills();
+    }
+  }
+
+  // ── Skills Discovery ─────────────────────────────────
+  var skillsSearchCursor = null;
+  var skillsSearchQuery = '';
+  var skillsSearchInstalling = {};
+  var loadedSkillIds = new Set();
+
+  function switchSkillsTab(tab) {
+    var tabs = document.querySelectorAll('#skills-tabs .tab-btn');
+    tabs.forEach(function(t, i) {
+      if ((tab === 'installed' && i === 0) || (tab === 'discover' && i === 1)) {
+        t.classList.add('active');
+      } else {
+        t.classList.remove('active');
+      }
+    });
+    var installed = document.getElementById('skills-tab-installed');
+    var discover = document.getElementById('skills-tab-discover');
+    if (installed) installed.classList.toggle('active', tab === 'installed');
+    if (discover) discover.classList.toggle('active', tab === 'discover');
+    if (tab === 'installed') loadSkills();
+  }
+
+  async function searchDiscoverSkills() {
+    var input = document.getElementById('skills-search-input');
+    if (!input) return;
+    var query = input.value.trim();
+    if (!query) return;
+    skillsSearchQuery = query;
+    skillsSearchCursor = null;
+    var results = document.getElementById('skills-search-results');
+    var loading = document.getElementById('skills-search-loading');
+    var more = document.getElementById('skills-search-more');
+    if (results) results.innerHTML = '';
+    if (loading) loading.style.display = 'block';
+    if (more) more.style.display = 'none';
+    try {
+      var data = await api.get('/api/skills/search?q=' + encodeURIComponent(query));
+      if (loading) loading.style.display = 'none';
+      renderSearchResults(data.results || [], false);
+      skillsSearchCursor = data.nextCursor || null;
+      if (more) more.style.display = skillsSearchCursor ? 'block' : 'none';
+    } catch(e) {
+      if (loading) loading.style.display = 'none';
+      if (results) results.innerHTML = '<div class="empty-state">Search failed: ' + escHtml(e.message || 'Unknown error') + '</div>';
+    }
+  }
+
+  async function loadMoreSkills() {
+    if (!skillsSearchCursor || !skillsSearchQuery) return;
+    var loading = document.getElementById('skills-search-loading');
+    var more = document.getElementById('skills-search-more');
+    if (loading) loading.style.display = 'block';
+    if (more) more.style.display = 'none';
+    try {
+      var data = await api.get('/api/skills/search?q=' + encodeURIComponent(skillsSearchQuery) + '&cursor=' + encodeURIComponent(skillsSearchCursor));
+      if (loading) loading.style.display = 'none';
+      renderSearchResults(data.results || [], true);
+      skillsSearchCursor = data.nextCursor || null;
+      if (more) more.style.display = skillsSearchCursor ? 'block' : 'none';
+    } catch(e) {
+      if (loading) loading.style.display = 'none';
+      toast('Failed to load more results', 'error');
+    }
+  }
+
+  function renderSearchResults(results, append) {
+    var grid = document.getElementById('skills-search-results');
+    if (!grid) return;
+    if (!results.length && !append) {
+      grid.innerHTML = '<div class="empty-state">No results found. Try a different search term.</div>';
+      return;
+    }
+    var html = results.map(function(r) {
+      var isInstalled = loadedSkillIds.has(r.id) || loadedSkillIds.has(r.npmPackage) || skillsSearchInstalling[r.id] === 'done';
+      var isInstalling = skillsSearchInstalling[r.id] === 'installing';
+      var btnClass = isInstalled ? 'skill-install-btn installed' : (isInstalling ? 'skill-install-btn installing' : 'skill-install-btn');
+      var btnText = isInstalled ? 'Installed' : (isInstalling ? 'Installing...' : 'Install');
+      var btnDisabled = isInstalled || isInstalling ? 'disabled' : '';
+      var dataAttr = 'data-discover-id="' + escHtml(r.id) + '"';
+      var repoLink = r.repoUrl ? '<a href="' + escHtml(r.repoUrl) + '" target="_blank" rel="noopener">Repository</a>' : '';
+      var version = r.version ? 'v' + escHtml(r.version) : '';
+      var transport = r.transport ? '<span class="skill-type-badge skill-type-mcp">' + escHtml(r.transport) + '</span>' : '';
+      return '<div class="skill-card" ' + dataAttr + '>' +
+        '<div class="skill-card-header">' +
+          '<div class="skill-card-info">' +
+            '<span class="skill-icon">&#9670;</span>' +
+            '<div><div class="skill-card-title">' + escHtml(r.name || r.title || r.id) + '</div></div>' +
+          '</div>' +
+          '<button class="' + btnClass + '" ' + btnDisabled + ' onclick="App.installDiscoveredSkill(this)">' + btnText + '</button>' +
+        '</div>' +
+        '<div class="skill-card-desc">' + escHtml(r.description || 'No description available') + '</div>' +
+        '<div class="skill-card-meta">' +
+          (version ? '<span>' + version + '</span>' : '') +
+          (r.npmPackage ? '<span>' + escHtml(r.npmPackage) + '</span>' : '') +
+          repoLink +
+        '</div>' +
+        '<div class="skill-card-footer">' +
+          transport +
+          (r.source ? '<span class="skill-source-badge">' + escHtml(r.source) + '</span>' : '') +
+        '</div>' +
+      '</div>';
+    }).join('');
+    if (append) {
+      grid.innerHTML += html;
+    } else {
+      grid.innerHTML = html;
+    }
+  }
+
+  async function installDiscoveredSkill(btnEl) {
+    var card = btnEl.closest('.skill-card');
+    if (!card) return;
+    var discoverId = card.getAttribute('data-discover-id');
+    if (!discoverId || skillsSearchInstalling[discoverId]) return;
+
+    // Gather skill data from the card
+    var name = card.querySelector('.skill-card-title') ? card.querySelector('.skill-card-title').textContent : discoverId;
+    var desc = card.querySelector('.skill-card-desc') ? card.querySelector('.skill-card-desc').textContent : '';
+    var meta = card.querySelectorAll('.skill-card-meta span');
+    var version = '';
+    var npmPackage = '';
+    meta.forEach(function(m) {
+      var t = m.textContent;
+      if (t.startsWith('v')) version = t.substring(1);
+      else if (t.includes('/') || t.startsWith('@')) npmPackage = t;
+    });
+    var repoLink = card.querySelector('.skill-card-meta a');
+    var repoUrl = repoLink ? repoLink.getAttribute('href') : '';
+
+    skillsSearchInstalling[discoverId] = 'installing';
+    btnEl.classList.add('installing');
+    btnEl.textContent = 'Installing...';
+    btnEl.disabled = true;
+
+    try {
+      await api.post('/api/skills/user/install', {
+        id: discoverId,
+        name: name,
+        description: desc,
+        version: version,
+        npmPackage: npmPackage,
+        repoUrl: repoUrl
+      });
+      skillsSearchInstalling[discoverId] = 'done';
+      btnEl.classList.remove('installing');
+      btnEl.classList.add('installed');
+      btnEl.textContent = 'Installed';
+      loadedSkillIds.add(discoverId);
+      toast('Skill installed: ' + name);
+    } catch(e) {
+      delete skillsSearchInstalling[discoverId];
+      btnEl.classList.remove('installing');
+      btnEl.textContent = 'Install';
+      btnEl.disabled = false;
+      var msg = (e && e.body && e.body.error) ? e.body.error : (e && e.message) ? e.message : 'Install failed';
+      toast(msg, 'error');
+    }
+  }
+
+  async function uninstallUserSkill(skillId) {
+    if (!confirm('Uninstall this skill?')) return;
+    try {
+      await api.del('/api/skills/user/' + skillId);
+      toast('Skill uninstalled');
+      loadedSkillIds.delete(skillId);
+      loadSkills();
+    } catch(e) {
+      var msg = (e && e.body && e.body.error) ? e.body.error : (e && e.message) ? e.message : 'Uninstall failed';
+      toast(msg, 'error');
     }
   }
 
@@ -5489,6 +5809,11 @@
     switchSettingsSection: switchSettingsSection,
     toggleSkill: toggleSkill,
     saveSkillSettings: saveSkillSettings,
+    switchSkillsTab: switchSkillsTab,
+    searchDiscoverSkills: searchDiscoverSkills,
+    loadMoreSkills: loadMoreSkills,
+    installDiscoveredSkill: installDiscoveredSkill,
+    uninstallUserSkill: uninstallUserSkill,
     viewVersionFile: viewVersionFile,
     viewFile: viewFile,
     previewFileInModal: previewFileInModal,
@@ -5500,6 +5825,7 @@
     toggleFeedback: toggleFeedback,
     pasteImage: pasteImage,
     focusTerminal: function() { if (terminal) { terminal.scrollToBottom(); terminal.focus(); } },
+    toggleVoiceInput: toggleVoiceInput,
     attachTaskImage: attachTaskImage,
     promoteToKnowledge: promoteToKnowledge,
     filterKnowledge: filterKnowledge,
@@ -5534,6 +5860,9 @@
     clearAgentFilter: clearAgentFilter,
     selectDep: selectDep,
     toggleSort: toggleSort,
+    toggleGlobalAutopilot: toggleGlobalAutopilot,
+    cancelAutopilotConfirm: cancelAutopilotConfirm,
+    confirmGlobalAutopilot: confirmGlobalAutopilot,
   };
 
   init();

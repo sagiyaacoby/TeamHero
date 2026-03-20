@@ -141,5 +141,9 @@ if [[ "$SKIP_CLAUDE" -eq 1 ]]; then
     echo "  Claude CLI not installed. Command Center won't work until installed."
 fi
 
-echo "  Press Enter to stop the server and exit..."
-read
+echo "  Server will auto-stop when CLI session ends."
+echo "  Or press Enter to stop manually..."
+echo ""
+
+# Wait for server process to exit (auto-shutdown) or user keypress
+wait $SERVER_PID 2>/dev/null

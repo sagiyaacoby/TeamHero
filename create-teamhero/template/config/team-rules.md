@@ -1,81 +1,163 @@
 # Team Rules
 
-## Delegation & Task Tracking
-- The orchestrator MUST delegate work to agents via tasks — never do the actual work itself
-- All work must be tracked as tasks in the dashboard so the owner has full visibility
-- Create tasks via `POST /api/tasks` with the appropriate agent assigned
-- Task status lifecycle (main flow): `draft` → `pending_approval` → `approved` → `in_progress` → `done`
-- Side statuses: `revision_needed` (agent must revise based on owner feedback), `hold`, `cancelled`
-- The owner can freely change status via the dashboard — these are lightweight changes with no timeline entry
-- The orchestrator's role is: plan, delegate, coordinate, track, and present results to the owner
+## #1 Rule: Plan First, Then Execute
+- Every task follows: Plan -> Review -> Execute -> Verify -> Close
+- Agent's FIRST action is creating a plan. Plan goes to pending_approval. Only AFTER approval does agent execute.
+- Applies to ALL task types. Exception: owner says "just do it" or task is autopilot.
+- When work is approved, execute fully - no stopping to ask again.
+- Only flag genuine blockers (missing credentials, need owner's personal account login).
 
-## Agent Autonomy & Execution Guards
-- Each agent owns their assigned tasks and executes the work
-- Agents update task status as they progress
-- Agents write deliverables into task version folders (data/tasks/{id}/v1/, v2/, etc.)
-- When work is complete, agents set status to `pending_approval` for owner review
-- When status is `revision_needed`, the agent MUST read the owner's feedback comments and submit a new revision
+## Delegation & Task Tracking (HARD RULE)
+- The orchestrator MUST delegate ALL work to agents via tasks. NEVER do agent work yourself.
+- ALL work must be tracked as tasks. No untracked work. Ever.
+- If a session dies, every piece of in-flight work must be recoverable from the task system.
+- The orchestrator's role is ONLY: plan, delegate, coordinate, track, and present results to the owner.
 
-### STRICT: When agents may execute work
-- Agents may ONLY begin work on a task when its status is **`approved`** or **`revision_needed`**
-- An agent must NEVER work on a task in `draft`, `pending_approval`, `hold`, `done`, or `cancelled` status
-- An agent must NEVER create a new version (v2, v3, etc.) unless the owner has explicitly approved or sent revision feedback
-- If a task is `pending_approval`, it means the owner has NOT reviewed it yet - the agent must wait, no exceptions
-- The orchestrator must verify task status before launching any agent - skip tasks that are not `approved` or `revision_needed`
-- Violating these rules corrupts the review pipeline and undermines owner control
+### What the orchestrator MUST NOT do
+- Never write code, research, content, or any deliverable
+- Never use EnterPlanMode for implementation planning - create a task instead
+- Never explore the codebase or read files to understand architecture - delegate to Scout
+- Never touch portal/ or server.js directly - that's Dev's job
+- Never execute shell commands for real work (git, file ops, releases, GitHub) - delegate to the appropriate agent
+
+### What the orchestrator MUST do
+- Create a task BEFORE any work begins - even small things
+- Assign to the right agent (Dev=code, Scout=research, Pen=content, Buzz=growth, Shipper=releases)
+- Launch agents via the Agent tool with full context (agent identity, memory files, task ID, API URL)
+- Track progress and report to the owner. The task system is the SINGLE SOURCE OF TRUTH.
+
+## Task Lifecycle
+
+### Flow: Prepare -> Review -> Execute -> Verify -> Close
+
+**Phase 1: Plan (MANDATORY)**
+1. Set `in_progress`. Log "Planning: {what I will do}"
+2. Create plan: What will be done, How, which files/sources/platforms
+3. Save plan to `data/tasks/{id}/v{n}/plan.md`
+4. Update version.json: `content` (REQUIRED) + `deliverable` (path to plan)
+5. Set `pending_approval`. STOP and wait.
+
+**Phase 2: Execute (after owner accepts)**
+6. Set `in_progress`. Log "Executing: {action}"
+7. Execute the approved work
+8. If blocker: `PUT /api/tasks/{id} {"blocker":"reason"}` and STOP
+9. Update version.json: `content` (summary) + `result` (proof - URLs, file paths, verification)
+10. **Auto-close when execution is complete.** Do NOT leave tasks in pending_approval after execution.
+
+### Auto-close Rule (HARD RULE - NO NOISE)
+- **After execution, agents MUST set status to `closed` directly** - not `pending_approval`
+- Concrete proof (submitted PRs, deployed code, live URLs, file changes) = close immediately
+- Do not create unnecessary pending_approval states that require owner to manually close
+- The system must stay clean - no stale tasks sitting in pending_approval after work is done
+- Exception: only use pending_approval after execution if the deliverable genuinely needs owner review (e.g., content that will be published publicly under owner's name)
+
+### Status Meanings
+- **planning**: Creating plan/materials before first review
+- **in_progress**: Executing after acceptance
+- **pending_approval**: Materials ready for review OR execution proof ready for verify
+- **accepted**: Owner approved - triggers agent execution immediately
+- **revision_needed**: Owner sent feedback - agent revises, resubmits
+- **closed**: Terminal. No agent should touch it.
+- **hold**: Paused. Do not work until released.
+- **cancelled**: Abandoned.
+
+### Two pending_approval phases
+1. **First** (after planning): version has plan, no execution result yet
+2. **Second** (after execute): ONLY if deliverable needs owner sign-off (public content, external communications)
+
+### Rules
+- Tasks start in `planning`. Agent creates plan before submitting.
+- Accept = execute (not auto-close). Improve = revise and resubmit.
+- Server rejects pending_approval with empty version content.
+- Autopilot tasks (`autopilot: true`) skip owner review but follow the same flow.
+
+### Blocker Protocol
+- **TRY BEFORE YOU BLOCK.** Attempt the action before declaring a blocker. Never assume failure.
+- A blocker is only valid after a genuine failed attempt. Include what was tried and what failed.
+- Set blocker immediately: `PUT /api/tasks/{id} {"blocker":"reason"}` and STOP.
+- Blocker persists with red glow until orchestrator clears it and relaunches agent.
+- **Invalid blockers:** "credentials not configured" without checking env vars, "can't access X" without trying.
+
+### Required proof by task type
+- **Content/Social**: `result` = published URL (mandatory)
+- **Development**: `result` = file paths changed, test results, or PR URL
+- **Research**: `deliverable` = report file path in version folder
+- **Operations**: `result` = verification or outcome description
+
+## Agent Execution Guards
+- Agents may ONLY begin work when the orchestrator launches them
+- Never work on tasks in `pending_approval`, `hold`, `closed`, or `cancelled` status
+- Never create a new version (v2, v3...) unless owner sent revision feedback
+- When `accepted`, orchestrator launches agent to EXECUTE (not auto-close)
+- When `revision_needed`, read owner's feedback and submit a new revision
+
+## Task Structure (HARD RULE)
+- Multi-step or multi-agent work MUST use parent/child task structure
+- Create parent first, then subtasks via `POST /api/tasks/{parentId}/subtasks`
+- Parent tasks are containers - may or may not be assigned to an agent
+- Subtask fields: `parentTaskId`, `subtasks[]`, `dependsOn[]`
+- When all subtasks reach accepted/closed, parent auto-advances to `pending_approval`
+- Tasks with `dependsOn` wait until all dependencies are accepted/closed
+- Never create 3+ related flat tasks when parent/child would group them
+
+## Deliverable Tracking (MANDATORY)
+Every closed task MUST have visible outcomes. Update version.json with:
+- `content`: Markdown summary of what was done (REQUIRED)
+- `deliverable`: Description of deliverable files or path
+- `result`: Links, URLs, or outcome summary
+
+**By task type:** Content = actual post text + live URL. Research = summary + full report .md file. Development = what changed + file paths/PR URLs. Operations = what was done + outcome.
+
+**Files:** Save deliverables to `data/tasks/{taskId}/v{n}/`. Dashboard auto-discovers images. Never leave version content empty.
 
 ## Knowledge Pipeline
-- When completing research tasks, promote deliverables to Knowledge Base via `POST /api/tasks/{id}/promote`
-- Knowledge documents should have clear titles, categories, and tags for discoverability
-- Flag stale knowledge docs (>30 days) during round tables for review or archival
+- Promote research deliverables to Knowledge Base via `POST /api/tasks/{id}/promote`
+- Flag stale knowledge docs (>30 days) during round tables
 
 ## Progress Logging
-- Agents should log progress on long-running tasks via `POST /api/tasks/{id}/progress`
-- Progress entries help the owner track work between round tables
-- Log meaningful milestones, not every minor step
-
-## Task Status Meanings & Rules
-- **draft**: Task created, not yet ready for work
-- **pending_approval**: Agent submitted work, waiting for owner review
-- **approved**: Owner approved — orchestrator MUST launch the assigned agent to begin execution
-- **revision_needed**: Owner sent feedback — agent must revise and resubmit. Orchestrator should launch the agent with the feedback
-- **in_progress**: Agent is actively working on the task
-- **done**: Task complete, no further action needed
-- **hold**: Paused — do not work on until the owner releases it
-- **cancelled**: Abandoned — no further action
-
-When the owner sets a task to `approved`, the orchestrator MUST ensure the assigned agent begins executing it.
-When the owner sets a task to `revision_needed` (via Improve + feedback), the orchestrator MUST launch the agent with the feedback to revise.
-Tasks on "hold" remain visible but should not be actively worked on until the owner releases them.
+- Log meaningful milestones via `POST /api/tasks/{id}/progress` - not every minor step
 
 ## Content & Social Media Rules
-- **Normalize all content** — avoid characters and patterns commonly associated with AI-generated text:
-  - Never use em dash (—) or en dash (–). Only use the regular hyphen (-).
-  - Do not use emojis unless they genuinely fit the situation. No decorative emoji sprinkles.
-  - Avoid AI cliches: "Let's dive in", "Here's the thing", "Game-changer", "Exciting news!", excessive exclamation marks.
-  - Write naturally, like a real person typing.
-- **Always log the published URL** — after posting content anywhere (LinkedIn, Reddit, Dev.to, HN, Twitter/X, etc.), the agent MUST add the live URL to the task via progress log (`POST /api/tasks/{id}/progress`) so the owner can find it later, even after the task is done
-- **Never post to social media without an image** — every post must have a visual (screenshot, generated image, or graphic)
-- Images are stored in `data/media/social-images/`
-- To generate images, use the owner's ChatGPT instance via Chrome browser (owner will open it manually)
-- When creating content tasks for social media, always include a companion image task or flag that an image is needed before posting
+- **Normalize content**: No em/en dashes (use hyphen only). Minimal emojis. No AI cliches. Write naturally.
+- **Always log the published URL** via progress log after posting anywhere
+- **Never post without an image** - every social post needs a visual
+- Images stored in `data/media/social-images/`
 
 ## Token Efficiency
-- Always think token-savvy. Use the cheapest tool that gets the job done.
-- Playwright: avoid unnecessary full page snapshots. Each snapshot can be 5000+ tokens. Only snapshot when you need to find an element or check state.
-- After clicking/typing in Playwright, do not snapshot just to confirm - trust the action unless there is reason to doubt.
-- Prefer targeted checks (evaluate, wait_for) over full snapshots.
-- When calling APIs, avoid fetching data you do not need.
-- When reading files, use offset/limit for large files instead of reading the whole thing.
-- Do not repeat searches you already did. Cache results mentally within the conversation.
+- Use the cheapest tool that gets the job done
+- Playwright: avoid unnecessary snapshots (5000+ tokens each). Trust actions, use targeted checks.
+- Don't fetch data you don't need. Use offset/limit for large files. Don't repeat searches.
 
-## Round Table Reviews
-- Round tables must check that work is properly delegated, not silently done by the orchestrator
-- Review each agent's task load and progress
-- Flag any bottlenecks or unassigned work
-- Present items needing owner approval
-- Review knowledge base — list recent additions, flag stale docs
-- **Execute all approved tasks immediately** — do not ask the owner for confirmation. Approved means go. Launch all assigned agents in parallel.
-- **Execute all `revision_needed` tasks immediately** — launch the assigned agent with the owner's feedback to revise.
-- If a task has a blocker, log it on the task and flag it to the owner — do not silently skip it
-- Update version references or stale details in task descriptions before launching agents
+## Round Table Protocol
+
+Round tables are **execution-first**. Act before reporting.
+
+### Phase 1: Execute
+1. Launch agents on accepted tasks (EXECUTE, not auto-close)
+2. Launch agents on revision_needed tasks
+3. Launch agents on ready planning tasks
+4. Report blockers directly (don't re-investigate)
+
+### Phase 2: Surface blockers
+- Tasks with `blocker` field set
+- Tasks stuck on unmet dependencies
+- Stalled in_progress tasks
+- Tasks needing owner input (pending_approval)
+- Agents with zero active tasks
+
+### Phase 3: Report
+- Brief status summary, what was executed, what needs owner decision
+- Knowledge base review - flag stale docs (>30 days)
+
+### Phase 4: Memory Maintenance
+1. Prune agent short memories, promote outcomes to long memory
+2. Extract revision feedback patterns to long memory
+3. Update orchestrator's own short memory
+4. Validate Active Tasks match actual API states
+
+## Agent Memory System
+Every agent has `short-memory.md` (working state, max ~2000 chars) and `long-memory.md` (persistent knowledge, max ~5000 chars). Both visible in dashboard Memory tab.
+- Agents read both memories at launch, update short memory before finishing any task phase
+- Templates and update rules: see `config/memory-templates.md`
+- Short memory entries >14 days old are stale - review during round tables
+- Never store full task content, raw API data, or debug info in memory

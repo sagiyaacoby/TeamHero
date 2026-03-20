@@ -6,7 +6,7 @@ var path = require('path');
 var { execSync, spawnSync } = require('child_process');
 var readline = require('readline');
 
-var VERSION = '2.2.1';
+var VERSION = '2.8.2';
 
 // ── Colors ──
 var c = {

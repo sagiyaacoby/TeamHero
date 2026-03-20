@@ -66,20 +66,20 @@ echo        Checking for updates (contacting npm registry)...
 for /f "tokens=*" %%v in ('npm view @anthropic-ai/claude-code version 2^>NUL') do set "LATEST_VER=%%v"
 if not defined LATEST_VER (
     echo        Could not reach npm registry. Skipping update check.
-    goto START_APP
+    goto INSTALL_DEPS
 )
 echo %CUR_VER% | findstr /c:"%LATEST_VER%" 1>NUL 2>NUL
 if not errorlevel 1 (
     echo        Already on latest version.
-    goto START_APP
+    goto INSTALL_DEPS
 )
 echo        Update available: %LATEST_VER%
 choice /m "        Update Claude CLI now"
-if errorlevel 2 goto START_APP
+if errorlevel 2 goto INSTALL_DEPS
 echo        Updating...
 call npm install -g @anthropic-ai/claude-code@latest
 echo        Done.
-goto START_APP
+goto INSTALL_DEPS
 
 :NO_CLAUDE
 echo        Claude CLI is NOT installed.
@@ -88,7 +88,7 @@ choice /m "        Install Claude CLI now"
 if errorlevel 2 (
     echo        Skipping. Dashboard will still launch but Command Center won't work.
     set "SKIP_CLAUDE=1"
-    goto START_APP
+    goto INSTALL_DEPS
 )
 echo        Installing (this may take a minute)...
 call npm install -g @anthropic-ai/claude-code

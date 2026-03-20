@@ -26,6 +26,9 @@
     "task-management",
     "dashboard"
   ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "@playwright/mcp": "^0.0.68",
     "@remotion/bundler": "^4.0.436",

@@ -3,69 +3,114 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn, execSync } = require('child_process');
-
-// Check if a command-line tool is available on the system
-function commandExists(cmd) {
-  try {
-    execSync(process.platform === 'win32' ? 'where ' + cmd : 'which ' + cmd,
-      { stdio: 'ignore', timeout: 5000 });
-    return true;
-  } catch(e) {
-    return false;
-  }
-}
-
-// Known package managers for installing system dependencies
-function getInstallCommand(dep) {
-  var p = process.platform;
-  if (p === 'win32') {
-    if (commandExists('winget')) return { cmd: 'winget', args: ['install', '--id', dep.winget || dep, '-e', '--accept-source-agreements', '--accept-package-agreements'] };
-    if (commandExists('choco')) return { cmd: 'choco', args: ['install', dep.choco || dep, '-y'] };
-    return null;
-  }
-  if (p === 'darwin') {
-    if (commandExists('brew')) return { cmd: 'brew', args: ['install', dep.brew || dep] };
-    return null;
-  }
-  // Linux
-  if (commandExists('apt-get')) return { cmd: 'sudo', args: ['apt-get', 'install', '-y', dep.apt || dep] };
-  if (commandExists('yum')) return { cmd: 'sudo', args: ['yum', 'install', '-y', dep.yum || dep] };
-  if (commandExists('pacman')) return { cmd: 'sudo', args: ['pacman', '-S', '--noconfirm', dep.pacman || dep] };
-  return null;
-}
-
-// Map of system dep names to package manager identifiers
-var SYSTEM_DEP_MAP = {
-  'ffmpeg': { winget: 'Gyan.FFmpeg', choco: 'ffmpeg', brew: 'ffmpeg', apt: 'ffmpeg', yum: 'ffmpeg', pacman: 'ffmpeg' },
-  'python': { winget: 'Python.Python.3.12', choco: 'python3', brew: 'python3', apt: 'python3', yum: 'python3', pacman: 'python' },
-  'git': { winget: 'Git.Git', choco: 'git', brew: 'git', apt: 'git', yum: 'git', pacman: 'git' }
-};
-
-// Attempt to install a system dependency, returns { success, output }
-function installSystemDep(depName) {
-  var depInfo = SYSTEM_DEP_MAP[depName] || depName;
-  var installCmd = getInstallCommand(depInfo);
-  if (!installCmd) {
-    return { success: false, output: 'No package manager found to install "' + depName + '". Please install it manually.' };
-  }
-  try {
-    var output = execSync(installCmd.cmd + ' ' + installCmd.args.join(' '),
-      { timeout: 300000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-    // Verify it's now available
-    if (commandExists(depName)) {
-      return { success: true, output: 'Installed ' + depName + ' successfully.' };
-    }
-    return { success: false, output: 'Install command ran but "' + depName + '" still not found in PATH. Output: ' + output };
-  } catch(e) {
-    return { success: false, output: 'Failed to install "' + depName + '": ' + (e.stderr || e.message) };
-  }
-}
-
-var pty;
-try { pty = require('node-pty'); }
-catch(e) { try { pty = require('node-pty-prebuilt-multiarch'); } catch(e2) { pty = null; } }
-
 const net = require('net');
+
+// ── Bootstrap Self-Heal ──────────────────────────────────
+// If lib/ is missing (old upgrade code didn't extract it),
+// re-download from the release tarball for the current version.
+(function bootstrapSelfHeal() {
+  var libDir = path.join(__dirname, 'lib');
+  if (fs.existsSync(libDir)) return; // lib/ exists, nothing to do
+
+  console.log('  Bootstrap: lib/ directory missing - attempting self-heal...');
+  try {
+    var pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+    var version = pkg.version || '0.0.0';
+    var repo = 'sagiyaacoby/TeamHero';
+    var url = 'https://api.github.com/repos/' + repo + '/tarball/v' + version;
+
+    console.log('  Bootstrap: Downloading v' + version + ' tarball...');
+
+    // Write a temporary download script and run it synchronously
+    var tmpScript = path.join(__dirname, '_bootstrap_tmp.js');
+    var scriptContent = [
+      'var https = require("https");',
+      'var zlib = require("zlib");',
+      'var fs = require("fs");',
+      'var path = require("path");',
+      'var root = process.argv[2];',
+      'var url = process.argv[3];',
+      '',
+      'function download(url, cb) {',
+      '  https.get(url, { headers: { "User-Agent": "TeamHero-Bootstrap" } }, function(res) {',
+      '    if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {',
+      '      return download(res.headers.location, cb);',
+      '    }',
+      '    if (res.statusCode !== 200) return cb(new Error("HTTP " + res.statusCode));',
+      '    var chunks = [];',
+      '    res.on("data", function(c) { chunks.push(c); });',
+      '    res.on("end", function() { cb(null, Buffer.concat(chunks)); });',
+      '  }).on("error", cb);',
+      '}',
+      '',
+      'download(url, function(err, gzData) {',
+      '  if (err) { console.error("Download failed: " + err.message); process.exit(1); }',
+      '  var tarData = zlib.gunzipSync(gzData);',
+      '  var offset = 0, stripPrefix = "", extracted = 0;',
+      '  var extractDirs = ["lib/", "migrations/"];',
+      '  while (offset < tarData.length) {',
+      '    var header = tarData.slice(offset, offset + 512);',
+      '    if (header.length < 512 || header[0] === 0) break;',
+      '    var fileName = header.slice(0, 100).toString("utf8").replace(/\\0/g, "");',
+      '    var prefix = header.slice(345, 500).toString("utf8").replace(/\\0/g, "");',
+      '    if (prefix) fileName = prefix + "/" + fileName;',
+      '    var sizeOctal = header.slice(124, 136).toString("utf8").replace(/\\0/g, "").trim();',
+      '    var fileSize = parseInt(sizeOctal, 8) || 0;',
+      '    var typeFlag = header[156];',
+      '    offset += 512;',
+      '    if (!stripPrefix && fileName.indexOf("/") > 0) {',
+      '      stripPrefix = fileName.slice(0, fileName.indexOf("/") + 1);',
+      '    }',
+      '    var relPath = fileName;',
+      '    if (stripPrefix && relPath.startsWith(stripPrefix)) {',
+      '      relPath = relPath.slice(stripPrefix.length);',
+      '    }',
+      '    if (relPath && fileSize > 0 && typeFlag === 48) {',
+      '      var shouldExtract = extractDirs.some(function(d) { return relPath.startsWith(d); });',
+      '      if (shouldExtract) {',
+      '        var fileData = tarData.slice(offset, offset + fileSize);',
+      '        var destPath = path.join(root, relPath);',
+      '        fs.mkdirSync(path.dirname(destPath), { recursive: true });',
+      '        fs.writeFileSync(destPath, fileData);',
+      '        extracted++;',
+      '      }',
+      '    }',
+      '    offset += Math.ceil(fileSize / 512) * 512;',
+      '  }',
+      '  console.log("  Bootstrap: Extracted " + extracted + " files");',
+      '});',
+    ].join('\n');
+
+    fs.writeFileSync(tmpScript, scriptContent);
+    try {
+      execSync('node "' + tmpScript + '" "' + __dirname + '" "' + url + '"', {
+        stdio: 'inherit',
+        timeout: 60000,
+      });
+    } finally {
+      // Clean up temp script
+      try { fs.unlinkSync(tmpScript); } catch(e2) {}
+    }
+
+    if (!fs.existsSync(libDir)) {
+      throw new Error('lib/ still missing after extraction');
+    }
+    console.log('  Bootstrap: Self-heal complete.');
+  } catch(e) {
+    console.error('  Bootstrap: Self-heal failed: ' + e.message);
+    console.error('  Please manually download the latest release from https://github.com/sagiyaacoby/TeamHero/releases');
+    process.exit(1);
+  }
+})();
+
+// ── Extracted Modules ────────────────────────────────────
+const { parseWsFrame, buildWsFrame, wsSend } = require('./lib/websocket');
+const { commandExists } = require('./lib/skills');
+const upgrade = require('./lib/upgrade');
+const skills = require('./lib/skills');
+const ptyMod = require('./lib/pty');
+const migrations = require('./lib/migrations');
+const health = require('./lib/health');
 
 const BASE = path.join(__dirname, 'portal');
 const ROOT = __dirname;
@@ -78,15 +123,6 @@ function getConfiguredPort() {
   return null;
 }
 
-function savePort(port) {
-  var sp = path.join(ROOT, 'config/system.json');
-  var sys = {};
-  try { sys = JSON.parse(fs.readFileSync(sp, 'utf8')); } catch(e) {}
-  sys.port = port;
-  fs.mkdirSync(path.dirname(sp), { recursive: true });
-  fs.writeFileSync(sp, JSON.stringify(sys, null, 2) + '\n');
-}
-
 function isPortFree(port) {
   return new Promise(function(resolve) {
     var srv = net.createServer();
@@ -94,13 +130,6 @@ function isPortFree(port) {
     srv.once('listening', function() { srv.close(function() { resolve(true); }); });
     srv.listen(port);
   });
-}
-
-async function findFreePort(start) {
-  for (var p = start; p < start + 100; p++) {
-    if (await isPortFree(p)) return p;
-  }
-  throw new Error('No free port found in range ' + start + '-' + (start + 99));
 }
 
 var PORT; // assigned during startup
@@ -134,6 +163,31 @@ function readJSON(fp) { try { return JSON.parse(fs.readFileSync(fp, 'utf8')); } 
 function writeJSON(fp, d) { fs.mkdirSync(path.dirname(fp), { recursive: true }); fs.writeFileSync(fp, JSON.stringify(d, null, 2) + '\n'); }
 function readText(fp) { try { return fs.readFileSync(fp, 'utf8'); } catch(e) { return null; } }
 function writeText(fp, c) { fs.mkdirSync(path.dirname(fp), { recursive: true }); fs.writeFileSync(fp, c); }
+
+function copyDir(src, dest) {
+  if (!fs.existsSync(src)) return;
+  fs.mkdirSync(dest, { recursive: true });
+  var entries = fs.readdirSync(src, { withFileTypes: true });
+  for (var i = 0; i < entries.length; i++) {
+    var s = path.join(src, entries[i].name);
+    var d = path.join(dest, entries[i].name);
+    if (entries[i].isDirectory()) copyDir(s, d);
+    else fs.copyFileSync(s, d);
+  }
+}
+
+function dirSize(dir) {
+  var total = 0;
+  try {
+    var entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (var i = 0; i < entries.length; i++) {
+      var fp = path.join(dir, entries[i].name);
+      if (entries[i].isDirectory()) total += dirSize(fp);
+      else try { total += fs.statSync(fp).size; } catch(e) {}
+    }
+  } catch(e) {}
+  return total;
+}
 
 function parseBody(req) {
   return new Promise(function(resolve, reject) {
@@ -189,11 +243,20 @@ function saveSecretsFile() {
 function scrubSecrets(text) {
   if (!secretsCache) return text;
   var result = text;
-  var keys = Object.keys(secretsCache);
+  var keys = Object.keys(secretsCache).filter(function(k) { return k !== '_credentials'; });
   for (var i = 0; i < keys.length; i++) {
     var val = secretsCache[keys[i]];
     if (val && val.length >= 4) {
       var escaped = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      result = result.replace(new RegExp(escaped, 'g'), '[REDACTED]');
+    }
+  }
+  // Also scrub credential passwords
+  var creds = getCredentials();
+  for (var ci = 0; ci < creds.length; ci++) {
+    var pw = creds[ci].password;
+    if (pw && pw.length >= 4) {
+      var escaped = pw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       result = result.replace(new RegExp(escaped, 'g'), '[REDACTED]');
     }
   }
@@ -207,8 +270,24 @@ function maskValue(val) {
 }
 
 function getSecretNames() {
-  if (secretsCache) return Object.keys(secretsCache);
+  if (secretsCache) return Object.keys(secretsCache).filter(function(k) { return k !== '_credentials'; });
   return [];
+}
+
+function getCredentials() {
+  if (!secretsCache) return [];
+  return secretsCache._credentials || [];
+}
+
+function getCredentialEnvNames() {
+  var creds = getCredentials();
+  var names = [];
+  for (var i = 0; i < creds.length; i++) {
+    var prefix = creds[i].service.toUpperCase().replace(/[\s\-]+/g, '_').replace(/[^A-Z0-9_]/g, '');
+    names.push(prefix + '_USERNAME');
+    names.push(prefix + '_PASSWORD');
+  }
+  return names;
 }
 
 // ── WebSocket Client Tracking + Broadcast ────────────────
@@ -267,6 +346,7 @@ function rebuildClaudeMd() {
   const ownerMd = readText(path.join(ROOT, 'profile/owner.md')) || '';
   const teamR = readText(path.join(ROOT, 'config/team-rules.md')) || '';
   const secR = readText(path.join(ROOT, 'config/security-rules.md')) || '';
+  const capsMd = readText(path.join(ROOT, 'config/capabilities.md')) || '';
   const tn = sys.teamName || 'Multi-Agent Team';
 
   var orchAgents = reg.agents.filter(function(a) { return a.isOrchestrator; });
@@ -284,13 +364,32 @@ function rebuildClaudeMd() {
     }).join('\n');
   }
 
-  var port = PORT;
+  var port = PORT || getConfiguredPort() || 3796;
 
   const md = '# ' + tn + ' \u2014 Orchestrator Context\n\n' +
     '> **Auto-generated file.** Do not edit manually. Regenerated when config changes.\n\n' +
     '## Identity\n\n' +
     'You are the **orchestrator** of the "' + tn + '" team.\n' +
     'Your job is to coordinate all agents, manage tasks, run round tables, and serve the team owner.\n\n' +
+    '## HARD RULE: Orchestrator Bash Restrictions\n\n' +
+    'The orchestrator may ONLY use the Bash tool for `curl` calls to `http://localhost:' + port + '/api/...`.\n' +
+    'ALL other bash commands (git, cp, rm, mv, node, file edits, etc.) MUST be delegated to agents via tasks.\n\n' +
+    '### Before ANY Bash command, ask yourself:\n\n' +
+    '1. Is this a `curl` command to `http://localhost:' + port + '/api/...`? If NO -> STOP.\n' +
+    '2. Am I about to run git, cp, rm, mv, node, or any non-curl command? If YES -> STOP and create a task.\n' +
+    '3. Could this work be done by an agent (Dev, Scout, Shipper, Pen, Buzz)? If YES -> delegate it.\n\n' +
+    '### Violation examples (NEVER do these directly):\n\n' +
+    '| Forbidden Action | Delegate To |\n' +
+    '|---|---|\n' +
+    '| Copying/moving files | Dev |\n' +
+    '| Deleting GitHub releases/tags | Shipper |\n' +
+    '| Git operations (commit, push, tag, branch) | Shipper |\n' +
+    '| Reading/exploring code files | Scout |\n' +
+    '| Editing any file (code, config, content) | Dev or Pen |\n' +
+    '| Running node scripts | Dev |\n\n' +
+    '### The ONLY exception:\n\n' +
+    '`curl` to `http://localhost:' + port + '/api/...` for task management, agent management, memory updates, and status checks.\n' +
+    'This is the orchestrator\'s tool for coordination - everything else is agent work.\n\n' +
     '## Owner Profile\n\n' + (ownerMd || '_No owner profile configured yet._') + '\n\n' +
     '## Active Agents\n\n' + (al || '_No agents registered yet._') + '\n\n' +
     '### How to Work as an Agent\n\n' +
@@ -320,9 +419,13 @@ function rebuildClaudeMd() {
     '### Tasks\n' +
     '- **List tasks:** `GET /api/tasks`\n' +
     '- **Get task:** `GET /api/tasks/{id}`\n' +
-    '- **Create task:** `POST /api/tasks` with `{"title","description","assignedTo","status":"draft","priority":"medium","type":"general"}`\n' +
+    '- **Create task:** `POST /api/tasks` with `{"title","description","assignedTo","status":"planning","priority":"medium","type":"general","autopilot":false}`\n' +
     '  - Supported types: `general`, `research`, `development`, `content`, `review`, `operations`\n' +
-    '- **Update task:** `PUT /api/tasks/{id}` with JSON body (partial update, e.g. `{"status":"done"}`)\n' +
+    '  - Optional: `parentTaskId`, `dependsOn: []` for subtask/dependency relationships\n' +
+    '- **Update task:** `PUT /api/tasks/{id}` with JSON body (partial update, e.g. `{"status":"closed"}`)\n' +
+    '  - Actions: `{"action":"accept"}`, `{"action":"close"}`, `{"action":"improve","comments":"..."}`, `{"action":"hold"}`, `{"action":"cancel"}`\n' +
+    '  - Blocker: `{"blocker":"reason"}` to set, `{"blocker":null}` to clear (auto-logs to progress)\n' +
+    '- **Create subtask:** `POST /api/tasks/{parentId}/subtasks` with task body (auto-links to parent)\n' +
     '- **Log progress:** `POST /api/tasks/{id}/progress` with `{"message":"...","agentId":"..."}`\n' +
     '- **Get progress:** `GET /api/tasks/{id}/progress`\n' +
     '- **Promote to knowledge:** `POST /api/tasks/{id}/promote` — copies deliverable to Knowledge Base\n\n' +
@@ -347,27 +450,21 @@ function rebuildClaudeMd() {
     '```\n\n' +
     'After any API call that modifies data, the dashboard automatically refreshes in real-time.\n\n' +
     '## Team Building\n\n' +
-    'When the owner asks you to "build a team", "add agents", or "create a team":\n' +
-    '1. Ask clarifying questions about what roles are needed if not specified\n' +
-    '2. Create each agent via the API with a distinct role, personality, and mission\n' +
-    '3. Each agent should have specific rules and capabilities relevant to their role\n\n' +
-    'To create an agent via API:\n' +
-    '```bash\n' +
-    'curl -X POST http://localhost:' + port + '/api/agents \\\n' +
-    '  -H "Content-Type: application/json" \\\n' +
-    '  -d \'{"name":"Agent Name","role":"Role Title","mission":"What this agent does","description":"Detailed description","personality":{"traits":["trait1","trait2"],"tone":"tone description","style":"style description"},"rules":["rule1","rule2"],"capabilities":["cap1","cap2"]}\'\n' +
-    '```\n\n' +
-    'Rules for team building:\n' +
-    '- Always use the API to create agents — never write agent files directly\n' +
-    '- Give each agent a distinct role that doesn\'t overlap with others\n' +
-    '- Set personality traits, tone, and style to differentiate agents\n' +
-    '- Include specific rules for each agent\'s domain\n' +
-    '- After creating agents, briefly summarize the team to the owner\n\n' +
+    'When asked to build a team or add agents, create each via `POST /api/agents` with distinct role, personality, mission, rules, and capabilities. Never write agent files directly. Summarize the team to the owner when done.\n\n' +
+
     '## Team Rules\n\n' + teamR + '\n\n' +
     '## Security Rules\n\n' + secR + '\n\n' +
     '## Safety Boundaries\n\n' +
     'CRITICAL: These rules are enforced at all times regardless of permission mode.\n\n' +
-    '- **Project folder only:** ALL file operations (read, write, delete) must stay within `' + ROOT.replace(/\\/g, '/') + '/`. Never access files outside this directory.\n' +
+    (function() {
+      var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
+      var paths = sys.localAccess || [ROOT.replace(/\\/g, '/')];
+      if (paths.length <= 1) {
+        return '- **Project folder only:** ALL file operations (read, write, delete) must stay within `' + ROOT.replace(/\\/g, '/') + '/`. Never access files outside this directory.\n';
+      }
+      return '- **Allowed folders only:** ALL file operations (read, write, delete) must stay within these directories (including subfolders). Never access files outside them.\n' +
+        paths.map(function(p) { return '  - `' + p + '/`\n'; }).join('');
+    })() +
     '- **Never modify platform files:** Do not edit `server.js`, `portal/`, `launch.bat`, `launch.sh`, or `package.json`. These are managed by the upgrade system.\n' +
     '- **Never expose secrets:** Environment variables containing API keys or tokens must never be echoed, logged, written to files, or included in any output. Use them only as pass-through in commands.\n' +
     '- **No destructive system commands:** Do not run commands that affect the OS, other processes, or network infrastructure (e.g. `rm -rf /`, `shutdown`, `format`, `kill`, `netsh`).\n' +
@@ -376,19 +473,6 @@ function rebuildClaudeMd() {
     '- Only `node` is guaranteed to be available. Do not assume `python3`, `python`, or other runtimes are installed.\n' +
     '- To parse JSON in shell commands, use `node -e` instead of `python3 -c`.\n' +
     '- Example: `curl -s url | node -e "let d=\'\';process.stdin.on(\'data\',c=>d+=c);process.stdin.on(\'end\',()=>console.log(JSON.stringify(JSON.parse(d),null,2)))"`\n\n' +
-    '## Round Table Protocol\n\n' +
-    'A "round table" is a structured review session. When asked to run one:\n' +
-    '1. Scan all tasks in `data/tasks/` \u2014 review each task\'s status\n' +
-    '2. For each agent, summarize what they\'ve accomplished and what\'s pending\n' +
-    '3. Present items needing approval to the owner\n' +
-    '4. Review knowledge base \u2014 list recent additions, flag stale docs (>30 days since update)\n' +
-    '5. Create a round table summary in `data/round-tables/` with timestamp filename\n' +
-    '6. Update each agent\'s short-memory with round table outcomes\n' +
-    '7. Clear completed items from short-memory\n\n' +
-    '## Task Lifecycle\n\n' +
-    'Tasks flow through: `draft` \u2192 `in_progress` \u2192 `pending_approval` \u2192 `approved` / `revision_needed` / `hold` \u2192 `done`\n\n' +
-    'When a task is approved, the orchestrator MUST ensure the assigned agent begins executing it. Follow up by setting the task to `in_progress` and confirming the agent is working on it.\n\n' +
-    'Task files: `data/tasks/{task-id}/task.json` with version folders `v1/`, `v2/`, etc.\n\n' +
     '## File Structure Reference\n\n' +
     '- `config/system.json` \u2014 System configuration\n' +
     '- `config/team-rules.md` \u2014 Team operational rules\n' +
@@ -409,12 +493,19 @@ function rebuildClaudeMd() {
     '- Organize by purpose: `temp/screenshots/`, `temp/downloads/`, etc.\n' +
     '- Files in `temp/` are disposable \u2014 they may be cleaned at any time\n' +
     '- Never store deliverables in `temp/` \u2014 use `data/tasks/{id}/v{n}/` instead\n\n' +
+    (capsMd ? '## Capabilities\n\n' + capsMd + '\n\n' : '') +
+    (function() {
+      var sc = skills.getEnabledSkillContexts({ ROOT: ROOT, readJSON: readJSON, path: path });
+      return sc ? '## Enabled Skills\n\n' + sc + '\n\n' : '';
+    })() +
     '## Available Secrets\n\n' +
     'These environment variables are injected into your session when secrets are unlocked:\n\n' +
     (function() {
       var names = getSecretNames();
-      if (names.length === 0) return '_No secrets configured. Add them via dashboard Settings > Secrets & API Keys._\n';
-      return names.map(function(n) { return '- `$' + n + '`'; }).join('\n') + '\n\n' +
+      var credNames = getCredentialEnvNames();
+      var allNames = names.concat(credNames);
+      if (allNames.length === 0) return '_No secrets configured. Add them via dashboard Settings > Secrets & API Keys._\n';
+      return allNames.map(function(n) { return '- `$' + n + '`'; }).join('\n') + '\n\n' +
         'Use these as environment variables in commands (e.g. `$OPENAI_API_KEY`). Never echo or output their values.\n';
     })();
 
@@ -447,314 +538,55 @@ function rebuildAgentMd(aid, a) {
     '- **Style:** ' + (p.style || 'not specified') + '\n\n' +
     '## Rules\n' + ((a.rules||[]).map(function(r){return '- '+r;}).join('\n') || '_No specific rules._') + '\n\n' +
     '## Capabilities\n' + ((a.capabilities||[]).join(', ') || '_No capabilities defined._') + '\n\n' +
-    '## Memory\n' +
-    '- Short-term context: `agents/' + aid + '/short-memory.md`\n' +
-    '- Long-term knowledge: `agents/' + aid + '/long-memory.md`\n' +
-    '- Agent-specific rules: `agents/' + aid + '/rules.md`\n';
+    (a.isOrchestrator ? '' :
+    '## Task Workflow (MANDATORY)\n\n' +
+    '### Two-Phase Flow: Prepare -> Review -> Execute -> Verify\n\n' +
+    '**Phase 1 (Prepare):** Set `in_progress`, do the work, update version.json with `content` (REQUIRED) and `deliverable`. Set `pending_approval`. STOP and wait for owner review.\n\n' +
+    '**Phase 2 (Execute - after owner accepts):** Set `in_progress`, log "Executing: {action}". Execute the approved work. Update version.json `result` with proof (URLs, file paths, verification). Set `pending_approval` for owner to verify.\n\n' +
+    '**Blocker:** If blocked, set blocker field immediately: `PUT /api/tasks/{id} {"blocker":"reason"}` and STOP. Do not continue past a blocker.\n\n' +
+    '- NEVER touch tasks with status `closed`, `hold`, or `cancelled`.\n' +
+    '- If status is `revision_needed` (Improve): read owner feedback comments, revise, then set back to `pending_approval`.\n' +
+    '- NEVER create a new version (v2, v3...) unless the owner explicitly sent revision feedback.\n' +
+    '- Server rejects `pending_approval` if version content is empty - always fill version.json first.\n' +
+    '- If a task has `autopilot: true`, the orchestrator handles acceptance automatically.\n\n') +
+    '## Memory Management\n\n' +
+    'Read `short-memory.md` and `long-memory.md` at task start. Update via API: `PUT /api/agents/' + aid + '/memory/short` or `/long` with `{"content":"..."}`.\n\n' +
+    '**Key rules:**\n' +
+    '- Update short-memory before finishing any task phase (planning, execution)\n' +
+    '- On task CLOSE: promote completed work to long-memory (work log entry, lessons learned, new platform/tool knowledge, owner preference patterns). Remove closed task from short-memory Active Tasks.\n' +
+    '- On task START: prune short-memory entries older than 14 days, remove resolved blockers\n' +
+    '- This applies to ALL task modes: normal, direct execution, and autopilot\n\n' +
+    'Files: `agents/' + aid + '/short-memory.md`, `agents/' + aid + '/long-memory.md`, `agents/' + aid + '/rules.md`\n' +
+    'For full templates and detailed rules, read `config/memory-templates.md`.\n';
   writeText(path.join(ROOT, 'agents', aid, 'agent.md'), md);
 }
 
-// ── WebSocket Helpers ────────────────────────────────────
-function parseWsFrame(buf) {
-  if (buf.length < 2) return null;
-  var b0 = buf[0], b1 = buf[1];
-  var opcode = b0 & 0x0f;
-  var masked = (b1 & 0x80) !== 0;
-  var len = b1 & 0x7f;
-  var offset = 2;
+// ── WebSocket Helpers (from lib/websocket.js) ────────────
 
-  if (len === 126) {
-    if (buf.length < 4) return null;
-    len = buf.readUInt16BE(2);
-    offset = 4;
-  } else if (len === 127) {
-    if (buf.length < 10) return null;
-    len = Number(buf.readBigUInt64BE(2));
-    offset = 10;
-  }
+// ── Upgrade / Update (from lib/upgrade.js) ───────────────
 
-  var maskKey = null;
-  if (masked) {
-    if (buf.length < offset + 4) return null;
-    maskKey = buf.slice(offset, offset + 4);
-    offset += 4;
-  }
+// ── PTY Terminal (from lib/pty.js) ────────────────────────
+var termSessions = ptyMod.getTermSessions();
 
-  if (buf.length < offset + len) return null;
-  var payload = Buffer.from(buf.slice(offset, offset + len));
-  if (masked && maskKey) {
-    for (var i = 0; i < payload.length; i++) payload[i] ^= maskKey[i % 4];
-  }
-
-  return { opcode: opcode, payload: payload, totalLen: offset + len };
-}
-
-function buildWsFrame(data) {
-  var payload = Buffer.from(data, 'utf8');
-  var len = payload.length;
-  var header;
-  if (len < 126) {
-    header = Buffer.alloc(2);
-    header[0] = 0x81;
-    header[1] = len;
-  } else if (len < 65536) {
-    header = Buffer.alloc(4);
-    header[0] = 0x81;
-    header[1] = 126;
-    header.writeUInt16BE(len, 2);
-  } else {
-    header = Buffer.alloc(10);
-    header[0] = 0x81;
-    header[1] = 127;
-    header.writeBigUInt64BE(BigInt(len), 2);
-  }
-  return Buffer.concat([header, payload]);
-}
-
-function wsSend(socket, obj) {
-  try { socket.write(buildWsFrame(JSON.stringify(obj))); } catch(e) {}
-}
-
-// ── Upgrade / Update Mechanism (GitHub Releases) ─────────
-var GITHUB_REPO = 'sagiyaacoby/TeamHero';
-var PLATFORM_FILES = ['server.js', 'portal/', 'launch.sh', 'launch.bat', 'config/agent-templates/', '.gitignore', 'package.json', 'package-lock.json'];
-
-function httpsGet(url) {
-  var https = require('https');
-  return new Promise(function(resolve, reject) {
-    var opts = { headers: { 'User-Agent': 'TeamHero-Updater', 'Accept': 'application/vnd.github.v3+json' } };
-    var parsed = new URL(url);
-    opts.hostname = parsed.hostname;
-    opts.path = parsed.pathname + parsed.search;
-    https.get(opts, function(res) {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return httpsGet(res.headers.location).then(resolve, reject);
-      }
-      var data = [];
-      res.on('data', function(ch) { data.push(ch); });
-      res.on('end', function() {
-        var buf = Buffer.concat(data);
-        resolve({ statusCode: res.statusCode, body: buf });
-      });
-    }).on('error', reject);
-  });
-}
-
-function compareVersions(a, b) {
-  // Returns >0 if b is newer than a
-  var pa = (a || '0.0.0').split('.').map(Number);
-  var pb = (b || '0.0.0').split('.').map(Number);
-  for (var i = 0; i < 3; i++) {
-    if ((pb[i] || 0) > (pa[i] || 0)) return 1;
-    if ((pb[i] || 0) < (pa[i] || 0)) return -1;
-  }
-  return 0;
-}
-
-async function checkForUpdates() {
-  var localPkg = readJSON(path.join(ROOT, 'package.json'));
-  var localVersion = localPkg ? localPkg.version : '1.0.0';
-
-  try {
-    var res = await httpsGet('https://api.github.com/repos/' + GITHUB_REPO + '/releases/latest');
-    if (res.statusCode === 404) {
-      return { updateAvailable: false, currentVersion: localVersion, latestVersion: localVersion, error: 'No releases published yet.' };
-    }
-    if (res.statusCode !== 200) {
-      return { updateAvailable: false, currentVersion: localVersion, error: 'GitHub API error: HTTP ' + res.statusCode };
-    }
-    var release = JSON.parse(res.body.toString());
-    var latestVersion = (release.tag_name || '').replace(/^v/, '');
-    var updateAvailable = compareVersions(localVersion, latestVersion) > 0;
-    var releaseNotes = release.body || '';
-    // Truncate long notes
-    if (releaseNotes.length > 1000) releaseNotes = releaseNotes.slice(0, 1000) + '...';
-
-    return {
-      updateAvailable: updateAvailable,
-      currentVersion: localVersion,
-      latestVersion: latestVersion,
-      releaseNotes: releaseNotes,
-      releaseName: release.name || release.tag_name || '',
-      releaseUrl: release.html_url || '',
-      tarballUrl: release.tarball_url || '',
-      publishedAt: release.published_at || '',
-      repoUrl: 'https://github.com/' + GITHUB_REPO,
-    };
-  } catch(e) {
-    return { updateAvailable: false, currentVersion: localVersion, error: 'Failed to check for updates: ' + e.message };
-  }
-}
-
-async function performUpgrade() {
-  var check = await checkForUpdates();
-  if (!check.updateAvailable) return { success: false, message: 'Already up to date.' };
-  if (!check.tarballUrl) return { success: false, message: 'No download URL available.' };
-
-  try {
-    // Download the release tarball
-    var tarRes = await httpsGet(check.tarballUrl);
-    if (tarRes.statusCode !== 200) return { success: false, message: 'Download failed: HTTP ' + tarRes.statusCode };
-
-    var zlib = require('zlib');
-    var tarData = zlib.gunzipSync(tarRes.body);
-
-    // Parse tar and extract platform files
-    var extracted = 0;
-    var offset = 0;
-    var stripPrefix = ''; // GitHub tarballs have a top-level dir like "user-repo-hash/"
-
-    while (offset < tarData.length) {
-      // Tar header is 512 bytes
-      var header = tarData.slice(offset, offset + 512);
-      if (header.length < 512 || header[0] === 0) break;
-
-      var fileName = header.slice(0, 100).toString('utf8').replace(/\0/g, '');
-      // Handle long names via prefix field (bytes 345-500)
-      var prefix = header.slice(345, 500).toString('utf8').replace(/\0/g, '');
-      if (prefix) fileName = prefix + '/' + fileName;
-
-      var sizeOctal = header.slice(124, 136).toString('utf8').replace(/\0/g, '').trim();
-      var fileSize = parseInt(sizeOctal, 8) || 0;
-      var typeFlag = header[156];
-
-      offset += 512; // past header
-
-      // Detect strip prefix from first entry
-      if (!stripPrefix && fileName.indexOf('/') > 0) {
-        stripPrefix = fileName.slice(0, fileName.indexOf('/') + 1);
-      }
-
-      // Strip the top-level directory
-      var relPath = fileName;
-      if (stripPrefix && relPath.startsWith(stripPrefix)) {
-        relPath = relPath.slice(stripPrefix.length);
-      }
-
-      if (relPath && fileSize > 0 && typeFlag === 48) { // typeFlag 48 = '0' = regular file
-        // Check if this is a platform file we should update
-        var isPlatform = PLATFORM_FILES.some(function(pf) {
-          if (pf.endsWith('/')) return relPath.startsWith(pf);
-          return relPath === pf;
-        });
-
-        if (isPlatform) {
-          var fileData = tarData.slice(offset, offset + fileSize);
-          var destPath = path.join(ROOT, relPath);
-          fs.mkdirSync(path.dirname(destPath), { recursive: true });
-          fs.writeFileSync(destPath, fileData);
-          extracted++;
-        }
-      }
-
-      // Advance past file data (padded to 512-byte boundary)
-      offset += Math.ceil(fileSize / 512) * 512;
-    }
-
-    return {
-      success: true,
-      message: 'Updated to v' + check.latestVersion + '. ' + extracted + ' files updated. Restart the server to apply.',
-      extractedFiles: extracted,
-      restartRequired: true,
-    };
-  } catch(e) {
-    return { success: false, message: 'Upgrade failed: ' + e.message };
-  }
-}
-
-// ── PTY Terminal Session Manager ─────────────────────────
-var termSessions = new Map();
-var MAX_BUFFER = 50 * 1024; // 50KB rolling buffer for reconnect replay
-
-function createTermSession(sessionId, socket) {
-  if (!pty) {
-    wsSend(socket, { type: 'terminal-error', error: 'Terminal not available. Run `npm install` in the project directory.' });
-    return null;
-  }
-
-  var isWindows = process.platform === 'win32';
-  var shell = isWindows ? 'cmd.exe' : 'bash';
-  var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
-  var permMode = sys.claudePermissionMode || 'autonomous';
-  var claudeCmd = permMode === 'supervised' ? 'claude' : 'claude --dangerously-skip-permissions';
-  var shellArgs = isWindows ? ['/c', claudeCmd] : ['-c', claudeCmd];
-
-  var envVars = Object.assign({}, process.env, {
-    FORCE_COLOR: '1',
-    TERM: 'xterm-256color',
-  });
-  // Inject decrypted secrets as environment variables
-  if (secretsCache) {
-    var skeys = Object.keys(secretsCache);
-    for (var si = 0; si < skeys.length; si++) { envVars[skeys[si]] = secretsCache[skeys[si]]; }
-  }
-
-  var term = pty.spawn(shell, shellArgs, {
-    name: 'xterm-256color',
-    cols: 120,
-    rows: 30,
-    cwd: ROOT,
-    env: envVars,
-  });
-
-  var session = {
-    pty: term,
-    outputBuffer: '',
-    socket: socket,
-    timeout: null,
-  };
-
-  term.onData(function(data) {
-    // Append to rolling buffer
-    session.outputBuffer += data;
-    if (session.outputBuffer.length > MAX_BUFFER) {
-      session.outputBuffer = session.outputBuffer.slice(-MAX_BUFFER);
-    }
-    // Send to connected client (scrub secrets from output)
-    if (session.socket) {
-      wsSend(session.socket, { type: 'terminal-output', data: scrubSecrets(data) });
-    }
-  });
-
-  term.onExit(function(ev) {
-    if (session.socket) {
-      wsSend(session.socket, { type: 'terminal-exit', code: ev.exitCode });
-    }
-    termSessions.delete(sessionId);
-    // Claude may have modified files via API — broadcast refresh
-    broadcast('all');
-  });
-
-  termSessions.set(sessionId, session);
-  return session;
-}
-
-function detachTermSession(sessionId) {
-  var session = termSessions.get(sessionId);
-  if (!session) return;
-  session.socket = null;
-  // Start 5-min timeout to kill orphaned PTY
-  session.timeout = setTimeout(function() {
-    var s = termSessions.get(sessionId);
-    if (s && !s.socket) {
-      try { s.pty.kill(); } catch(e) {}
-      termSessions.delete(sessionId);
-    }
-  }, 5 * 60 * 1000);
-}
-
-function reattachTermSession(sessionId, socket) {
-  var session = termSessions.get(sessionId);
-  if (!session) return null;
-  // Clear orphan timeout
-  if (session.timeout) { clearTimeout(session.timeout); session.timeout = null; }
-  session.socket = socket;
-  // Replay buffer (scrub secrets)
-  if (session.outputBuffer) {
-    wsSend(socket, { type: 'terminal-output', data: scrubSecrets(session.outputBuffer) });
-  }
-  return session;
-}
+// ── Shared Context for Extracted Modules ─────────────────
+var sharedCtx = {
+  ROOT: ROOT,
+  path: path,
+  fs: fs,
+  readJSON: readJSON,
+  writeJSON: writeJSON,
+  readText: readText,
+  writeText: writeText,
+  broadcast: broadcast,
+  wsSend: wsSend,
+  parseWsFrame: parseWsFrame,
+  scrubSecrets: scrubSecrets,
+  getSecretNames: getSecretNames,
+  getCredentials: getCredentials,
+  get secretsCache() { return secretsCache; },
+  genId: genId,
+  rebuildClaudeMd: function() { rebuildClaudeMd(); },
+};
 
 // ── Request Handler ──────────────────────────────────────
 async function handle(pn, m, req, res) {
@@ -764,6 +596,18 @@ async function handle(pn, m, req, res) {
   if (pn === '/api/system/initialize' && m === 'POST') {
     const sp = path.join(ROOT, 'config/system.json');
     const s = readJSON(sp) || {};
+    // On first initialization, clean out any shipped/leftover sub-agents
+    if (!s.initialized) {
+      const rp = path.join(ROOT, 'agents/_registry.json');
+      const rg = readJSON(rp) || { agents: [] };
+      rg.agents.forEach(function(a) {
+        if (a.isOrchestrator) return;
+        const dir = path.join(ROOT, 'agents', a.id);
+        if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+      });
+      rg.agents = rg.agents.filter(function(a) { return a.isOrchestrator; });
+      writeJSON(rp, rg);
+    }
     s.initialized = true;
     writeJSON(sp, s);
     ensureOrchestrator();
@@ -805,6 +649,70 @@ async function handle(pn, m, req, res) {
       broadcast('agents');
       return J(res, { ok: true });
     }
+  }
+
+  // AGENT FILES - list all files produced by an agent across tasks
+  const afm = pn.match(/^\/api\/agents\/([^\/]+)\/files$/);
+  if (afm && m === 'GET') {
+    const agentId = afm[1];
+    const idx = readJSON(path.join(ROOT, 'data/tasks/_index.json')) || { tasks: [] };
+    const agentTasks = idx.tasks.filter(function(t) { return t.assignedTo === agentId; });
+    var groups = [];
+    var reports = [];
+    var content = [];
+    var totalFiles = 0;
+    var contentTypes = { content: true };
+    agentTasks.forEach(function(t) {
+      var taskDir = path.join(ROOT, 'data/tasks', t.id);
+      var taskJson = readJSON(path.join(taskDir, 'task.json'));
+      if (!taskJson) return;
+      // Only include closed/accepted tasks for categorized view
+      var isFinal = taskJson.status === 'closed' || taskJson.status === 'accepted' || taskJson.status === 'done';
+      // Find latest version folder
+      var latestVn = 0;
+      var fileMap = {};
+      for (var vn = 1; vn <= 20; vn++) {
+        var vDir = path.join(taskDir, 'v' + vn);
+        if (!fs.existsSync(vDir)) continue;
+        latestVn = vn;
+        try {
+          var entries = fs.readdirSync(vDir);
+          entries.forEach(function(f) {
+            if (f === 'version.json') return;
+            var fp = path.join(vDir, f);
+            try { if (!fs.statSync(fp).isFile()) return; } catch(e) { return; }
+            var ext = path.extname(f).toLowerCase();
+            var isImage = ['.png','.jpg','.jpeg','.gif','.svg','.webp'].indexOf(ext) >= 0;
+            var safeName = encodeURIComponent(f);
+            var rawUrl = '/api/tasks/' + t.id + '/versions/' + vn + '/files/' + safeName + '/raw';
+            fileMap[f] = { name: f, version: vn, rawUrl: rawUrl, previewUrl: isImage ? rawUrl : '/api/tasks/' + t.id + '/versions/' + vn + '/files/' + safeName, isImage: isImage };
+          });
+        } catch(e) {}
+      }
+      var files = Object.values(fileMap);
+      if (files.length === 0) return;
+      totalFiles += files.length;
+      var createdAt = taskJson.updatedAt || taskJson.createdAt || '';
+      var group = { taskId: t.id, taskTitle: taskJson.title || 'Untitled Task', taskType: taskJson.type || 'general', taskUpdatedAt: createdAt, createdAt: createdAt, files: files };
+      groups.push(group);
+      // Categorize for final tasks only
+      if (isFinal) {
+        // Only include files from the latest version for categorized view
+        var latestFiles = files.filter(function(f) { return f.version === latestVn; });
+        if (latestFiles.length > 0) {
+          var catGroup = { taskId: t.id, taskTitle: taskJson.title || 'Untitled Task', taskType: taskJson.type || 'general', createdAt: createdAt, files: latestFiles };
+          if (contentTypes[taskJson.type]) {
+            content.push(catGroup);
+          } else {
+            reports.push(catGroup);
+          }
+        }
+      }
+    });
+    groups.sort(function(a, b) { return (b.taskUpdatedAt || '').localeCompare(a.taskUpdatedAt || ''); });
+    reports.sort(function(a, b) { return (b.createdAt || '').localeCompare(a.createdAt || ''); });
+    content.sort(function(a, b) { return (b.createdAt || '').localeCompare(a.createdAt || ''); });
+    return J(res, { groups: groups, reports: reports, content: content, totalFiles: totalFiles });
   }
 
   const am = pn.match(/^\/api\/agents\/([^\/]+)$/);
@@ -912,15 +820,31 @@ async function handle(pn, m, req, res) {
     const now = new Date().toISOString();
     const t = {
       id: id, title: b.title || 'Untitled', description: b.description || '',
-      assignedTo: b.assignedTo || null, status: b.status || 'draft',
+      assignedTo: b.assignedTo || null, status: b.status || 'planning',
       priority: b.priority || 'medium',
       type: b.type || 'general',
       channel: b.channel || '', version: 1,
       tags: Array.isArray(b.tags) ? b.tags : [],
       brief: b.brief || '',
+      autopilot: b.autopilot || false,
+      parentTaskId: b.parentTaskId || null,
+      subtasks: Array.isArray(b.subtasks) ? b.subtasks : [],
+      dependsOn: Array.isArray(b.dependsOn) ? b.dependsOn : [],
+      dueDate: b.dueDate || null,
+      blocker: b.blocker || null,
+      interval: b.interval || null,
+      intervalUnit: b.intervalUnit || null,
+      lastRun: b.lastRun || null,
+      nextRun: null,
+      runCount: b.runCount || 0,
       progressLog: [],
       createdAt: now, updatedAt: now
     };
+    // Compute nextRun for recurring autopilot tasks
+    if (t.autopilot && t.interval && t.intervalUnit) {
+      var ms = t.interval * ({ minutes: 60000, hours: 3600000, days: 86400000 }[t.intervalUnit] || 60000);
+      t.nextRun = new Date(Date.now() + ms).toISOString();
+    }
     writeJSON(path.join(dir, 'task.json'), t);
     // Write initial v1/version.json
     writeJSON(path.join(dir, 'v1/version.json'), {
@@ -930,8 +854,19 @@ async function handle(pn, m, req, res) {
     });
     const ip = path.join(ROOT, 'data/tasks/_index.json');
     const ix = readJSON(ip) || { tasks: [] };
-    ix.tasks.push({ id: id, title: t.title, status: t.status, assignedTo: t.assignedTo, priority: t.priority, type: t.type });
+    ix.tasks.push({ id: id, title: t.title, status: t.status, assignedTo: t.assignedTo, priority: t.priority, type: t.type, autopilot: t.autopilot, parentTaskId: t.parentTaskId, blocker: t.blocker, interval: t.interval || null, intervalUnit: t.intervalUnit || null });
     writeJSON(ip, ix);
+    // If this is a subtask, auto-link to parent
+    if (t.parentTaskId) {
+      var parentTp = path.join(ROOT, 'data/tasks', t.parentTaskId, 'task.json');
+      var parentTask = readJSON(parentTp);
+      if (parentTask) {
+        if (!parentTask.subtasks) parentTask.subtasks = [];
+        if (parentTask.subtasks.indexOf(id) === -1) parentTask.subtasks.push(id);
+        parentTask.updatedAt = now;
+        writeJSON(parentTp, parentTask);
+      }
+    }
     broadcast('tasks');
     return J(res, t, 201);
   }
@@ -1012,6 +947,56 @@ async function handle(pn, m, req, res) {
     return J(res, doc, 201);
   }
 
+  // TASK SUBTASKS
+  const tsm = pn.match(/^\/api\/tasks\/([^\/]+)\/subtasks$/);
+  if (tsm && m === 'POST') {
+    const parentId = tsm[1];
+    const parentTp = path.join(ROOT, 'data/tasks', parentId, 'task.json');
+    const parent = readJSON(parentTp);
+    if (!parent) return E(res, 'Parent not found', 404);
+    // Unlimited nesting allowed - no depth limit
+    const b = await parseBody(req);
+    const subId = b.id || genId();
+    const subDir = path.join(ROOT, 'data/tasks', subId);
+    fs.mkdirSync(path.join(subDir, 'v1'), { recursive: true });
+    const now = new Date().toISOString();
+    const sub = {
+      id: subId, title: b.title || 'Untitled', description: b.description || '',
+      assignedTo: b.assignedTo || null, status: b.status || 'planning',
+      priority: b.priority || parent.priority || 'medium',
+      type: b.type || parent.type || 'general',
+      channel: b.channel || '', version: 1,
+      tags: Array.isArray(b.tags) ? b.tags : [],
+      brief: b.brief || '',
+      autopilot: b.autopilot || false,
+      parentTaskId: parentId,
+      subtasks: [],
+      dependsOn: Array.isArray(b.dependsOn) ? b.dependsOn : [],
+      dueDate: b.dueDate || null,
+      blocker: b.blocker || null,
+      progressLog: [],
+      createdAt: now, updatedAt: now
+    };
+    writeJSON(path.join(subDir, 'task.json'), sub);
+    writeJSON(path.join(subDir, 'v1/version.json'), {
+      number: 1, content: b.content || '', status: 'submitted',
+      decision: null, comments: '', submittedAt: now, decidedAt: null,
+      deliverable: b.deliverable || '', result: b.result || ''
+    });
+    // Link to parent
+    if (!parent.subtasks) parent.subtasks = [];
+    parent.subtasks.push(subId);
+    parent.updatedAt = now;
+    writeJSON(parentTp, parent);
+    // Update index
+    const ip = path.join(ROOT, 'data/tasks/_index.json');
+    const ix = readJSON(ip) || { tasks: [] };
+    ix.tasks.push({ id: subId, title: sub.title, status: sub.status, assignedTo: sub.assignedTo, priority: sub.priority, type: sub.type, autopilot: sub.autopilot, parentTaskId: parentId, blocker: sub.blocker });
+    writeJSON(ip, ix);
+    broadcast('tasks');
+    return J(res, sub, 201);
+  }
+
   // TASK VERSIONS
   const tvm = pn.match(/^\/api\/tasks\/([^\/]+)\/versions$/);
   if (tvm && m === 'GET') {
@@ -1037,6 +1022,20 @@ async function handle(pn, m, req, res) {
     } catch(e) {}
     versions.sort(function(a, b) { return a.number - b.number; });
     return J(res, versions);
+  }
+
+  // SERVE VERSION FILE RAW (binary-safe, for images/downloads)
+  const tvfr = pn.match(/^\/api\/tasks\/([^\/]+)\/versions\/(\d+)\/files\/(.+)\/raw$/);
+  if (tvfr && m === 'GET') {
+    var rawPath = path.join(ROOT, 'data/tasks', tvfr[1], 'v' + tvfr[2], decodeURIComponent(tvfr[3]));
+    if (!rawPath.startsWith(path.join(ROOT, 'data/tasks', tvfr[1]))) { res.writeHead(403); return res.end('Forbidden'); }
+    if (!fs.existsSync(rawPath)) { res.writeHead(404); return res.end('Not found'); }
+    try {
+      var rawData = fs.readFileSync(rawPath);
+      var rawExt = path.extname(tvfr[3]).toLowerCase();
+      res.writeHead(200, { 'Content-Type': MIME[rawExt] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+      return res.end(rawData);
+    } catch(e) { res.writeHead(500); return res.end('Error'); }
   }
 
   // SERVE VERSION FILE CONTENT
@@ -1097,8 +1096,8 @@ async function handle(pn, m, req, res) {
     const b = await parseBody(req);
     const now = new Date().toISOString();
 
-    // Handle review actions: done, approve, improve, cancel, hold
-    if (b.action === 'done' || b.action === 'approve' || b.action === 'improve' || b.action === 'cancel' || b.action === 'hold') {
+    // Handle review actions: done, approve, accept, close, improve, cancel, hold
+    if (b.action === 'done' || b.action === 'approve' || b.action === 'accept' || b.action === 'close' || b.action === 'improve' || b.action === 'cancel' || b.action === 'hold') {
       // Find the latest version
       var taskDir = path.join(ROOT, 'data/tasks', id);
       var latestV = ex.version || 1;
@@ -1120,9 +1119,17 @@ async function handle(pn, m, req, res) {
       vData.decidedAt = now;
 
       if (b.action === 'done') {
-        vData.decision = 'done';
+        vData.decision = 'closed';
         writeJSON(vPath, vData);
-        actionResult = Object.assign({}, ex, { status: 'done', updatedAt: now });
+        actionResult = Object.assign({}, ex, { status: 'closed', updatedAt: now });
+      } else if (b.action === 'accept') {
+        vData.decision = 'accepted';
+        writeJSON(vPath, vData);
+        actionResult = Object.assign({}, ex, { status: 'accepted', updatedAt: now });
+      } else if (b.action === 'close') {
+        vData.decision = 'closed';
+        writeJSON(vPath, vData);
+        actionResult = Object.assign({}, ex, { status: 'closed', updatedAt: now });
       } else if (b.action === 'approve') {
         vData.decision = 'approved';
         writeJSON(vPath, vData);
@@ -1134,7 +1141,7 @@ async function handle(pn, m, req, res) {
         var nextDir = path.join(taskDir, 'v' + nextV);
         fs.mkdirSync(nextDir, { recursive: true });
         writeJSON(path.join(nextDir, 'version.json'), {
-          number: nextV, content: '', status: 'draft',
+          number: nextV, content: '', status: 'planning',
           decision: null, comments: '', submittedAt: null, decidedAt: null
         });
         actionResult = Object.assign({}, ex, { status: 'revision_needed', version: nextV, updatedAt: now });
@@ -1152,19 +1159,116 @@ async function handle(pn, m, req, res) {
       var aip = path.join(ROOT, 'data/tasks/_index.json');
       var aix = readJSON(aip) || { tasks: [] };
       var ai = aix.tasks.findIndex(function(x) { return x.id === id; });
-      if (ai >= 0) aix.tasks[ai] = { id: id, title: actionResult.title, status: actionResult.status, assignedTo: actionResult.assignedTo, priority: actionResult.priority, type: actionResult.type || 'general' };
+      if (ai >= 0) aix.tasks[ai] = { id: id, title: actionResult.title, status: actionResult.status, assignedTo: actionResult.assignedTo, priority: actionResult.priority, type: actionResult.type || 'general', autopilot: actionResult.autopilot || false, parentTaskId: actionResult.parentTaskId || null, blocker: actionResult.blocker || null };
       writeJSON(aip, aix);
+
+      // Auto-advance parent task when all subtasks are accepted/closed (recursive for deep nesting)
+      if ((actionResult.status === 'accepted' || actionResult.status === 'closed') && actionResult.parentTaskId) {
+        var checkParentId = actionResult.parentTaskId;
+        while (checkParentId) {
+          var parentTp2 = path.join(ROOT, 'data/tasks', checkParentId, 'task.json');
+          var parentTask2 = readJSON(parentTp2);
+          if (!parentTask2 || !parentTask2.subtasks || parentTask2.subtasks.length === 0) break;
+          var allDone = parentTask2.subtasks.every(function(sid) {
+            var sub = readJSON(path.join(ROOT, 'data/tasks', sid, 'task.json'));
+            return sub && (sub.status === 'accepted' || sub.status === 'closed');
+          });
+          if (allDone && parentTask2.status !== 'pending_approval' && parentTask2.status !== 'accepted' && parentTask2.status !== 'closed') {
+            // Autopilot parent: auto-close instead of pending_approval
+            if (parentTask2.autopilot) {
+              parentTask2.status = 'closed';
+              if (!parentTask2.progressLog) parentTask2.progressLog = [];
+              parentTask2.progressLog.push({ message: 'Autopilot: auto-closed (all subtasks done)', agentId: parentTask2.assignedTo || null, timestamp: now });
+            } else {
+              parentTask2.status = 'pending_approval';
+            }
+            parentTask2.updatedAt = now;
+            writeJSON(parentTp2, parentTask2);
+            var pi = aix.tasks.findIndex(function(x) { return x.id === checkParentId; });
+            if (pi >= 0) { aix.tasks[pi].status = parentTask2.status; writeJSON(aip, aix); }
+            checkParentId = parentTask2.parentTaskId;
+          } else {
+            break;
+          }
+        }
+      }
+
+      // Auto-start dependent tasks when all dependencies are accepted/closed
+      if (actionResult.status === 'accepted' || actionResult.status === 'closed') {
+        aix.tasks.forEach(function(t) {
+          var dep = readJSON(path.join(ROOT, 'data/tasks', t.id, 'task.json'));
+          if (dep && dep.dependsOn && dep.dependsOn.length > 0 && dep.status === 'planning') {
+            var allMet = dep.dependsOn.every(function(did) {
+              var d = readJSON(path.join(ROOT, 'data/tasks', did, 'task.json'));
+              return d && (d.status === 'accepted' || d.status === 'closed');
+            });
+            if (allMet) {
+              dep.status = 'in_progress';
+              dep.updatedAt = now;
+              writeJSON(path.join(ROOT, 'data/tasks', t.id, 'task.json'), dep);
+              var di = aix.tasks.findIndex(function(x) { return x.id === t.id; });
+              if (di >= 0) { aix.tasks[di].status = 'in_progress'; }
+            }
+          }
+        });
+        writeJSON(aip, aix);
+      }
+
       broadcast('tasks');
       return J(res, actionResult);
     }
 
+    // Submission validation: reject pending_approval with empty version content
+    if (b.status === 'pending_approval' && ex.status !== 'pending_approval') {
+      var taskDir2 = path.join(ROOT, 'data/tasks', id);
+      var latestV2 = ex.version || 1;
+      try {
+        var entries2 = fs.readdirSync(taskDir2);
+        entries2.forEach(function(e) { if (/^v\d+$/.test(e)) { var n = parseInt(e.slice(1)); if (n > latestV2) latestV2 = n; } });
+      } catch(e) {}
+      var vData2 = readJSON(path.join(taskDir2, 'v' + latestV2, 'version.json'));
+      if (!vData2 || !vData2.content || !vData2.content.trim()) {
+        return E(res, 'Cannot submit: version content is empty. Update version first.', 400);
+      }
+    }
+
+    // Autopilot auto-close: if task is autopilot and being set to pending_approval, auto-close it
+    var autopilotClosed = false;
+    if (b.status === 'pending_approval' && ex.status !== 'pending_approval' && (b.autopilot || ex.autopilot)) {
+      b.status = 'closed';
+      autopilotClosed = true;
+    }
+
     // Default: merge update
     var merged = Object.assign({}, ex, b, { id: id, updatedAt: now });
+
+    // Recompute nextRun if interval fields changed
+    if ((b.interval !== undefined || b.intervalUnit !== undefined) && merged.autopilot && merged.interval && merged.intervalUnit) {
+      var intMs = merged.interval * ({ minutes: 60000, hours: 3600000, days: 86400000 }[merged.intervalUnit] || 60000);
+      merged.nextRun = new Date(Date.now() + intMs).toISOString();
+    }
+
+    // Autopilot auto-close: log progress
+    if (autopilotClosed) {
+      if (!merged.progressLog) merged.progressLog = [];
+      merged.progressLog.push({ message: 'Autopilot: auto-closed', agentId: merged.assignedTo || null, timestamp: now });
+    }
+
+    // Blocker field handling: auto-log progress when blocker changes
+    if (b.blocker !== undefined && b.blocker !== ex.blocker) {
+      if (!merged.progressLog) merged.progressLog = [];
+      if (b.blocker) {
+        merged.progressLog.push({ message: 'BLOCKER: ' + b.blocker, agentId: b.agentId || merged.assignedTo || null, timestamp: now });
+      } else {
+        merged.progressLog.push({ message: 'BLOCKER RESOLVED', agentId: b.agentId || merged.assignedTo || null, timestamp: now });
+      }
+    }
+
     writeJSON(tp, merged);
     var mip = path.join(ROOT, 'data/tasks/_index.json');
     var mix = readJSON(mip) || { tasks: [] };
     var mi = mix.tasks.findIndex(function(x) { return x.id === id; });
-    if (mi >= 0) mix.tasks[mi] = { id: id, title: merged.title, status: merged.status, assignedTo: merged.assignedTo, priority: merged.priority, type: merged.type || 'general' };
+    if (mi >= 0) mix.tasks[mi] = { id: id, title: merged.title, status: merged.status, assignedTo: merged.assignedTo, priority: merged.priority, type: merged.type || 'general', autopilot: merged.autopilot || false, parentTaskId: merged.parentTaskId || null, blocker: merged.blocker || null, interval: merged.interval || null, intervalUnit: merged.intervalUnit || null };
     writeJSON(mip, mix);
     broadcast('tasks');
     return J(res, merged);
@@ -1301,6 +1405,129 @@ async function handle(pn, m, req, res) {
     return J(res, { ok: true, message: 'Temp folder cleaned' });
   }
 
+  // ── SERVER CONTROL ─────────────────────────────────
+  if (pn === '/api/server/shutdown' && m === 'POST') {
+    J(res, { ok: true, message: 'Server shutting down' });
+    // Kill all terminal sessions
+    termSessions.forEach(function(s) { try { s.pty.kill(); } catch(e) {} });
+    setTimeout(function() { process.exit(0); }, 500);
+    return;
+  }
+  if (pn === '/api/server/restart' && m === 'POST') {
+    J(res, { ok: true, message: 'Server restarting' });
+    // Kill all terminal sessions
+    termSessions.forEach(function(s) { try { s.pty.kill(); } catch(e) {} });
+    // Spawn a new server process detached
+    var child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
+      detached: true,
+      stdio: 'ignore',
+      cwd: ROOT
+    });
+    child.unref();
+    setTimeout(function() { process.exit(0); }, 500);
+    return;
+  }
+
+  // ── BACKUP / RESTORE ────────────────────────────────
+  var backupsDir = path.join(ROOT, 'backups');
+
+  if (pn === '/api/backup/create' && m === 'POST') {
+    var b = await parseBody(req);
+    var includeMedia = !!(b && b.includeMedia);
+    var ts = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '-').slice(0, 19);
+    var backupId = 'backup-' + ts;
+    var dest = path.join(backupsDir, backupId);
+    fs.mkdirSync(dest, { recursive: true });
+    var folders = ['agents', 'data', 'config', 'profile'];
+    if (!includeMedia) {
+      // copy data/ but skip data/media/
+      for (var fi = 0; fi < folders.length; fi++) {
+        var src = path.join(ROOT, folders[fi]);
+        if (!fs.existsSync(src)) continue;
+        if (folders[fi] === 'data') {
+          // copy data/ contents except media/
+          fs.mkdirSync(path.join(dest, 'data'), { recursive: true });
+          var dataEntries = fs.readdirSync(src, { withFileTypes: true });
+          for (var di = 0; di < dataEntries.length; di++) {
+            if (dataEntries[di].name === 'media') continue;
+            var ds = path.join(src, dataEntries[di].name);
+            var dd = path.join(dest, 'data', dataEntries[di].name);
+            if (dataEntries[di].isDirectory()) copyDir(ds, dd);
+            else fs.copyFileSync(ds, dd);
+          }
+        } else {
+          copyDir(src, path.join(dest, folders[fi]));
+        }
+      }
+    } else {
+      for (var fi = 0; fi < folders.length; fi++) {
+        var src = path.join(ROOT, folders[fi]);
+        if (fs.existsSync(src)) copyDir(src, path.join(dest, folders[fi]));
+      }
+    }
+    var manifest = { timestamp: new Date().toISOString(), version: readJSON(path.join(ROOT, 'config', 'system.json'))?.version || '?', includeMedia: includeMedia, folders: folders };
+    writeJSON(path.join(dest, 'manifest.json'), manifest);
+    var sizeMB = (dirSize(dest) / 1048576).toFixed(2);
+    return J(res, { ok: true, backupId: backupId, timestamp: manifest.timestamp, sizeMB: sizeMB });
+  }
+
+  if (pn === '/api/backup/list' && m === 'GET') {
+    var list = [];
+    try {
+      var dirs = fs.readdirSync(backupsDir, { withFileTypes: true });
+      for (var i = 0; i < dirs.length; i++) {
+        if (!dirs[i].isDirectory()) continue;
+        var man = readJSON(path.join(backupsDir, dirs[i].name, 'manifest.json'));
+        var sizeMB = (dirSize(path.join(backupsDir, dirs[i].name)) / 1048576).toFixed(2);
+        list.push({ id: dirs[i].name, manifest: man, sizeMB: sizeMB });
+      }
+    } catch(e) {}
+    list.sort(function(a,b) { return b.id.localeCompare(a.id); });
+    return J(res, { backups: list });
+  }
+
+  if (pn === '/api/backup/restore' && m === 'POST') {
+    var b = await parseBody(req);
+    if (!b || !b.backupId) return E(res, 'backupId required');
+    var id = String(b.backupId).replace(/[^a-zA-Z0-9_-]/g, '');
+    var src = path.join(backupsDir, id);
+    if (!fs.existsSync(src) || !fs.existsSync(path.join(src, 'manifest.json'))) return E(res, 'Backup not found', 404);
+    var man = readJSON(path.join(src, 'manifest.json'));
+    var folders = man && man.folders ? man.folders : ['agents', 'data', 'config', 'profile'];
+    for (var fi = 0; fi < folders.length; fi++) {
+      var backupFolder = path.join(src, folders[fi]);
+      if (!fs.existsSync(backupFolder)) continue;
+      var target = path.join(ROOT, folders[fi]);
+      copyDir(backupFolder, target);
+    }
+    // Rebuild CLAUDE.md and notify clients
+    try { rebuildClaudeMd(); } catch(e) {}
+    broadcast({ type: 'refresh', scope: 'all' });
+    return J(res, { ok: true, message: 'Backup restored: ' + id });
+  }
+
+  if (pn === '/api/backup/delete' && m === 'POST') {
+    var b = await parseBody(req);
+    if (!b || !b.backupId) return E(res, 'backupId required');
+    var id = String(b.backupId).replace(/[^a-zA-Z0-9_-]/g, '');
+    var target = path.join(backupsDir, id);
+    if (!fs.existsSync(target)) return E(res, 'Backup not found', 404);
+    // Recursive delete
+    function rmDirRecursive(dir) {
+      try {
+        var entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (var i = 0; i < entries.length; i++) {
+          var fp = path.join(dir, entries[i].name);
+          if (entries[i].isDirectory()) { rmDirRecursive(fp); try { fs.rmdirSync(fp); } catch(e) {} }
+          else { try { fs.unlinkSync(fp); } catch(e) {} }
+        }
+        fs.rmdirSync(dir);
+      } catch(e) {}
+    }
+    rmDirRecursive(target);
+    return J(res, { ok: true, message: 'Backup deleted' });
+  }
+
   // UPLOAD IMAGE (clipboard paste)
   if (pn === '/api/upload-image' && m === 'POST') {
     var b = await parseBody(req);
@@ -1311,7 +1538,7 @@ async function handle(pn, m, req, res) {
     if (dest === 'task' && b.taskId) {
       relPath = 'data/tasks/' + b.taskId + '/images/img-' + ts + '.png';
     } else {
-      relPath = 'data/media/clipboard/clip-' + ts + '.png';
+      relPath = 'temp/clipboard/clip-' + ts + '.png';
     }
     var absPath = safePath(relPath);
     if (!absPath) return E(res, 'Invalid path', 403);
@@ -1319,7 +1546,7 @@ async function handle(pn, m, req, res) {
     var buf = Buffer.from(b.data, 'base64');
     fs.writeFileSync(absPath, buf);
     broadcast('all');
-    return J(res, { ok: true, path: relPath });
+    return J(res, { ok: true, path: relPath, absPath: absPath });
   }
 
   // GENERIC FILE WRITE
@@ -1349,10 +1576,45 @@ async function handle(pn, m, req, res) {
     return J(res, { ok: true, mode: mode, note: 'New sessions will use this mode. Restart existing sessions to apply.' });
   }
 
+  // LOCAL ACCESS PATHS
+  if (pn === '/api/settings/access-paths' && m === 'GET') {
+    var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
+    var paths = sys.localAccess || [ROOT.replace(/\\/g, '/')];
+    return J(res, { paths: paths, root: ROOT.replace(/\\/g, '/') });
+  }
+  if (pn === '/api/settings/access-paths' && m === 'POST') {
+    var b = await parseBody(req);
+    var p = (b.path || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+    if (!p) return E(res, 'Path is required');
+    var sp = path.join(ROOT, 'config/system.json');
+    var sys = readJSON(sp) || {};
+    var rootNorm = ROOT.replace(/\\/g, '/');
+    if (!sys.localAccess) sys.localAccess = [rootNorm];
+    if (!sys.localAccess.includes(p)) sys.localAccess.push(p);
+    writeJSON(sp, sys);
+    rebuildClaudeMd();
+    broadcast('settings');
+    return J(res, { ok: true, paths: sys.localAccess });
+  }
+  if (pn === '/api/settings/access-paths' && m === 'DELETE') {
+    var b = await parseBody(req);
+    var p = (b.path || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+    var rootNorm = ROOT.replace(/\\/g, '/');
+    if (!p || p === rootNorm) return E(res, 'Cannot remove the project folder');
+    var sp = path.join(ROOT, 'config/system.json');
+    var sys = readJSON(sp) || {};
+    if (!sys.localAccess) sys.localAccess = [rootNorm];
+    sys.localAccess = sys.localAccess.filter(function(x) { return x !== p; });
+    writeJSON(sp, sys);
+    rebuildClaudeMd();
+    broadcast('settings');
+    return J(res, { ok: true, paths: sys.localAccess });
+  }
+
   // SECRETS
   if (pn === '/api/secrets/status' && m === 'GET') {
     var exists = fs.existsSync(getSecretsFilePath());
-    return J(res, { locked: secretsCache === null, count: secretsCache ? Object.keys(secretsCache).length : 0, exists: exists });
+    return J(res, { locked: secretsCache === null, count: secretsCache ? getSecretNames().length : 0, exists: exists });
   }
   if (pn === '/api/secrets/unlock' && m === 'POST') {
     var b = await parseBody(req);
@@ -1377,6 +1639,19 @@ async function handle(pn, m, req, res) {
     broadcast('secrets');
     return J(res, { ok: true });
   }
+  if (pn === '/api/secrets/init' && m === 'POST') {
+    var b = await parseBody(req);
+    if (!b.password) return E(res, 'Password required');
+    if (b.password.length < 4) return E(res, 'Password must be at least 4 characters');
+    if (secretsCache) return E(res, 'Vault already exists');
+    secretsSalt = crypto.randomBytes(32);
+    masterKeyCache = deriveKey(b.password, secretsSalt);
+    secretsCache = {};
+    saveSecretsFile();
+    rebuildClaudeMd();
+    broadcast('secrets');
+    return J(res, { ok: true });
+  }
   if (pn === '/api/secrets/change-password' && m === 'POST') {
     var b = await parseBody(req);
     if (!b.currentPassword || !b.newPassword) return E(res, 'Both passwords required');
@@ -1394,7 +1669,7 @@ async function handle(pn, m, req, res) {
 
   if (pn === '/api/secrets' && m === 'GET') {
     if (!secretsCache) return E(res, 'Secrets are locked', 403);
-    var list = Object.keys(secretsCache).map(function(name) { return { name: name, maskedValue: maskValue(secretsCache[name]) }; });
+    var list = getSecretNames().map(function(name) { return { name: name, maskedValue: maskValue(secretsCache[name]) }; });
     return J(res, { secrets: list });
   }
   if (pn === '/api/secrets' && m === 'POST') {
@@ -1431,7 +1706,7 @@ async function handle(pn, m, req, res) {
     var name = sm[1];
     delete secretsCache[name];
     saveSecretsFile();
-    if (Object.keys(secretsCache).length === 0) {
+    if (getSecretNames().length === 0 && getCredentials().length === 0) {
       try { fs.unlinkSync(getSecretsFilePath()); } catch(e) {}
       secretsCache = null; masterKeyCache = null; secretsSalt = null;
     }
@@ -1440,329 +1715,127 @@ async function handle(pn, m, req, res) {
     return J(res, { ok: true });
   }
 
-  // AUTOPILOT
-  if (pn === '/api/autopilot' && m === 'GET') {
-    var schedules = readJSON(path.join(ROOT, 'config/autopilot.json')) || [];
-    return J(res, schedules);
+  // CREDENTIALS
+  if (pn === '/api/credentials' && m === 'GET') {
+    if (!secretsCache) return E(res, 'Vault is locked', 403);
+    var creds = getCredentials();
+    var list = creds.map(function(c) { return { service: c.service, username: c.username, maskedPassword: maskValue(c.password) }; });
+    return J(res, { credentials: list });
   }
-  if (pn === '/api/autopilot' && m === 'POST') {
+  if (pn === '/api/credentials' && m === 'POST') {
     var b = await parseBody(req);
-    if (!b.name || !b.prompt || !b.agentId || !b.intervalMinutes) return E(res, 'name, prompt, agentId, and intervalMinutes required');
-    var now = new Date();
-    var schedule = {
-      id: genId(),
-      name: b.name,
-      prompt: b.prompt,
-      agentId: b.agentId,
-      intervalMinutes: b.intervalMinutes,
-      enabled: true,
-      lastRun: null,
-      nextRun: new Date(now.getTime() + b.intervalMinutes * 60000).toISOString(),
-      createdAt: now.toISOString()
-    };
-    var schedules = readJSON(path.join(ROOT, 'config/autopilot.json')) || [];
-    schedules.push(schedule);
-    writeJSON(path.join(ROOT, 'config/autopilot.json'), schedules);
-    broadcast('autopilot');
-    return J(res, schedule, 201);
-  }
-
-  var apMatch = pn.match(/^\/api\/autopilot\/([^\/]+)$/);
-  if (apMatch && m === 'PUT') {
-    var apId = apMatch[1];
-    var schedules = readJSON(path.join(ROOT, 'config/autopilot.json')) || [];
-    var idx = schedules.findIndex(function(s) { return s.id === apId; });
-    if (idx < 0) return E(res, 'Not found', 404);
-    var b = await parseBody(req);
-    var merged = Object.assign({}, schedules[idx], b, { id: apId });
-    // If intervalMinutes changed and enabled, recompute nextRun
-    if (b.intervalMinutes !== undefined && merged.enabled) {
-      merged.nextRun = new Date(Date.now() + merged.intervalMinutes * 60000).toISOString();
+    if (!b.service || !b.username || !b.password) return E(res, 'service, username, and password required');
+    // Auto-create vault if needed
+    if (!secretsCache) {
+      if (!b.masterPassword) return E(res, 'Vault is locked. Provide masterPassword to create vault.', 403);
+      secretsSalt = crypto.randomBytes(32);
+      masterKeyCache = deriveKey(b.masterPassword, secretsSalt);
+      secretsCache = {};
     }
-    schedules[idx] = merged;
-    writeJSON(path.join(ROOT, 'config/autopilot.json'), schedules);
-    broadcast('autopilot');
-    return J(res, merged);
+    var creds = getCredentials();
+    for (var ci = 0; ci < creds.length; ci++) {
+      if (creds[ci].service.toLowerCase() === b.service.trim().toLowerCase()) return E(res, 'Credential for this service already exists');
+    }
+    creds.push({ service: b.service.trim(), username: b.username, password: b.password });
+    secretsCache._credentials = creds;
+    saveSecretsFile();
+    rebuildClaudeMd();
+    broadcast('secrets');
+    return J(res, { ok: true });
   }
-  if (apMatch && m === 'DELETE') {
-    var apId = apMatch[1];
-    var schedules = readJSON(path.join(ROOT, 'config/autopilot.json')) || [];
-    schedules = schedules.filter(function(s) { return s.id !== apId; });
-    writeJSON(path.join(ROOT, 'config/autopilot.json'), schedules);
-    broadcast('autopilot');
+  var cm = pn.match(/^\/api\/credentials\/(.+)$/);
+  if (cm && m === 'PUT') {
+    if (!secretsCache) return E(res, 'Vault is locked', 403);
+    var serviceName = decodeURIComponent(cm[1]);
+    var b = await parseBody(req);
+    var creds = getCredentials();
+    var found = false;
+    for (var ci = 0; ci < creds.length; ci++) {
+      if (creds[ci].service.toLowerCase() === serviceName.toLowerCase()) {
+        if (b.username !== undefined) creds[ci].username = b.username;
+        if (b.password !== undefined) creds[ci].password = b.password;
+        found = true;
+        break;
+      }
+    }
+    if (!found) return E(res, 'Credential not found', 404);
+    secretsCache._credentials = creds;
+    saveSecretsFile();
+    rebuildClaudeMd();
+    broadcast('secrets');
+    return J(res, { ok: true });
+  }
+  if (cm && m === 'DELETE') {
+    if (!secretsCache) return E(res, 'Vault is locked', 403);
+    var serviceName = decodeURIComponent(cm[1]);
+    var creds = getCredentials();
+    var newCreds = creds.filter(function(c) { return c.service.toLowerCase() !== serviceName.toLowerCase(); });
+    if (newCreds.length === creds.length) return E(res, 'Credential not found', 404);
+    secretsCache._credentials = newCreds;
+    if (newCreds.length === 0) delete secretsCache._credentials;
+    saveSecretsFile();
+    if (getSecretNames().length === 0 && getCredentials().length === 0) {
+      try { fs.unlinkSync(getSecretsFilePath()); } catch(e) {}
+      secretsCache = null; masterKeyCache = null; secretsSalt = null;
+    }
+    rebuildClaudeMd();
+    broadcast('secrets');
     return J(res, { ok: true });
   }
 
-  // UPDATES
+  // AUTOPILOT API - removed: schedules are now tasks with autopilot + interval fields
+
+  // UPDATES (delegated to lib/upgrade.js)
   if (pn === '/api/updates/check' && m === 'GET') {
-    var result = await checkForUpdates();
+    var result = await upgrade.checkForUpdates(sharedCtx);
     return J(res, result);
   }
+  if (pn === '/api/updates/status' && m === 'GET') {
+    return J(res, upgrade.getUpdateStatus(sharedCtx));
+  }
   if (pn === '/api/updates/upgrade' && m === 'POST') {
-    var result = await performUpgrade();
+    var body = await parseBody(req);
+    var result = await upgrade.performUpgrade(sharedCtx, { force: body && body.force });
+    broadcast('all');
+    return J(res, result, result.success ? 200 : (result.requiresForce ? 409 : 400));
+  }
+  if (pn === '/api/updates/rollback' && m === 'POST') {
+    var body = await parseBody(req);
+    var result = upgrade.rollback(sharedCtx, body && body.version);
     broadcast('all');
     return J(res, result, result.success ? 200 : 400);
   }
 
-  // SKILLS
+  // SKILLS (delegated to lib/skills.js)
   if (pn === '/api/skills' && m === 'GET') {
-    var catalog = readJSON(path.join(ROOT, 'config/skills-catalog.json')) || [];
-    var enabled = readJSON(path.join(ROOT, 'data/skills/enabled.json')) || {};
-    var skills = catalog.map(function(s) {
-      var deps = (s.systemDeps || []).map(function(dep) {
-        return { name: dep, installed: commandExists(dep) };
-      });
-      var missingDeps = deps.filter(function(d) { return !d.installed; }).map(function(d) { return d.name; });
-      var settingValues = {};
-      if (s.settings && s.settings.length) {
-        var sv = readJSON(path.join(ROOT, 'data/skills', s.id + '-settings.json'));
-        if (sv) {
-          // Mask secret values for display
-          s.settings.forEach(function(setting) {
-            if (sv[setting.key]) {
-              settingValues[setting.key] = setting.type === 'secret' ? '********' : sv[setting.key];
-            }
-          });
-        }
-      }
-      return Object.assign({}, s, {
-        enabled: !!enabled[s.id],
-        depsStatus: deps,
-        missingDeps: missingDeps,
-        settingValues: settingValues
-      });
-    });
-    return J(res, { skills: skills });
+    return J(res, skills.handleGetSkills(sharedCtx));
   }
 
-  // Skill settings
   var skillSettingsMatch = pn.match(/^\/api\/skills\/([^\/]+)\/settings$/);
   if (skillSettingsMatch && m === 'PUT') {
-    var ssId = skillSettingsMatch[1];
     var b = await parseBody(req);
-    var settingsPath = path.join(ROOT, 'data/skills', ssId + '-settings.json');
-    var existing = readJSON(settingsPath) || {};
-    // Merge — don't overwrite with masked values
-    for (var key in b) {
-      if (b[key] && b[key] !== '********') existing[key] = b[key];
-    }
-    writeJSON(settingsPath, existing);
-
-    // Update .mcp.json env vars with actual values
-    var catalog = readJSON(path.join(ROOT, 'config/skills-catalog.json')) || [];
-    var skill = catalog.find(function(s) { return s.id === ssId; });
-    if (skill && skill.type === 'mcp' && skill.mcpConfig && skill.mcpConfig.env) {
-      var mcpPath = path.join(ROOT, '.mcp.json');
-      var mcpData = readJSON(mcpPath) || { mcpServers: {} };
-      if (mcpData.mcpServers[ssId]) {
-        var env = {};
-        for (var envKey in skill.mcpConfig.env) {
-          var tmpl = skill.mcpConfig.env[envKey];
-          var match = tmpl.match(/^\$\{(.+)\}$/);
-          env[envKey] = match && existing[match[1]] ? existing[match[1]] : tmpl;
-        }
-        mcpData.mcpServers[ssId].env = env;
-        writeJSON(mcpPath, mcpData);
-      }
-    }
-
-    broadcast('skills');
-    return J(res, { ok: true });
+    return J(res, skills.handleSkillSettings(sharedCtx, skillSettingsMatch[1], b));
   }
 
   var skillMatch = pn.match(/^\/api\/skills\/([^\/]+)\/(enable|disable)$/);
   if (skillMatch && m === 'POST') {
-    var skillId = skillMatch[1];
-    var action = skillMatch[2];
-    var catalog = readJSON(path.join(ROOT, 'config/skills-catalog.json')) || [];
-    var skill = catalog.find(function(s) { return s.id === skillId; });
-    if (!skill) return E(res, 'Skill not found', 404);
+    var result = await skills.handleSkillToggle(sharedCtx, skillMatch[1], skillMatch[2]);
+    if (result.error) return E(res, result.error, result.status || 400);
+    return J(res, result, result.status || 200);
+  }
 
-    var enabledPath = path.join(ROOT, 'data/skills/enabled.json');
-    var enabled = readJSON(enabledPath) || {};
-
-    if (action === 'enable') {
-      // Step 1: Check and install system dependencies
-      var systemDeps = skill.systemDeps || [];
-      var depResults = [];
-      var depFailed = false;
-
-      for (var i = 0; i < systemDeps.length; i++) {
-        var dep = systemDeps[i];
-        if (commandExists(dep)) {
-          depResults.push({ dep: dep, status: 'already_installed' });
-        } else {
-          // Try to auto-install
-          var installRes = installSystemDep(dep);
-          depResults.push({ dep: dep, status: installRes.success ? 'installed' : 'failed', output: installRes.output });
-          if (!installRes.success) depFailed = true;
-        }
-      }
-
-      if (depFailed) {
-        var missing = depResults.filter(function(r) { return r.status === 'failed'; });
-        var missingNames = missing.map(function(r) { return r.dep; }).join(', ');
-        var details = missing.map(function(r) { return r.dep + ': ' + r.output; }).join('\n');
-        return J(res, {
-          ok: false,
-          error: 'Missing system dependencies: ' + missingNames,
-          details: details,
-          depResults: depResults
-        }, 500);
-      }
-
-      // Step 2: Ensure npm is available
-      if (!commandExists('npm')) {
-        return J(res, { ok: false, error: 'npm is not installed. Please install Node.js from https://nodejs.org' }, 500);
-      }
-
-      // Step 3: Install npm packages (for npm-based skills)
-      if (skill.packages && skill.packages.length > 0) {
-        var installResult = await new Promise(function(resolve) {
-          var args = ['install', '--save'].concat(skill.packages);
-          var proc = spawn('npm', args, { cwd: ROOT, shell: true, timeout: 120000 });
-          var output = '';
-          proc.stdout.on('data', function(ch) { output += ch; });
-          proc.stderr.on('data', function(ch) { output += ch; });
-          proc.on('close', function(code) {
-            resolve({ success: code === 0, output: output });
-          });
-          proc.on('error', function(err) {
-            resolve({ success: false, output: err.message });
-          });
-        });
-
-        if (!installResult.success) {
-          var npmOutput = installResult.output || '';
-          var hint = '';
-          if (npmOutput.match(/gyp ERR|node-gyp|python/i)) {
-            hint = ' You may need Python installed for native module compilation.';
-            if (!commandExists('python') && !commandExists('python3')) {
-              hint += ' Python was not found on your system — installing it may fix this.';
-            }
-          }
-          if (npmOutput.match(/EACCES|permission denied/i)) {
-            hint = ' Try running with administrator/sudo privileges.';
-          }
-          if (npmOutput.match(/ENOTFOUND|network|ETIMEDOUT/i)) {
-            hint = ' Check your internet connection.';
-          }
-          return J(res, { ok: false, error: 'npm install failed.' + hint, output: npmOutput }, 500);
-        }
-      }
-
-      // Step 3b: Git-based skills — clone repo and build
-      if (skill.gitRepo) {
-        var skillDir = path.join(ROOT, 'data/skills', skill.id);
-        fs.mkdirSync(skillDir, { recursive: true });
-
-        // Clone if not already cloned
-        if (!fs.existsSync(path.join(skillDir, '.git'))) {
-          var cloneResult = await new Promise(function(resolve) {
-            var proc = spawn('git', ['clone', skill.gitRepo, '.'], { cwd: skillDir, shell: true, timeout: 120000 });
-            var output = '';
-            proc.stdout.on('data', function(ch) { output += ch; });
-            proc.stderr.on('data', function(ch) { output += ch; });
-            proc.on('close', function(code) { resolve({ success: code === 0, output: output }); });
-            proc.on('error', function(err) { resolve({ success: false, output: err.message }); });
-          });
-          if (!cloneResult.success) {
-            return J(res, { ok: false, error: 'Git clone failed.', details: cloneResult.output }, 500);
-          }
-        }
-
-        // Build
-        if (skill.buildCmd) {
-          var buildResult = await new Promise(function(resolve) {
-            var proc = spawn(skill.buildCmd, [], { cwd: skillDir, shell: true, timeout: 180000 });
-            var output = '';
-            proc.stdout.on('data', function(ch) { output += ch; });
-            proc.stderr.on('data', function(ch) { output += ch; });
-            proc.on('close', function(code) { resolve({ success: code === 0, output: output }); });
-            proc.on('error', function(err) { resolve({ success: false, output: err.message }); });
-          });
-          if (!buildResult.success) {
-            return J(res, { ok: false, error: 'Build failed.', details: buildResult.output }, 500);
-          }
-        }
-      }
-
-      // For MCP skills: write to .mcp.json
-      if (skill.type === 'mcp' && skill.mcpConfig) {
-        var mcpPath = path.join(ROOT, '.mcp.json');
-        var mcpData = readJSON(mcpPath) || { mcpServers: {} };
-        // Resolve env vars from secrets for git-based skills
-        var mcpEntry = JSON.parse(JSON.stringify(skill.mcpConfig));
-        if (skill.gitRepo && mcpEntry.args) {
-          mcpEntry.args = mcpEntry.args.map(function(a) {
-            return a.replace(/^data\/skills\//, path.join(ROOT, 'data/skills/').replace(/\\/g, '/') + '/').replace(/\\/g, '/');
-          });
-        }
-        mcpData.mcpServers[skill.id] = mcpEntry;
-        writeJSON(mcpPath, mcpData);
-      }
-
-      // For CLI skills: ensure data/skills/<id>/ directory
-      if (skill.type === 'cli') {
-        fs.mkdirSync(path.join(ROOT, 'data/skills', skill.id), { recursive: true });
-      }
-
-      enabled[skillId] = true;
-      writeJSON(enabledPath, enabled);
-      broadcast('skills');
-      return J(res, { ok: true, installed: true });
-
-    } else {
-      // Disable
-      // For MCP skills: remove from .mcp.json
-      if (skill.type === 'mcp') {
-        var mcpPath = path.join(ROOT, '.mcp.json');
-        var mcpData = readJSON(mcpPath) || { mcpServers: {} };
-        delete mcpData.mcpServers[skill.id];
-        writeJSON(mcpPath, mcpData);
-      }
-
-      enabled[skillId] = false;
-      writeJSON(enabledPath, enabled);
-      broadcast('skills');
-      return J(res, { ok: true });
-    }
+  // GITHUB STATUS
+  if (pn === '/api/skills/github/status' && m === 'GET') {
+    var ghResult = await skills.getGitHubStatus(sharedCtx);
+    return J(res, ghResult);
   }
 
   // SCREEN RECORDER CONTROL
   var recMatch = pn.match(/^\/api\/skills\/screen-recorder\/(start|stop|status)$/);
   if (recMatch) {
-    var recAction = recMatch[1];
-    var recScript = path.join(ROOT, 'data/skills/screen-recorder/record.js');
-    if (!fs.existsSync(recScript)) return E(res, 'Screen recorder not installed', 404);
-
-    var recArgs = [recScript, recAction];
-    // For start, pass through query params as flags
-    if (recAction === 'start' && m === 'POST') {
-      var body = await new Promise(function(resolve) {
-        var d = ''; req.on('data', function(c) { d += c; }); req.on('end', function() {
-          try { resolve(JSON.parse(d)); } catch(e) { resolve({}); }
-        });
-      });
-      if (body.fps) recArgs.push('--fps', String(body.fps));
-      if (body.output) recArgs.push('--output', String(body.output));
-      if (body.window) recArgs.push('--window', String(body.window));
-      if (body.region) recArgs.push('--region', String(body.region));
-    }
-
-    var recResult = await new Promise(function(resolve) {
-      var proc = spawn('node', recArgs, { cwd: ROOT, shell: true, timeout: 10000 });
-      var output = '';
-      proc.stdout.on('data', function(ch) { output += ch; });
-      proc.stderr.on('data', function(ch) { output += ch; });
-      proc.on('close', function(code) {
-        try { resolve(JSON.parse(output)); } catch(e) { resolve({ ok: code === 0, output: output }); }
-      });
-      proc.on('error', function(err) {
-        resolve({ ok: false, error: err.message });
-      });
-    });
-
+    var recBody = (recMatch[1] === 'start' && m === 'POST') ? await parseBody(req) : null;
+    var recResult = await skills.handleScreenRecorder(sharedCtx, recMatch[1], recBody);
+    if (recResult.error && recResult.status) return E(res, recResult.error, recResult.status);
     return J(res, recResult, recResult.error ? 500 : 200);
   }
 
@@ -1783,10 +1856,24 @@ async function handle(pn, m, req, res) {
     });
   }
 
-  // MEDIA FILE SERVING
+  // HEALTH (delegated to lib/health.js)
+  if (pn === '/api/health' && m === 'GET') {
+    return J(res, health.validateSystem(sharedCtx));
+  }
+
+  // SYSTEM NOTICES (delegated to lib/health.js)
+  if (pn === '/api/system-notices' && m === 'GET') {
+    return J(res, health.listNotices(sharedCtx));
+  }
+  var noticeMatch = pn.match(/^\/api\/system-notices\/([^\/]+)\/dismiss$/);
+  if (noticeMatch && m === 'POST') {
+    return J(res, health.dismissNotice(sharedCtx, decodeURIComponent(noticeMatch[1])));
+  }
+
+  // MEDIA FILE SERVING (supports subdirectories like social-images/)
   if (pn.startsWith('/api/media/files/') && m === 'GET') {
     const filename = decodeURIComponent(pn.slice('/api/media/files/'.length));
-    if (filename.indexOf('..') >= 0 || filename.indexOf('/') >= 0 || filename.indexOf('\\') >= 0) {
+    if (filename.indexOf('..') >= 0 || filename.indexOf('\\') >= 0) {
       res.writeHead(403); return res.end('Forbidden');
     }
     const filePath = path.join(ROOT, 'data', 'media', filename);
@@ -1809,10 +1896,11 @@ async function handle(pn, m, req, res) {
     const b = await parseBody(req);
     if (!b.filename) return E(res, 'filename required');
     const filename = b.filename;
-    if (filename.indexOf('..') >= 0 || filename.indexOf('/') >= 0 || filename.indexOf('\\') >= 0) {
+    if (filename.indexOf('..') >= 0 || filename.indexOf('\\') >= 0) {
       return E(res, 'Invalid filename', 403);
     }
     const filePath = path.join(ROOT, 'data', 'media', filename);
+    if (!filePath.startsWith(path.join(ROOT, 'data', 'media'))) return E(res, 'Forbidden', 403);
     if (!fs.existsSync(filePath)) return E(res, 'File not found', 404);
     try {
       const plat = process.platform;
@@ -1825,6 +1913,26 @@ async function handle(pn, m, req, res) {
       }
     } catch(e) { /* explorer returns non-zero sometimes, ignore */ }
     return J(res, { ok: true });
+  }
+
+  // RAW BINARY FILE SERVING (for inline images, etc.)
+  if (pn.startsWith('/api/raw/') && m === 'GET') {
+    const rawRel = decodeURIComponent(pn.slice('/api/raw/'.length));
+    // Only allow data/ and temp/ directories
+    if (!rawRel.startsWith('data/') && !rawRel.startsWith('temp/')) {
+      res.writeHead(403); return res.end('Forbidden: only data/ and temp/ allowed');
+    }
+    const rawResolved = safePath(rawRel);
+    if (!rawResolved) { res.writeHead(403); return res.end('Forbidden'); }
+    try {
+      const rawData = fs.readFileSync(rawResolved);
+      const rawExt = path.extname(rawResolved).toLowerCase();
+      res.writeHead(200, {
+        'Content-Type': MIME[rawExt] || 'application/octet-stream',
+        'Cache-Control': 'no-cache'
+      });
+      return res.end(rawData);
+    } catch(e) { res.writeHead(404); return res.end('Not found'); }
   }
 
   // LEGACY FILE READ
@@ -1885,75 +1993,9 @@ server.on('upgrade', function(req, socket, head) {
   var pathname = urlObj.pathname;
 
   if (pathname === '/ws/terminal') {
-    // ── Terminal WebSocket ──
+    // ── Terminal WebSocket (delegated to lib/pty.js) ──
     if (!doWsHandshake(req, socket)) return;
-
-    var sessionId = urlObj.searchParams.get('session') || genId();
-    var termSessionId = sessionId; // capture for closures
-    var buf = Buffer.alloc(0);
-
-    // Try to reattach or create new
-    var session = termSessions.get(sessionId);
-    if (session) {
-      reattachTermSession(sessionId, socket);
-      wsSend(socket, { type: 'terminal-ready', session: sessionId, reattached: true });
-    } else {
-      session = createTermSession(sessionId, socket);
-      if (session) {
-        wsSend(socket, { type: 'terminal-ready', session: sessionId, reattached: false });
-      }
-    }
-
-    socket.on('data', function(data) {
-      buf = Buffer.concat([buf, data]);
-      while (buf.length > 0) {
-        var frame = parseWsFrame(buf);
-        if (!frame) break;
-        buf = buf.slice(frame.totalLen);
-
-        if (frame.opcode === 0x8) {
-          // Detach session on close (keep PTY alive)
-          detachTermSession(termSessionId);
-          try {
-            var closeFrame = Buffer.alloc(2);
-            closeFrame[0] = 0x88; closeFrame[1] = 0;
-            socket.write(closeFrame);
-          } catch(e) {}
-          socket.destroy();
-          return;
-        }
-
-        if (frame.opcode === 0x9) {
-          var pong = Buffer.alloc(2);
-          pong[0] = 0x8a; pong[1] = 0;
-          try { socket.write(pong); } catch(e) {}
-          continue;
-        }
-
-        if (frame.opcode === 0x1) {
-          try {
-            var msg = JSON.parse(frame.payload.toString('utf8'));
-            var s = termSessions.get(termSessionId);
-            if (msg.type === 'input' && s && s.pty) {
-              s.pty.write(msg.data);
-            } else if (msg.type === 'resize' && s && s.pty) {
-              try { s.pty.resize(msg.cols || 120, msg.rows || 30); } catch(e) {}
-            } else if (msg.type === 'restart') {
-              // Kill existing, create new
-              if (s) { try { s.pty.kill(); } catch(e) {} termSessions.delete(termSessionId); }
-              termSessionId = genId();
-              var newSession = createTermSession(termSessionId, socket);
-              if (newSession) {
-                wsSend(socket, { type: 'terminal-ready', session: termSessionId, reattached: false });
-              }
-            }
-          } catch(e) {}
-        }
-      }
-    });
-
-    socket.on('close', function() { detachTermSession(termSessionId); });
-    socket.on('error', function() { detachTermSession(termSessionId); });
+    ptyMod.handleTerminalWs(socket, urlObj, sharedCtx);
     return;
   }
 
@@ -2000,47 +2042,176 @@ server.on('upgrade', function(req, socket, head) {
 });
 
 // ── Autopilot Scheduler Engine ───────────────────────────
+function computeNextRun(from, interval, unit) {
+  var ms = interval * ({ minutes: 60000, hours: 3600000, days: 86400000 }[unit] || 60000);
+  return new Date(from.getTime() + ms).toISOString();
+}
+
 setInterval(function() {
-  var schedules = readJSON(path.join(ROOT, 'config/autopilot.json'));
-  if (!schedules || !schedules.length) return;
+  var index = readJSON(path.join(ROOT, 'data/tasks/_index.json'));
+  if (!index || !index.tasks) return;
   var now = new Date();
   var changed = false;
-  schedules.forEach(function(sched) {
-    if (!sched.enabled || !sched.nextRun) return;
-    if (new Date(sched.nextRun) > now) return;
 
-    // Find an active terminal PTY session to write to
+  index.tasks.forEach(function(entry) {
+    // Only process recurring autopilot tasks
+    if (!entry.autopilot || !entry.interval || !entry.intervalUnit) return;
+    if (entry.status === 'cancelled') return;
+
+    // Read full task
+    var taskPath = path.join(ROOT, 'data/tasks', entry.id, 'task.json');
+    var task = readJSON(taskPath);
+    if (!task) return;
+
+    // Skip if not due yet
+    if (!task.nextRun || new Date(task.nextRun) > now) return;
+
+    // Skip if still running (overlap protection) or on hold
+    if (task.status === 'in_progress' || task.status === 'hold' || task.status === 'planning' || task.status === 'pending_approval') return;
+
+    // Reset task to in_progress for next run
+    task.status = 'in_progress';
+    task.lastRun = now.toISOString();
+    task.nextRun = computeNextRun(now, task.interval, task.intervalUnit);
+    task.updatedAt = now.toISOString();
+    task.runCount = (task.runCount || 0) + 1;
+    if (!task.progressLog) task.progressLog = [];
+    task.progressLog.push({
+      message: 'Recurring autopilot triggered (run #' + task.runCount + ')',
+      agentId: 'system',
+      timestamp: now.toISOString()
+    });
+    writeJSON(taskPath, task);
+
+    // Update index entry
+    entry.status = 'in_progress';
+    changed = true;
+
+    // Send prompt to terminal PTY
     var sentTo = null;
     termSessions.forEach(function(session, sid) {
       if (sentTo) return;
       if (session.pty) {
-        var prompt = sched.prompt;
-        if (sched.agentId !== 'orchestrator') {
-          // Resolve agent name from registry
+        var prompt = task.description || task.title;
+        // Append task ID so orchestrator can track it
+        prompt = prompt + ' [Task ID: ' + task.id + ']';
+        if (task.assignedTo && task.assignedTo !== 'orchestrator') {
           var reg = readJSON(path.join(ROOT, 'agents/_registry.json')) || { agents: [] };
-          var agent = reg.agents.find(function(a) { return a.id === sched.agentId; });
-          var agentName = agent ? agent.name : sched.agentId;
-          prompt = 'Work as agent ' + agentName + ' (ID: ' + sched.agentId + '): ' + prompt;
+          var agent = reg.agents.find(function(a) { return a.id === task.assignedTo; });
+          var agentName = agent ? agent.name : task.assignedTo;
+          prompt = 'Work as agent ' + agentName + ' (ID: ' + task.assignedTo + '): ' + prompt;
         }
         session.pty.write(prompt + '\r');
         sentTo = sid;
       }
     });
 
-    // Update timing regardless of whether a terminal was found
-    sched.lastRun = now.toISOString();
-    sched.nextRun = new Date(now.getTime() + sched.intervalMinutes * 60000).toISOString();
-    changed = true;
+    // If no terminal found, set blocker
+    if (!sentTo) {
+      task.blocker = 'No active terminal session found - cannot send autopilot prompt';
+      task.status = 'in_progress';
+      if (!task.progressLog) task.progressLog = [];
+      task.progressLog.push({
+        message: 'BLOCKER: No active terminal session found',
+        agentId: 'system',
+        timestamp: now.toISOString()
+      });
+      writeJSON(taskPath, task);
+      entry.blocker = task.blocker;
+    }
   });
+
   if (changed) {
-    writeJSON(path.join(ROOT, 'config/autopilot.json'), schedules);
-    broadcast('autopilot');
+    writeJSON(path.join(ROOT, 'data/tasks/_index.json'), index);
+    broadcast('tasks');
   }
 }, 60000);
 
 // ── Startup ──────────────────────────────────────────────
 fs.mkdirSync(path.join(ROOT, 'data/knowledge'), { recursive: true });
 fs.mkdirSync(path.join(ROOT, 'temp'), { recursive: true });
+fs.mkdirSync(path.join(ROOT, 'config'), { recursive: true });
+
+// Ensure default team-rules (Agent Operating System) on fresh install
+(function ensureDefaultTeamRules() {
+  var rulesPath = path.join(ROOT, 'config/team-rules.md');
+  if (fs.existsSync(rulesPath)) return;
+  var defaultRules = '# Team Rules\n\n' +
+    '## #1 Rule: Mission-Driven Execution\n' +
+    '- The team exists to EXECUTE and DELIVER results. Not plans. Not briefs. Not checklists. Results.\n' +
+    '- Agents must DO the work, not describe how to do it\n' +
+    '- Only flag genuine blockers (missing credentials, need owner\'s personal account login)\n' +
+    '- Never set pending_approval for work that was already approved upstream - just finish it\n\n' +
+    '## Delegation & Task Tracking\n' +
+    '- The orchestrator MUST delegate work to agents via tasks - never do the actual work itself\n' +
+    '- All work must be tracked as tasks in the dashboard so the owner has full visibility\n' +
+    '- Create tasks via `POST /api/tasks` with the appropriate agent assigned\n\n' +
+    '## Task Lifecycle (CORRECTED FLOW)\n\n' +
+    '### Flow: Prepare -> Review -> Execute -> Verify -> Close\n\n' +
+    '1. **Planning** (planning): Agent creates plan/materials\n' +
+    '2. **Submit for review** (pending_approval): Agent fills version.json + sets pending_approval\n' +
+    '3. **Owner reviews**: Accept (go execute) or Improve (revise)\n' +
+    '4. **Execute** (in_progress): Agent executes the approved work (posts content, deploys code, etc.)\n' +
+    '5. **Submit proof** (pending_approval): Agent updates version with execution proof + sets pending_approval\n' +
+    '6. **Owner verifies**: Checks proof (URL works, code deployed, etc.) and closes\n\n' +
+    '### Status Meanings\n' +
+    '- **Planning** (`planning`): Agent creating plan/materials before first review\n' +
+    '- **Working** (`in_progress`): Agent executing after acceptance\n' +
+    '- **Pending** (`pending_approval`): Either materials ready for review OR execution proof ready for verify\n' +
+    '- **Accepted** (`accepted`): Owner approved materials - triggers agent execution immediately\n' +
+    '- **Improve** (`revision_needed`): Owner sent feedback - agent revises, resubmits to pending\n' +
+    '- **Closed** (`closed`): Owner verified execution proof. Terminal state.\n' +
+    '- **Hold** (`hold`): Paused - do not work on until the owner releases it.\n' +
+    '- **Cancelled** (`cancelled`): Abandoned - no further action.\n\n' +
+    '## Agent Execution Checklist\n\n' +
+    '### Phase 1: Prepare\n' +
+    '1. Set status to `in_progress`\n' +
+    '2. Log progress: "Starting: {what I\'m preparing}"\n' +
+    '3. Create materials (plan, code, research, etc.)\n' +
+    '4. Save materials to `data/tasks/{id}/v{n}/`\n' +
+    '5. Update version.json: `content` (REQUIRED), `deliverable` (file paths)\n' +
+    '6. Set status to `pending_approval`\n' +
+    '7. STOP and wait for owner review\n\n' +
+    '### Phase 2: Execute (after owner accepts)\n' +
+    '8. Set status to `in_progress`\n' +
+    '9. Log progress: "Executing: {what I\'m doing}"\n' +
+    '10. Execute the approved work\n' +
+    '11. If blocker: `PUT /api/tasks/{id} {"blocker": "reason"}` and STOP\n' +
+    '12. Update version.json: `content` (execution summary), `result` (proof - URLs, screenshots)\n' +
+    '13. Set status to `pending_approval`\n\n' +
+    '### Blocker Protocol\n' +
+    '- Hit a blocker? Set blocker field immediately: `PUT /api/tasks/{id} {"blocker": "reason"}`\n' +
+    '- Blocker persists with red glow until explicitly cleared\n' +
+    '- Do NOT keep working past a blocker - set it and stop\n' +
+    '- When unblocked: orchestrator clears field and relaunches agent\n\n' +
+    '### Required proof by task type\n' +
+    '- **Content/Social**: `result` = published URL (mandatory)\n' +
+    '- **Development**: `result` = file paths changed, test results, or PR URL\n' +
+    '- **Research**: `deliverable` = report file path in version folder\n' +
+    '- **Operations**: `result` = verification or outcome description\n\n' +
+    '## Deliverable Tracking (MANDATORY)\n\n' +
+    'Every completed task MUST have visible outcomes in the task detail page.\n' +
+    '- Server rejects pending_approval with empty version content\n' +
+    '- Never close a content task without the published URL\n' +
+    '- Save all deliverable files to `data/tasks/{taskId}/v{n}/`\n\n' +
+    '## Round Table Protocol\n\n' +
+    'Round tables are **execution-first**. The orchestrator acts before it reports.\n\n' +
+    '### Phase 1: Execute (do this BEFORE reporting)\n' +
+    '1. **Launch agents on accepted tasks** - owner approved materials, agent must EXECUTE (not auto-close)\n' +
+    '2. **Launch agents on revision_needed tasks** - owner already gave feedback, agent must act\n' +
+    '3. **Launch agents on planning tasks** that are ready (assigned, dependencies met)\n' +
+    '4. **Clear blockers** - read blocker field on tasks, report the text directly\n\n' +
+    '### Phase 2: Surface blockers\n' +
+    '- Tasks with `blocker` field set - report the blocker text directly\n' +
+    '- Tasks in_progress with no recent progress - may be stalled\n' +
+    '- Tasks that need owner input (pending_approval)\n\n' +
+    '### Phase 3: Report\n' +
+    '- Brief status summary\n' +
+    '- What was just executed\n' +
+    '- What needs the owner\'s decision\n';
+  writeText(rulesPath, defaultRules);
+  console.log('  Default team rules (Agent Operating System) created.');
+})();
 
 // Auto-cleanup stale temp files if configured
 (function() {
@@ -2072,21 +2243,54 @@ fs.mkdirSync(path.join(ROOT, 'temp'), { recursive: true });
 
 ensureOrchestrator();
 
+// ── Migrations (from lib/migrations.js) ──────────────────
+var migrationResult = migrations.runPendingMigrations(sharedCtx);
+if (migrationResult.ran > 0) {
+  try { rebuildClaudeMd(); } catch(e) {}
+}
+
+// ── Interrupted upgrade check ────────────────────────────
+var interruptedUpgrade = upgrade.checkInterruptedUpgrade(sharedCtx);
+if (interruptedUpgrade) {
+  console.log('\n  WARNING: Interrupted upgrade detected!');
+  console.log('  Current version: ' + interruptedUpgrade.currentVersion);
+  if (interruptedUpgrade.migrationFailed) {
+    console.log('  Migration failed: ' + interruptedUpgrade.migrationFailed.migration + ' - ' + interruptedUpgrade.migrationFailed.error);
+  }
+  if (interruptedUpgrade.availableBackups.length > 0) {
+    console.log('  Available backups: ' + interruptedUpgrade.availableBackups.join(', '));
+    console.log('  Use POST /api/updates/rollback to restore.');
+  }
+  console.log('');
+}
+
+// ── Health Validation (from lib/health.js) ───────────────
+var healthResult = health.validateSystem(sharedCtx);
+if (healthResult.issues.length > 0) {
+  console.log('  System health: ' + healthResult.status.toUpperCase());
+  for (var hi = 0; hi < healthResult.issues.length; hi++) {
+    var issue = healthResult.issues[hi];
+    var prefix = issue.level === 'error' ? '  ERROR' : issue.level === 'warning' ? '  WARN ' : '  INFO ';
+    console.log(prefix + ' [' + issue.check + '] ' + issue.message);
+  }
+  console.log('');
+} else {
+  console.log('  System health: OK');
+}
+
 (async function() {
   var envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : null;
   var configPort = getConfiguredPort();
-  var requestedPort = envPort || configPort || 3777;
+  var requestedPort = envPort || configPort || 3796;
 
-  // If the requested port is busy, find the next free one
-  if (await isPortFree(requestedPort)) {
-    PORT = requestedPort;
-  } else {
-    PORT = await findFreePort(requestedPort + 1);
-    console.log('  Port ' + requestedPort + ' is busy, using ' + PORT + ' instead.');
+  // Check if port is available - fail loudly if busy (never auto-switch)
+  if (!(await isPortFree(requestedPort))) {
+    console.error('\n  ERROR: Port ' + requestedPort + ' is already in use.');
+    console.error('  TeamHero requires this port. Please free it and try again.');
+    console.error('  To find what is using it: lsof -i :' + requestedPort + ' (macOS/Linux) or netstat -ano | findstr ' + requestedPort + ' (Windows)\n');
+    process.exit(1);
   }
 
-  // Save the port so this instance reuses it on restart
-  if (!envPort) savePort(PORT);
-
+  PORT = requestedPort;
   server.listen(PORT, function() { console.log('\n  Agent Team Portal running at http://localhost:' + PORT + '\n'); });
 })();

@@ -66,20 +66,20 @@ echo        Checking for updates (contacting npm registry)...
 for /f "tokens=*" %%v in ('npm view @anthropic-ai/claude-code version 2^>NUL') do set "LATEST_VER=%%v"
 if not defined LATEST_VER (
     echo        Could not reach npm registry. Skipping update check.
-    goto START_APP
+    goto INSTALL_DEPS
 )
 echo %CUR_VER% | findstr /c:"%LATEST_VER%" 1>NUL 2>NUL
 if not errorlevel 1 (
     echo        Already on latest version.
-    goto START_APP
+    goto INSTALL_DEPS
 )
 echo        Update available: %LATEST_VER%
 choice /m "        Update Claude CLI now"
-if errorlevel 2 goto START_APP
+if errorlevel 2 goto INSTALL_DEPS
 echo        Updating...
 call npm install -g @anthropic-ai/claude-code@latest
 echo        Done.
-goto START_APP
+goto INSTALL_DEPS
 
 :NO_CLAUDE
 echo        Claude CLI is NOT installed.
@@ -133,9 +133,21 @@ if defined SKIP_CLAUDE (
     echo  Claude CLI not installed. Command Center won't work until installed.
 )
 
-echo  Press any key to stop the server and exit...
-pause 1>NUL
+echo  Server will auto-stop when CLI session ends.
+echo  Or press any key to stop manually...
+echo.
+
+:WAIT_LOOP
+tasklist /fi "WINDOWTITLE eq %SERVER_TITLE%" 2>NUL | findstr /i "node" 1>NUL 2>NUL
+if errorlevel 1 goto SERVER_GONE
+choice /t 2 /d N /n /c YN 1>NUL 2>NUL
+if not errorlevel 2 goto CLEANUP
+goto WAIT_LOOP
 
 :CLEANUP
 taskkill /f /fi "WINDOWTITLE eq %SERVER_TITLE%" 1>NUL 2>NUL
+goto :EOF
+
+:SERVER_GONE
+echo  Server stopped. Closing.
 goto :EOF

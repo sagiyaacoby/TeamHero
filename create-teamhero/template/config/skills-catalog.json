@@ -48,5 +48,32 @@
       { "key": "TRELLO_API_TOKEN", "label": "Trello API Token", "type": "secret", "required": true, "help": "Generate a token at https://trello.com/1/authorize?expiration=never&scope=read,write&response_type=token&key=YOUR_API_KEY" },
       { "key": "TRELLO_BOARD_ID", "label": "Default Board ID", "type": "text", "required": false, "help": "Optional. The default Trello board ID to operate on." }
     ]
+  },
+  {
+    "id": "remotion",
+    "name": "Remotion Video",
+    "description": "Create and render videos programmatically using React components. Build intros, demos, social clips, and promotional videos with code.",
+    "icon": "\ud83c\udfa5",
+    "type": "cli",
+    "packages": ["remotion", "@remotion/cli", "@remotion/bundler", "@remotion/renderer"],
+    "scripts": {
+      "render": "npx remotion render",
+      "preview": "npx remotion preview",
+      "status": "npx remotion --version"
+    },
+    "docs": "https://www.remotion.dev/docs"
+  },
+  {
+    "id": "github",
+    "name": "GitHub",
+    "description": "Manage GitHub repos, issues, PRs, releases, and actions using the gh CLI. Agents get structured access to your repositories.",
+    "icon": "\ud83d\udc19",
+    "type": "cli",
+    "packages": [],
+    "systemDeps": ["gh"],
+    "settings": [
+      { "key": "GITHUB_DEFAULT_REPO", "label": "Default Repository", "type": "text", "required": false, "help": "owner/repo format, e.g. sagiyak/TeamHero" }
+    ],
+    "contextSnippet": "## GitHub (gh CLI)\n\nThe GitHub skill is enabled. Use `gh` CLI for all GitHub operations.\n\n### Common commands\n- `gh issue list/create/view/edit/close`\n- `gh pr list/create/view/merge/checks`\n- `gh release list/create/upload/delete`\n- `gh run list/view/watch`\n- `gh api <endpoint>` for any REST/GraphQL call\n\n### Rules\n- Always use `--json` flag for structured output (e.g. `gh issue list --json number,title,state`)\n- Default repo: {GITHUB_DEFAULT_REPO}\n- Use `gh auth status` to verify authentication\n"
   }
 ]

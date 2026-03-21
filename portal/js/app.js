@@ -2959,6 +2959,18 @@
     setTimeout(function() { location.reload(); }, 4000);
   }
 
+  function runHealthCheck() {
+    if (!termWs || termWs.readyState !== 1) {
+      toast('Terminal not connected - open the Command Center first', 'warning');
+      return;
+    }
+    var msg = 'A system health check was requested. Call GET /api/health to verify all system components. Check for any failures or warnings and report results. If any issues are found, attempt to fix them by rebuilding context (POST /api/rebuild-context). Report the final status.\r';
+    termWs.send(JSON.stringify({ type: 'input', data: msg }));
+    toast('Health check sent to CLI');
+    // Switch to command center so user can see the output
+    navigate('command-center');
+  }
+
   async function resetSystem() {
     var ok = await confirmAction({
       title: 'Reset Entire System',
@@ -3942,6 +3954,7 @@
         return false;
       }
       if (ev.type === 'keydown' && ev.ctrlKey && ev.key === 'v') {
+        ev.preventDefault();
         navigator.clipboard.readText().then(function(text) {
           if (text && termWs && termWs.readyState === 1) {
             termWs.send(JSON.stringify({ type: 'input', data: text }));
@@ -5799,6 +5812,7 @@
     deleteCredential: deleteCredential,
     checkForUpdates: checkForUpdates,
     performUpgrade: performUpgrade,
+    runHealthCheck: runHealthCheck,
     closeUpgradeModal: closeUpgradeModal,
     toggleUpgradeBtn: toggleUpgradeBtn,
     confirmUpgrade: confirmUpgrade,

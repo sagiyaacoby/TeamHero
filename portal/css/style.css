@@ -2039,6 +2039,67 @@ body {
   margin-left: auto;
 }
 
+/* ── Settings Form Elements ───────────────────────── */
+/* Ensure ALL inputs, buttons, selects, textareas in settings use dark theme */
+.settings-content input[type="text"],
+.settings-content input[type="password"],
+.settings-content input[type="email"],
+.settings-content input[type="url"],
+.settings-content input[type="number"],
+.settings-content input[type="search"],
+.settings-content textarea,
+.settings-content select {
+  background: var(--bg) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 6px !important;
+  padding: 8px 12px !important;
+  font-size: 13px !important;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.settings-content input[type="text"]:focus,
+.settings-content input[type="password"]:focus,
+.settings-content input[type="email"]:focus,
+.settings-content input[type="url"]:focus,
+.settings-content input[type="number"]:focus,
+.settings-content input[type="search"]:focus,
+.settings-content textarea:focus,
+.settings-content select:focus {
+  border-color: var(--focus-border) !important;
+  box-shadow: 0 0 0 2px rgba(136, 136, 136, 0.15);
+}
+/* Override browser autofill white background */
+.settings-content input:-webkit-autofill,
+.settings-content input:-webkit-autofill:hover,
+.settings-content input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 30px var(--bg) inset !important;
+  -webkit-text-fill-color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+}
+.settings-content input::placeholder,
+.settings-content textarea::placeholder {
+  color: var(--text-dim) !important;
+}
+/* Settings buttons - ensure dark theme */
+.settings-content .btn {
+  font-family: inherit;
+}
+.settings-content .btn-primary {
+  background: #ffffff;
+  color: #131519;
+  border-color: transparent;
+  font-weight: 600;
+}
+.settings-content .btn-primary:hover {
+  background: #e0e0e0;
+}
+/* Checkbox styling in settings */
+.settings-content input[type="checkbox"] {
+  accent-color: var(--green);
+}
+
 /* ── Settings Danger Zone ─────────────────────────── */
 .settings-danger-zone {
   margin-top: 24px;

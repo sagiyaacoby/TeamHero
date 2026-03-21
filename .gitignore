@@ -8,6 +8,8 @@ config/credentials.json
 config/secrets.enc
 config/secrets.json
 config/.upgrade-pending
+config/agent-os.md
+config/autopilot.json
 *.bak
 
 # Agent data (generated at runtime via API, not platform files)

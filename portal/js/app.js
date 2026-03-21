@@ -3587,8 +3587,21 @@
         // Hide actions, show done message
         var actionsEl = document.getElementById('upgrade-actions');
         if (actionsEl) actionsEl.style.display = 'none';
-        // Auto-close modal after a moment
-        setTimeout(function() { closeUpgradeModal(); }, 2000);
+        // Set flag so health check auto-triggers after reload
+        localStorage.setItem('pendingHealthCheck', '1');
+        // Auto-close modal, then poll for server to come back and reload
+        setTimeout(function() {
+          closeUpgradeModal();
+          toast('Waiting for server to restart...');
+          var pollInterval = setInterval(function() {
+            fetch('/api/health').then(function(r) {
+              if (r.ok) {
+                clearInterval(pollInterval);
+                location.reload();
+              }
+            }).catch(function() { /* server still down, keep polling */ });
+          }, 2000);
+        }, 2000);
       } else {
         upgradeFailed = true;
         upgradeError = result.message || 'Upgrade failed';
@@ -4746,6 +4759,24 @@
         silentUpdateCheck();
         // Check post-upgrade banner and upgrading lock
         checkPostUpgradeBanner();
+        // Auto-trigger health check if pending from a recent upgrade
+        if (localStorage.getItem('pendingHealthCheck')) {
+          localStorage.removeItem('pendingHealthCheck');
+          // Navigate to command center first (initializes terminal)
+          navigate('command-center');
+          // Wait for terminal WebSocket to connect, then send health check
+          var hcRetries = 0;
+          var hcInterval = setInterval(function() {
+            hcRetries++;
+            if (termWs && termWs.readyState === 1) {
+              clearInterval(hcInterval);
+              runHealthCheck();
+            } else if (hcRetries > 15) {
+              clearInterval(hcInterval);
+              toast('Terminal not ready - run health check manually', 'warning');
+            }
+          }, 1000);
+        }
         // Re-check every 30 minutes
         setInterval(silentUpdateCheck, 30 * 60 * 1000);
       }

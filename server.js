@@ -2464,16 +2464,8 @@ ensureOrchestrator();
 // ── Migrations (from lib/migrations.js) ──────────────────
 var migrationResult = migrations.runPendingMigrations(sharedCtx);
 
-// Always rebuild CLAUDE.md on startup to ensure latest template is applied.
-// This fixes the chicken-and-egg problem where an upgrade replaces server.js
-// (with new CLAUDE.md template) but the old in-memory rebuildClaudeMd ran during
-// the upgrade, so the on-disk CLAUDE.md still has the old template until restart.
-try { rebuildClaudeMd(); } catch(e) {
-  console.error('  Warning: Failed to rebuild CLAUDE.md on startup: ' + e.message);
-}
-try { rebuildAgentOs(); } catch(e) {
-  console.error('  Warning: Failed to rebuild agent-os.md on startup: ' + e.message);
-}
+// NOTE: rebuildClaudeMd() and rebuildAgentOs() are deferred to server.listen callback
+// so that PORT is guaranteed to be set. Both functions use PORT for the API URL.
 
 // ── Post-upgrade flag recovery ───────────────────────────
 // When upgrading from an older version, the OLD upgrade.js runs in memory
@@ -2559,5 +2551,16 @@ if (healthResult.issues.length > 0) {
   }
 
   PORT = requestedPort;
-  server.listen(PORT, function() { console.log('\n  Agent Team Portal running at http://localhost:' + PORT + '\n'); });
+  server.listen(PORT, function() {
+    console.log('\n  Agent Team Portal running at http://localhost:' + PORT + '\n');
+
+    // Rebuild CLAUDE.md and agent-os.md AFTER PORT is assigned so they use the correct port.
+    // Previously these ran before server.listen, when PORT was still undefined.
+    try { rebuildClaudeMd(); } catch(e) {
+      console.error('  Warning: Failed to rebuild CLAUDE.md on startup: ' + e.message);
+    }
+    try { rebuildAgentOs(); } catch(e) {
+      console.error('  Warning: Failed to rebuild agent-os.md on startup: ' + e.message);
+    }
+  });
 })();

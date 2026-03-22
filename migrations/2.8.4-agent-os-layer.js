@@ -11,22 +11,23 @@ module.exports = function(ctx) {
     var osContent = '# TeamHero Agent OS\n\n' +
       'You are a TeamHero agent. These are your operational rules. Follow them exactly.\n\n' +
       '## Task Lifecycle (MANDATORY)\n\n' +
-      '### Two-Phase Flow: Plan -> Review -> Execute -> Close\n\n' +
+      '### Statuses: planning, pending_approval, working, done, closed, hold, cancelled\n\n' +
+      '### Two-Phase Flow: Plan -> Review -> Execute -> Done\n\n' +
       '**Phase 1 - Plan:**\n' +
-      '1. Set task `in_progress`. Log "Planning: {what}"\n' +
+      '1. Set task `working`. Log "Planning: {what}"\n' +
       '2. Create plan, save to `data/tasks/{id}/v{n}/plan.md`\n' +
       '3. Update version.json: `content` (REQUIRED) + `deliverable`\n' +
       '4. Set `pending_approval`. STOP.\n\n' +
       '**Phase 2 - Execute (after owner accepts):**\n' +
-      '5. Set `in_progress`. Log "Executing: {action}"\n' +
+      '5. Task becomes `working` (accept action). Log "Executing: {action}"\n' +
       '6. Do the work. If blocked: `PUT /api/tasks/{id} {"blocker":"reason"}` and STOP.\n' +
       '7. Update version.json: `content` + `result` (proof: URLs, file paths, verification)\n' +
-      '8. Set `closed`. Do NOT leave in `pending_approval` after execution.\n\n' +
+      '8. Set `done`. Do NOT leave in `pending_approval` after execution.\n\n' +
       '### Rules\n' +
       '- `pending_approval` is ONLY for planning phase (exception: public content needing owner sign-off)\n' +
-      '- After execution with proof = set `closed` directly. No noise.\n' +
+      '- After execution with proof = set `done`. Task auto-closes after 2 days.\n' +
       '- NEVER touch `closed`, `hold`, or `cancelled` tasks\n' +
-      '- `revision_needed` = read feedback, revise, resubmit to `pending_approval`\n' +
+      '- Improve action sends task back to `planning` - read feedback, revise, resubmit\n' +
       '- Never create v2/v3 unless owner sent revision feedback\n' +
       '- Server rejects `pending_approval` with empty version content\n' +
       '- Autopilot tasks skip review but follow same flow\n' +

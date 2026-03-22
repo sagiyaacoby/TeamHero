@@ -38,8 +38,8 @@ function mapStatus(raw) {
   var s = raw.toLowerCase().replace(/\s*\(.*\)/, '').trim();
   if (s === 'done') return 'done';
   if (s === 'in review' || s === 'pending' || s === 'awaiting decision' || s === 'needs manual check') return 'pending_approval';
-  if (s === 'in progress') return 'in_progress';
-  if (s === 'ready for dev' || s.indexOf('approved') !== -1) return 'approved';
+  if (s === 'in progress') return 'working';
+  if (s === 'ready for dev' || s.indexOf('approved') !== -1) return 'working';
   if (s === 'on hold' || s === 'blocked') return 'draft';
   if (s.indexOf('confirmed') !== -1) return 'approved';
   return 'draft';

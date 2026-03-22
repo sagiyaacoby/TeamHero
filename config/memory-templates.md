@@ -126,7 +126,7 @@ Promote to long-memory when **closing a task**:
 - **Work log entry**: Add task ID, title, and one-line outcome to Completed Work Log
 - **Lessons learned**: Any new insight about tools, platforms, or workflows
 - **New platform/tool knowledge**: Access methods, authentication details, API quirks
-- **Owner preference patterns**: Feedback themes from revision_needed cycles
+- **Owner preference patterns**: Feedback themes from improve/revision cycles
 
 ### When to Prune Short Memory
 

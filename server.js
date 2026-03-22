@@ -202,19 +202,20 @@ function E(res, msg, s) { J(res, {error:msg}, s||400); }
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
 
 // ── Task Lifecycle Constants ─────────────────────────────
-var VALID_STATUSES = ['planning', 'pending_approval', 'accepted', 'in_progress', 'done', 'closed', 'revision_needed', 'hold', 'cancelled'];
+var VALID_STATUSES = ['planning', 'pending_approval', 'working', 'done', 'closed', 'hold', 'cancelled'];
 
 var VALID_TRANSITIONS = {
-  planning:          ['pending_approval', 'in_progress', 'hold', 'cancelled'],
-  pending_approval:  ['accepted', 'revision_needed', 'hold', 'cancelled', 'closed'],
-  accepted:          ['in_progress', 'hold', 'cancelled'],
-  in_progress:       ['pending_approval', 'done', 'hold', 'cancelled'],
-  done:              ['closed'],
+  planning:          ['pending_approval', 'working', 'hold', 'cancelled'],
+  pending_approval:  ['working', 'planning', 'hold', 'cancelled'],
+  working:           ['pending_approval', 'done', 'hold', 'cancelled'],
+  done:              ['closed', 'planning', 'hold', 'cancelled'],
   closed:            [],  // terminal
-  revision_needed:   ['in_progress', 'pending_approval', 'hold', 'cancelled'],
-  hold:              ['planning', 'in_progress', 'pending_approval', 'closed', 'cancelled'],
+  hold:              ['planning'],
   cancelled:         []   // terminal
 };
+
+// ── Agent Activity State (ephemeral, in-memory) ──────────
+var agentActivity = {};
 
 // ── Encrypted Secrets Manager ────────────────────────────
 var secretsCache = null;   // decrypted { name: value } map, null when locked
@@ -310,6 +311,14 @@ var wsClients = new Set();
 
 function broadcast(scope) {
   var msg = JSON.stringify({ type: 'refresh', scope: scope });
+  var frame = buildWsFrame(msg);
+  wsClients.forEach(function(socket) {
+    try { socket.write(frame); } catch(e) {}
+  });
+}
+
+function broadcastEvent(eventType, data) {
+  var msg = JSON.stringify({ type: 'event', event: eventType, data: data });
   var frame = buildWsFrame(msg);
   wsClients.forEach(function(socket) {
     try { socket.write(frame); } catch(e) {}
@@ -584,22 +593,26 @@ function rebuildAgentOs() {
   var md = '# TeamHero Agent OS\n\n' +
     'You are a TeamHero agent. These are your operational rules. Follow them exactly.\n\n' +
     '## Task Lifecycle (MANDATORY)\n\n' +
-    '### Two-Phase Flow: Plan -> Review -> Execute -> Close\n\n' +
+    '### Statuses: planning, pending_approval, working, done, closed, hold, cancelled\n\n' +
+    '### Two-Phase Flow: Plan -> Review -> Execute -> Done\n\n' +
     '**Phase 1 - Plan:**\n' +
-    '1. Set task `in_progress`. Log "Planning: {what}"\n' +
+    '1. Set task `working`. Log "Planning: {what}"\n' +
     '2. Create plan, save to `data/tasks/{id}/v{n}/plan.md`\n' +
     '3. Update version.json: `content` (REQUIRED) + `deliverable`\n' +
     '4. Set `pending_approval`. STOP.\n\n' +
     '**Phase 2 - Execute (after owner accepts):**\n' +
-    '5. Set `in_progress`. Log "Executing: {action}"\n' +
+    '5. Task becomes `working` (accept action). Log "Executing: {action}"\n' +
     '6. Do the work. If blocked: `PUT /api/tasks/{id} {"blocker":"reason"}` and STOP.\n' +
     '7. Update version.json: `content` + `result` (proof: URLs, file paths, verification)\n' +
-    '8. Set `closed`. Do NOT leave in `pending_approval` after execution.\n\n' +
+    '8. Set `done`. Do NOT leave in `pending_approval` after execution.\n\n' +
+    '### Done -> Closed (Auto-Transition)\n' +
+    '- Tasks stay in `done` for 2 days, then auto-close\n' +
+    '- Owner can manually close or send back to `planning` via improve\n\n' +
     '### Rules\n' +
     '- `pending_approval` is ONLY for planning phase (exception: public content needing owner sign-off)\n' +
-    '- After execution with proof = set `closed` directly. No noise.\n' +
+    '- After execution with proof = set `done`. Task auto-closes after 2 days.\n' +
     '- NEVER touch `closed`, `hold`, or `cancelled` tasks\n' +
-    '- `revision_needed` = read feedback, revise, resubmit to `pending_approval`\n' +
+    '- Improve action sends task back to `planning` - read feedback, revise, resubmit\n' +
     '- Never create v2/v3 unless owner sent revision feedback\n' +
     '- Server rejects `pending_approval` with empty version content\n' +
     '- Autopilot tasks skip review but follow same flow\n' +
@@ -761,8 +774,11 @@ async function handle(pn, m, req, res) {
   }
 
   // AGENTS
-  if (pn === '/api/agents' && m === 'GET')
-    return J(res, readJSON(path.join(ROOT, 'agents/_registry.json')) || { agents: [] });
+  if (pn === '/api/agents' && m === 'GET') {
+    var agReg = readJSON(path.join(ROOT, 'agents/_registry.json')) || { agents: [] };
+    agReg.agents = agReg.agents.map(function(a) { return Object.assign({}, a, { active: !!agentActivity[a.id] }); });
+    return J(res, agReg);
+  }
 
   const amm = pn.match(/^\/api\/agents\/([^\/]+)\/memory\/([^\/]+)$/);
   if (amm) {
@@ -794,8 +810,8 @@ async function handle(pn, m, req, res) {
       var taskDir = path.join(ROOT, 'data/tasks', t.id);
       var taskJson = readJSON(path.join(taskDir, 'task.json'));
       if (!taskJson) return;
-      // Only include closed/accepted tasks for categorized view
-      var isFinal = taskJson.status === 'closed' || taskJson.status === 'accepted' || taskJson.status === 'done';
+      // Only include closed/done tasks for categorized view
+      var isFinal = taskJson.status === 'closed' || taskJson.status === 'done';
       // Find latest version folder
       var latestVn = 0;
       var fileMap = {};
@@ -934,6 +950,22 @@ async function handle(pn, m, req, res) {
     rebuildClaudeMd();
     broadcast('agents');
     return J(res, { ok: true });
+  }
+
+  // AGENT ACTIVITY (ephemeral, in-memory)
+  const actm = pn.match(/^\/api\/agents\/([^\/]+)\/activity$/);
+  if (actm && m === 'POST') {
+    var actId = actm[1];
+    var actBody = await parseBody(req);
+    agentActivity[actId] = !!actBody.active;
+    var actMsg = JSON.stringify({ type: 'agent-activity', agentId: actId, active: !!actBody.active });
+    var actFrame = buildWsFrame(actMsg);
+    wsClients.forEach(function(socket) { try { socket.write(actFrame); } catch(e) {} });
+    return J(res, { ok: true, agentId: actId, active: !!actBody.active });
+  }
+  if (actm && m === 'GET') {
+    var actId2 = actm[1];
+    return J(res, { agentId: actId2, active: !!agentActivity[actId2] });
   }
 
   // TASKS
@@ -1253,16 +1285,18 @@ async function handle(pn, m, req, res) {
       } else if (b.action === 'accept') {
         vData.decision = 'accepted';
         writeJSON(vPath, vData);
-        actionResult = Object.assign({}, ex, { status: 'accepted', updatedAt: now });
+        actionResult = Object.assign({}, ex, { status: 'working', updatedAt: now });
       } else if (b.action === 'close') {
+        if (ex.status !== 'done') return E(res, 'Close is only valid from done status', 400);
         vData.decision = 'closed';
         writeJSON(vPath, vData);
         actionResult = Object.assign({}, ex, { status: 'closed', updatedAt: now });
       } else if (b.action === 'approve') {
         vData.decision = 'approved';
         writeJSON(vPath, vData);
-        actionResult = Object.assign({}, ex, { status: 'approved', updatedAt: now });
+        actionResult = Object.assign({}, ex, { status: 'working', updatedAt: now });
       } else if (b.action === 'improve') {
+        if (ex.status !== 'pending_approval' && ex.status !== 'done') return E(res, 'Improve is only valid from pending_approval or done', 400);
         vData.decision = 'improve';
         writeJSON(vPath, vData);
         var nextV = latestV + 1;
@@ -1272,12 +1306,14 @@ async function handle(pn, m, req, res) {
           number: nextV, content: '', status: 'planning',
           decision: null, comments: '', submittedAt: null, decidedAt: null
         });
-        actionResult = Object.assign({}, ex, { status: 'revision_needed', version: nextV, updatedAt: now });
+        actionResult = Object.assign({}, ex, { status: 'planning', version: nextV, updatedAt: now });
       } else if (b.action === 'hold') {
+        if (ex.status !== 'planning' && ex.status !== 'pending_approval' && ex.status !== 'working' && ex.status !== 'done') return E(res, 'Hold is only valid from planning, pending_approval, working, or done', 400);
         vData.decision = 'hold';
         writeJSON(vPath, vData);
         actionResult = Object.assign({}, ex, { status: 'hold', updatedAt: now });
       } else {
+        if (ex.status === 'closed') return E(res, 'Cannot cancel a closed task', 400);
         vData.decision = 'cancelled';
         writeJSON(vPath, vData);
         actionResult = Object.assign({}, ex, { status: 'cancelled', updatedAt: now });
@@ -1290,8 +1326,8 @@ async function handle(pn, m, req, res) {
       if (ai >= 0) aix.tasks[ai] = { id: id, title: actionResult.title, status: actionResult.status, assignedTo: actionResult.assignedTo, priority: actionResult.priority, type: actionResult.type || 'general', autopilot: actionResult.autopilot || false, parentTaskId: actionResult.parentTaskId || null, blocker: actionResult.blocker || null };
       writeJSON(aip, aix);
 
-      // Auto-advance parent task when all subtasks are accepted/closed/done (recursive for deep nesting)
-      if ((actionResult.status === 'accepted' || actionResult.status === 'closed' || actionResult.status === 'done') && actionResult.parentTaskId) {
+      // Auto-advance parent task when all subtasks are done/closed (recursive for deep nesting)
+      if ((actionResult.status === 'closed' || actionResult.status === 'done') && actionResult.parentTaskId) {
         var checkParentId = actionResult.parentTaskId;
         while (checkParentId) {
           var parentTp2 = path.join(ROOT, 'data/tasks', checkParentId, 'task.json');
@@ -1299,9 +1335,9 @@ async function handle(pn, m, req, res) {
           if (!parentTask2 || !parentTask2.subtasks || parentTask2.subtasks.length === 0) break;
           var allDone = parentTask2.subtasks.every(function(sid) {
             var sub = readJSON(path.join(ROOT, 'data/tasks', sid, 'task.json'));
-            return sub && (sub.status === 'accepted' || sub.status === 'closed' || sub.status === 'done');
+            return sub && (sub.status === 'closed' || sub.status === 'done');
           });
-          if (allDone && parentTask2.status !== 'pending_approval' && parentTask2.status !== 'accepted' && parentTask2.status !== 'closed') {
+          if (allDone && parentTask2.status !== 'pending_approval' && parentTask2.status !== 'closed') {
             // Autopilot parent: auto-close instead of pending_approval
             if (parentTask2.autopilot) {
               parentTask2.status = 'closed';
@@ -1321,21 +1357,21 @@ async function handle(pn, m, req, res) {
         }
       }
 
-      // Auto-start dependent tasks when all dependencies are accepted/closed/done
-      if (actionResult.status === 'accepted' || actionResult.status === 'closed' || actionResult.status === 'done') {
+      // Auto-start dependent tasks when all dependencies are done/closed
+      if (actionResult.status === 'closed' || actionResult.status === 'done') {
         aix.tasks.forEach(function(t) {
           var dep = readJSON(path.join(ROOT, 'data/tasks', t.id, 'task.json'));
           if (dep && dep.dependsOn && dep.dependsOn.length > 0 && dep.status === 'planning') {
             var allMet = dep.dependsOn.every(function(did) {
               var d = readJSON(path.join(ROOT, 'data/tasks', did, 'task.json'));
-              return d && (d.status === 'accepted' || d.status === 'closed' || d.status === 'done');
+              return d && (d.status === 'closed' || d.status === 'done');
             });
             if (allMet) {
-              dep.status = 'in_progress';
+              dep.status = 'working';
               dep.updatedAt = now;
               writeJSON(path.join(ROOT, 'data/tasks', t.id, 'task.json'), dep);
               var di = aix.tasks.findIndex(function(x) { return x.id === t.id; });
-              if (di >= 0) { aix.tasks[di].status = 'in_progress'; }
+              if (di >= 0) { aix.tasks[di].status = 'working'; }
             }
           }
         });
@@ -1343,6 +1379,20 @@ async function handle(pn, m, req, res) {
       }
 
       broadcast('tasks');
+      // Emit notification events for status transitions
+      var agentName = actionResult.assignedTo || '';
+      try {
+        var agReg = readJSON(path.join(ROOT, 'agents/_registry.json'));
+        if (agReg && agReg.agents) {
+          var ag = agReg.agents.find(function(a) { return a.id === actionResult.assignedTo; });
+          if (ag) agentName = ag.name;
+        }
+      } catch(e) {}
+      if (actionResult.status === 'pending_approval') {
+        broadcastEvent('task.pending_approval', { taskId: id, title: actionResult.title, agentName: agentName });
+      } else if (actionResult.status === 'closed') {
+        broadcastEvent('task.closed', { taskId: id, title: actionResult.title, agentName: agentName });
+      }
       return J(res, actionResult);
     }
 
@@ -1411,7 +1461,95 @@ async function handle(pn, m, req, res) {
     if (mi >= 0) mix.tasks[mi] = { id: id, title: merged.title, status: merged.status, assignedTo: merged.assignedTo, priority: merged.priority, type: merged.type || 'general', autopilot: merged.autopilot || false, parentTaskId: merged.parentTaskId || null, blocker: merged.blocker || null, interval: merged.interval || null, intervalUnit: merged.intervalUnit || null };
     writeJSON(mip, mix);
     broadcast('tasks');
+    // Emit notification events for general PUT status transitions and blockers
+    if (merged.status !== ex.status || (b.blocker !== undefined && b.blocker !== ex.blocker)) {
+      var evAgentName = merged.assignedTo || '';
+      try {
+        var evReg = readJSON(path.join(ROOT, 'agents/_registry.json'));
+        if (evReg && evReg.agents) {
+          var evAg = evReg.agents.find(function(a) { return a.id === merged.assignedTo; });
+          if (evAg) evAgentName = evAg.name;
+        }
+      } catch(e) {}
+      if (merged.status === 'pending_approval' && ex.status !== 'pending_approval') {
+        broadcastEvent('task.pending_approval', { taskId: id, title: merged.title, agentName: evAgentName });
+      }
+      if (merged.status === 'closed' && ex.status !== 'closed') {
+        broadcastEvent('task.closed', { taskId: id, title: merged.title, agentName: evAgentName });
+      }
+      if (b.blocker && b.blocker !== ex.blocker) {
+        broadcastEvent('task.blocker', { taskId: id, title: merged.title, agentName: evAgentName, reason: b.blocker });
+      }
+    }
     return J(res, merged);
+  }
+
+  // STATS
+  if (pn === '/api/stats' && m === 'GET') {
+    var agentsReg = readJSON(path.join(ROOT, 'agents/_registry.json')) || { agents: [] };
+    var tasksIdx = readJSON(path.join(ROOT, 'data/tasks/_index.json')) || { tasks: [] };
+    var now = Date.now();
+    var d7 = now - 7 * 86400000;
+    var d30 = now - 30 * 86400000;
+    var agentMap = {};
+    agentsReg.agents.forEach(function(a) {
+      agentMap[a.id] = { id: a.id, name: a.name, role: a.role, totalTasks: 0, closedTasks: 0, activeTasks: 0, avgCloseTimeHours: 0, revisionRate: 0, blockerCount: 0, last7Days: { closed: 0, created: 0 }, last30Days: { closed: 0, created: 0 }, tasksByType: {}, _closeTimes: [], _revisions: 0 };
+    });
+    var team = { totalTasks: 0, closedTasks: 0, activeTasks: 0, avgCloseTimeHours: 0, revisionRate: 0, blockedTasks: 0, _closeTimes: [], _revisions: 0 };
+    tasksIdx.tasks.forEach(function(ti) {
+      var tp = path.join(ROOT, 'data/tasks', ti.id, 'task.json');
+      var t = readJSON(tp);
+      if (!t) return;
+      var aid = t.assignedTo;
+      var ag = aid && agentMap[aid] ? agentMap[aid] : null;
+      var isClosed = t.status === 'closed' || t.status === 'done';
+      var isActive = !isClosed && t.status !== 'cancelled';
+      team.totalTasks++;
+      if (isClosed) team.closedTasks++;
+      if (isActive) team.activeTasks++;
+      if (t.blocker) team.blockedTasks++;
+      if (t.version > 1) team._revisions++;
+      if (isClosed && t.createdAt && t.updatedAt) {
+        var ct = (new Date(t.updatedAt).getTime() - new Date(t.createdAt).getTime()) / 3600000;
+        if (ct > 0) team._closeTimes.push(ct);
+      }
+      if (ag) {
+        ag.totalTasks++;
+        if (isClosed) ag.closedTasks++;
+        if (isActive) ag.activeTasks++;
+        if (t.blocker) ag.blockerCount++;
+        if (t.version > 1) ag._revisions++;
+        var ty = t.type || 'general';
+        ag.tasksByType[ty] = (ag.tasksByType[ty] || 0) + 1;
+        if (isClosed && t.createdAt && t.updatedAt) {
+          var ct2 = (new Date(t.updatedAt).getTime() - new Date(t.createdAt).getTime()) / 3600000;
+          if (ct2 > 0) ag._closeTimes.push(ct2);
+        }
+        if (t.createdAt) {
+          var cTime = new Date(t.createdAt).getTime();
+          if (cTime >= d7) ag.last7Days.created++;
+          if (cTime >= d30) ag.last30Days.created++;
+        }
+        if (isClosed && t.updatedAt) {
+          var uTime = new Date(t.updatedAt).getTime();
+          if (uTime >= d7) ag.last7Days.closed++;
+          if (uTime >= d30) ag.last30Days.closed++;
+        }
+      }
+    });
+    team.avgCloseTimeHours = team._closeTimes.length ? Math.round(team._closeTimes.reduce(function(a,b){return a+b;},0) / team._closeTimes.length * 10) / 10 : 0;
+    team.revisionRate = team.totalTasks ? Math.round(team._revisions / team.totalTasks * 100) / 100 : 0;
+    delete team._closeTimes; delete team._revisions;
+    var agents = [];
+    Object.keys(agentMap).forEach(function(k) {
+      var ag = agentMap[k];
+      ag.avgCloseTimeHours = ag._closeTimes.length ? Math.round(ag._closeTimes.reduce(function(a,b){return a+b;},0) / ag._closeTimes.length * 10) / 10 : 0;
+      ag.revisionRate = ag.totalTasks ? Math.round(ag._revisions / ag.totalTasks * 100) / 100 : 0;
+      delete ag._closeTimes; delete ag._revisions;
+      agents.push(ag);
+    });
+    agents.sort(function(a,b) { return b.closedTasks - a.closedTasks; });
+    return J(res, { generated: new Date().toISOString(), team: team, agents: agents });
   }
 
   // KNOWLEDGE BASE
@@ -2135,6 +2273,59 @@ async function handle(pn, m, req, res) {
     } catch(e) { res.writeHead(404); return res.end('Not found'); }
   }
 
+  // STATS - Agent performance metrics (zero token cost - pure computation)
+  if (pn === '/api/stats' && m === 'GET') {
+    var reg = readJSON(path.join(ROOT, 'agents/_registry.json')) || { agents: [] };
+    var idx = readJSON(path.join(ROOT, 'data/tasks/_index.json')) || { tasks: [] };
+    var now = Date.now();
+    var d7 = now - 7 * 86400000;
+    var d30 = now - 30 * 86400000;
+    var agentMap = {};
+    reg.agents.forEach(function(a) {
+      agentMap[a.id] = { id: a.id, name: a.name, role: a.role, totalTasks: 0, closedTasks: 0, activeTasks: 0, avgCloseTimeHours: 0, revisionRate: 0, blockerCount: 0, last7Days: { closed: 0, created: 0 }, last30Days: { closed: 0, created: 0 }, tasksByType: {}, _closeTimes: [], _revisions: 0 };
+    });
+    var team = { totalTasks: 0, closedTasks: 0, activeTasks: 0, avgCloseTimeHours: 0, revisionRate: 0, blockedTasks: 0, _closeTimes: [], _revisions: 0 };
+    idx.tasks.forEach(function(t) {
+      var taskJson = readJSON(path.join(ROOT, 'data/tasks', t.id, 'task.json'));
+      if (!taskJson) return;
+      var aid = taskJson.assignedTo;
+      if (!aid || !agentMap[aid]) return;
+      var ag = agentMap[aid];
+      ag.totalTasks++;
+      team.totalTasks++;
+      var tp = taskJson.type || 'general';
+      ag.tasksByType[tp] = (ag.tasksByType[tp] || 0) + 1;
+      var isClosed = taskJson.status === 'closed' || taskJson.status === 'done';
+      var isActive = !isClosed && taskJson.status !== 'cancelled';
+      if (isClosed) {
+        ag.closedTasks++;
+        team.closedTasks++;
+        if (taskJson.createdAt && taskJson.updatedAt) {
+          var ct = (new Date(taskJson.updatedAt).getTime() - new Date(taskJson.createdAt).getTime()) / 3600000;
+          if (ct >= 0) { ag._closeTimes.push(ct); team._closeTimes.push(ct); }
+        }
+        if (taskJson.updatedAt && new Date(taskJson.updatedAt).getTime() >= d7) ag.last7Days.closed++;
+        if (taskJson.updatedAt && new Date(taskJson.updatedAt).getTime() >= d30) ag.last30Days.closed++;
+      }
+      if (isActive) { ag.activeTasks++; team.activeTasks++; }
+      if (taskJson.version > 1) { ag._revisions++; team._revisions++; }
+      if (taskJson.blocker) { ag.blockerCount++; team.blockedTasks++; }
+      if (taskJson.createdAt && new Date(taskJson.createdAt).getTime() >= d7) ag.last7Days.created++;
+      if (taskJson.createdAt && new Date(taskJson.createdAt).getTime() >= d30) ag.last30Days.created++;
+    });
+    // Compute averages
+    team.avgCloseTimeHours = team._closeTimes.length ? Math.round(team._closeTimes.reduce(function(a, b) { return a + b; }, 0) / team._closeTimes.length * 10) / 10 : 0;
+    team.revisionRate = team.totalTasks ? Math.round(team._revisions / team.totalTasks * 100) / 100 : 0;
+    delete team._closeTimes; delete team._revisions;
+    var agents = Object.values(agentMap).map(function(ag) {
+      ag.avgCloseTimeHours = ag._closeTimes.length ? Math.round(ag._closeTimes.reduce(function(a, b) { return a + b; }, 0) / ag._closeTimes.length * 10) / 10 : 0;
+      ag.revisionRate = ag.totalTasks ? Math.round(ag._revisions / ag.totalTasks * 100) / 100 : 0;
+      delete ag._closeTimes; delete ag._revisions;
+      return ag;
+    });
+    return J(res, { generated: new Date().toISOString(), team: team, agents: agents });
+  }
+
   // STATIC FILES
   var staticPath = pn === '/' ? '/index.html' : pn;
   staticPath = path.join(BASE, staticPath);
@@ -2285,10 +2476,10 @@ setInterval(function() {
     if (!task.nextRun || new Date(task.nextRun) > now) return;
 
     // Skip if still running (overlap protection) or on hold
-    if (task.status === 'in_progress' || task.status === 'hold' || task.status === 'planning' || task.status === 'pending_approval') return;
+    if (task.status === 'working' || task.status === 'hold' || task.status === 'planning' || task.status === 'pending_approval') return;
 
-    // Reset task to in_progress for next run
-    task.status = 'in_progress';
+    // Reset task to working for next run
+    task.status = 'working';
     task.lastRun = now.toISOString();
     task.nextRun = computeNextRun(now, task.interval, task.intervalUnit);
     task.updatedAt = now.toISOString();
@@ -2302,7 +2493,7 @@ setInterval(function() {
     writeJSON(taskPath, task);
 
     // Update index entry
-    entry.status = 'in_progress';
+    entry.status = 'working';
     changed = true;
 
     // Send prompt to terminal PTY
@@ -2327,7 +2518,7 @@ setInterval(function() {
     // If no terminal found, set blocker
     if (!sentTo) {
       task.blocker = 'No active terminal session found - cannot send autopilot prompt';
-      task.status = 'in_progress';
+      task.status = 'working';
       if (!task.progressLog) task.progressLog = [];
       task.progressLog.push({
         message: 'BLOCKER: No active terminal session found',
@@ -2369,21 +2560,20 @@ fs.mkdirSync(path.join(ROOT, 'config'), { recursive: true });
     '1. **Planning** (planning): Agent creates plan/materials\n' +
     '2. **Submit for review** (pending_approval): Agent fills version.json + sets pending_approval\n' +
     '3. **Owner reviews**: Accept (go execute) or Improve (revise)\n' +
-    '4. **Execute** (in_progress): Agent executes the approved work (posts content, deploys code, etc.)\n' +
+    '4. **Execute** (working): Agent executes the approved work (posts content, deploys code, etc.)\n' +
     '5. **Submit proof** (pending_approval): Agent updates version with execution proof + sets pending_approval\n' +
     '6. **Owner verifies**: Checks proof (URL works, code deployed, etc.) and closes\n\n' +
     '### Status Meanings\n' +
     '- **Planning** (`planning`): Agent creating plan/materials before first review\n' +
-    '- **Working** (`in_progress`): Agent executing after acceptance\n' +
-    '- **Pending** (`pending_approval`): Either materials ready for review OR execution proof ready for verify\n' +
-    '- **Accepted** (`accepted`): Owner approved materials - triggers agent execution immediately\n' +
-    '- **Improve** (`revision_needed`): Owner sent feedback - agent revises, resubmits to pending\n' +
-    '- **Closed** (`closed`): Owner verified execution proof. Terminal state.\n' +
+    '- **Working** (`working`): Agent executing after acceptance\n' +
+    '- **Pending** (`pending_approval`): Materials ready for review\n' +
+    '- **Done** (`done`): Agent completed work. Auto-closes after 2 days.\n' +
+    '- **Closed** (`closed`): Terminal state.\n' +
     '- **Hold** (`hold`): Paused - do not work on until the owner releases it.\n' +
     '- **Cancelled** (`cancelled`): Abandoned - no further action.\n\n' +
     '## Agent Execution Checklist\n\n' +
     '### Phase 1: Prepare\n' +
-    '1. Set status to `in_progress`\n' +
+    '1. Set status to `working`\n' +
     '2. Log progress: "Starting: {what I\'m preparing}"\n' +
     '3. Create materials (plan, code, research, etc.)\n' +
     '4. Save materials to `data/tasks/{id}/v{n}/`\n' +
@@ -2391,7 +2581,7 @@ fs.mkdirSync(path.join(ROOT, 'config'), { recursive: true });
     '6. Set status to `pending_approval`\n' +
     '7. STOP and wait for owner review\n\n' +
     '### Phase 2: Execute (after owner accepts)\n' +
-    '8. Set status to `in_progress`\n' +
+    '8. Set status to `working`\n' +
     '9. Log progress: "Executing: {what I\'m doing}"\n' +
     '10. Execute the approved work\n' +
     '11. If blocker: `PUT /api/tasks/{id} {"blocker": "reason"}` and STOP\n' +
@@ -2415,13 +2605,13 @@ fs.mkdirSync(path.join(ROOT, 'config'), { recursive: true });
     '## Round Table Protocol\n\n' +
     'Round tables are **execution-first**. The orchestrator acts before it reports.\n\n' +
     '### Phase 1: Execute (do this BEFORE reporting)\n' +
-    '1. **Launch agents on accepted tasks** - owner approved materials, agent must EXECUTE (not auto-close)\n' +
-    '2. **Launch agents on revision_needed tasks** - owner already gave feedback, agent must act\n' +
+    '1. **Launch agents on working tasks** - owner accepted, agent must EXECUTE\n' +
+    '2. **Launch agents on planning tasks** - owner sent feedback via improve, agent must revise\n' +
     '3. **Launch agents on planning tasks** that are ready (assigned, dependencies met)\n' +
     '4. **Clear blockers** - read blocker field on tasks, report the text directly\n\n' +
     '### Phase 2: Surface blockers\n' +
     '- Tasks with `blocker` field set - report the blocker text directly\n' +
-    '- Tasks in_progress with no recent progress - may be stalled\n' +
+    '- Tasks working with no recent progress - may be stalled\n' +
     '- Tasks that need owner input (pending_approval)\n\n' +
     '### Phase 3: Report\n' +
     '- Brief status summary\n' +

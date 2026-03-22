@@ -443,10 +443,10 @@
     var orchAgents = state.agents.filter(function(a) { return a.isOrchestrator; });
     var subAgents = state.agents.filter(function(a) { return !a.isOrchestrator; });
 
-    // Build set of agents with in_progress tasks
+    // Build set of agents with working tasks
     var workingAgents = {};
     (state.tasks || []).forEach(function(t) {
-      if (t.status === 'in_progress' && t.assignedTo) workingAgents[t.assignedTo] = true;
+      if (t.status === 'working' && t.assignedTo) workingAgents[t.assignedTo] = true;
     });
 
     var html = '';
@@ -528,21 +528,21 @@
       renderSidebarAgents();
 
       document.getElementById('stat-agents').textContent = state.agents.length;
-      var working = 0, pending = 0, accepted = 0, closed = 0;
+      var working = 0, pending = 0, done = 0, closed = 0;
       state.tasks.forEach(function(t) {
         // Pending counts ALL tasks (including subtasks) - owner must see everything needing review
         if (t.status === 'pending_approval') { pending++; return; }
         // Other stats count top-level only
         if (t.parentTaskId) return;
-        if (t.status === 'in_progress' || t.status === 'planning' || t.status === 'revision_needed') working++;
-        else if (t.status === 'accepted') accepted++;
-        else if (t.status === 'closed' || t.status === 'done') closed++;
+        if (t.status === 'working' || t.status === 'planning') working++;
+        else if (t.status === 'done') done++;
+        else if (t.status === 'closed') closed++;
       });
       document.getElementById('stat-total').textContent = state.tasks.filter(function(t) { return !t.parentTaskId && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled' && t.status !== 'hold'; }).length;
       document.getElementById('stat-hold').textContent = state.tasks.filter(function(t) { return !t.parentTaskId && t.status === 'hold'; }).length;
       document.getElementById('stat-working').textContent = working;
       document.getElementById('stat-pending').textContent = pending;
-      document.getElementById('stat-accepted').textContent = accepted;
+      document.getElementById('stat-done').textContent = done;
       document.getElementById('stat-closed').textContent = closed;
       // Highlight active filter stat card
       document.querySelectorAll('.stat-card[data-filter]').forEach(function(card) {
@@ -639,12 +639,12 @@
     var summaryEl = document.getElementById('agent-tasks-summary');
     if (!summaryEl) return;
 
-    var working = 0, pending = 0, accepted = 0, closed = 0, hold = 0;
+    var working = 0, pending = 0, done = 0, closed = 0, hold = 0;
     tasks.forEach(function(t) {
-      if (t.status === 'in_progress' || t.status === 'planning' || t.status === 'revision_needed') working++;
+      if (t.status === 'working' || t.status === 'planning') working++;
       else if (t.status === 'pending_approval') pending++;
-      else if (t.status === 'accepted') accepted++;
-      else if (t.status === 'closed' || t.status === 'done') closed++;
+      else if (t.status === 'done') done++;
+      else if (t.status === 'closed') closed++;
       else if (t.status === 'hold') hold++;
     });
     var af = state.agentTaskFilter;
@@ -652,8 +652,8 @@
     summaryEl.innerHTML =
       '<span class="badge badge-all clickable-badge' + (af === 'all' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'all\',\'agent\')">' + total + ' Active</span> ' +
       '<span class="badge badge-pending_approval clickable-badge' + (af === 'pending_approval' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'pending_approval\',\'agent\')">' + pending + ' Pending</span> ' +
-      '<span class="badge badge-in_progress clickable-badge' + (af === 'in_progress' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'in_progress\',\'agent\')">' + working + ' Working</span> ' +
-      '<span class="badge badge-accepted clickable-badge' + (af === 'accepted' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'accepted\',\'agent\')">' + accepted + ' Accepted</span> ' +
+      '<span class="badge badge-working clickable-badge' + (af === 'working' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'working\',\'agent\')">' + working + ' Working</span> ' +
+      '<span class="badge badge-done clickable-badge' + (af === 'done' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'done\',\'agent\')">' + done + ' Done</span> ' +
       '<span class="badge badge-hold clickable-badge' + (af === 'hold' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'hold\',\'agent\')">' + hold + ' Hold</span> ' +
       '<span class="badge badge-closed clickable-badge' + (af === 'closed' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'closed\',\'agent\')">' + closed + ' Closed</span>';
 
@@ -669,8 +669,8 @@
     var filtered;
     if (filter === 'all') {
       filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled' && t.status !== 'hold'; });
-    } else if (filter === 'in_progress') {
-      filtered = tasks.filter(function(t) { return !t.parentTaskId && (t.status === 'in_progress' || t.status === 'planning' || t.status === 'revision_needed'); });
+    } else if (filter === 'working') {
+      filtered = tasks.filter(function(t) { return !t.parentTaskId && (t.status === 'working' || t.status === 'planning'); });
     } else if (filter === 'closed') {
       filtered = tasks.filter(function(t) { return !t.parentTaskId && (t.status === 'closed' || t.status === 'done'); });
     } else if (filter === 'pending_approval') {
@@ -728,7 +728,7 @@
     if (!task.dependsOn || task.dependsOn.length === 0) return false;
     return task.dependsOn.some(function(depId) {
       var dep = allTasks.find(function(t) { return t.id === depId; });
-      return !dep || (dep.status !== 'accepted' && dep.status !== 'closed');
+      return !dep || (dep.status !== 'done' && dep.status !== 'closed');
     });
   }
 
@@ -840,7 +840,7 @@
     nodes.forEach(function(t) { columns[colMap[t.id] || 0].push(t); });
 
     // Sort within columns: active statuses first
-    var statusPriority = { in_progress: 0, revision_needed: 1, pending_approval: 2, planning: 3, accepted: 4, hold: 5, closed: 6, cancelled: 7 };
+    var statusPriority = { working: 0, planning: 1, pending_approval: 2, done: 3, hold: 4, closed: 5, cancelled: 6 };
     columns.forEach(function(col) {
       col.sort(function(a, b) {
         var sa = statusPriority[a.status] !== undefined ? statusPriority[a.status] : 8;
@@ -1118,10 +1118,9 @@
   }
 
   var STATUS_LABELS = {
-    planning: 'planning', in_progress: 'working', pending_approval: 'pending',
-    accepted: 'accepted', closed: 'closed', done: 'closed',
-    revision_needed: 'improve', hold: 'hold', cancelled: 'cancelled',
-    approved: 'execute'
+    planning: 'planning', working: 'working', pending_approval: 'pending',
+    done: 'done', closed: 'closed',
+    hold: 'hold', cancelled: 'cancelled'
   };
 
   function renderTaskCard(t, context, isSubtask, depth) {
@@ -1134,7 +1133,7 @@
     }
     var hasOutput = t.knowledgeDocId || t.hasDeliverable;
     var outputIcon = hasOutput ? '<span class="task-output-icon" title="Has output"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>' : '';
-    var isWorking = t.status === 'in_progress';
+    var isWorking = t.status === 'working';
     var workingDot = isWorking ? '<span class="agent-working-dot" title="Working"></span>' : '';
     var autopilotIcon = t.autopilot ? '<span class="autopilot-badge" title="Autopilot">&#9881;</span>' : '';
     var blocked = isTaskBlocked(t, state.tasks);
@@ -1156,7 +1155,7 @@
       var dueDate = new Date(t.dueDate);
       var now = new Date();
       now.setHours(0, 0, 0, 0);
-      var isOverdue = dueDate < now && t.status !== 'closed' && t.status !== 'done' && t.status !== 'accepted';
+      var isOverdue = dueDate < now && t.status !== 'closed' && t.status !== 'done';
       dueDateHtml = '<span class="task-due' + (isOverdue ? ' task-due-overdue' : '') + '" title="Due: ' + dueDate.toLocaleDateString() + '">' + dueDate.toLocaleDateString() + '</span>';
     }
     var timeAgoHtml = t.createdAt ? '<span class="task-time-ago">' + timeAgo(t.createdAt) + '</span>' : '';
@@ -1202,7 +1201,7 @@
       // Update panel title text without destroying the view-mode-toggle buttons inside the h3
       var titleEl = document.getElementById('dashboard-tasks-title');
       if (titleEl) {
-        var labels = { all: 'All Tasks', pending_approval: 'Pending Review', in_progress: 'Working', accepted: 'Accepted', closed: 'Closed', revision_needed: 'Improve', hold: 'On Hold' };
+        var labels = { all: 'All Tasks', pending_approval: 'Pending Review', working: 'Working', done: 'Done', closed: 'Closed', hold: 'On Hold' };
         var titleText = labels[filter] || filter.replace(/_/g, ' ');
         var firstText = titleEl.firstChild;
         if (firstText && firstText.nodeType === 3) {
@@ -1455,9 +1454,8 @@
 
       var statusEl = document.getElementById('task-detail-status');
       var displayStatus = task.status || 'planning';
-      if (displayStatus === 'done') displayStatus = 'closed';
       var statusLabel = STATUS_LABELS[displayStatus] || displayStatus.replace(/_/g, ' ');
-      if (displayStatus === 'in_progress') {
+      if (displayStatus === 'working') {
         statusEl.innerHTML = escHtml(statusLabel) + ' <span class="agent-working-dot"></span>';
       } else {
         statusEl.textContent = statusLabel;
@@ -1480,7 +1478,7 @@
       if (task.dueDate) {
         var dueDate = new Date(task.dueDate);
         var today = new Date(); today.setHours(0, 0, 0, 0);
-        var isOverdue = dueDate < today && task.status !== 'closed' && task.status !== 'done' && task.status !== 'accepted';
+        var isOverdue = dueDate < today && task.status !== 'closed' && task.status !== 'done';
         dateHtml += ' | <span class="' + (isOverdue ? 'task-due-overdue' : 'task-due-detail') + '">Due: ' + dueDate.toLocaleDateString() + '</span>';
       }
       document.getElementById('task-detail-date').innerHTML = dateHtml || '-';
@@ -1508,7 +1506,7 @@
         promoteBar.classList.add('hidden');
         knowledgeLink.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> <a onclick="App.openKnowledgeDoc(\'' + task.knowledgeDocId + '\')">View in Knowledge Base</a>';
         knowledgeLink.classList.remove('hidden');
-      } else if (task.status === 'accepted' || task.status === 'closed' || task.status === 'done') {
+      } else if (task.status === 'closed' || task.status === 'done') {
         promoteBar.classList.remove('hidden');
         knowledgeLink.classList.add('hidden');
       } else {
@@ -1740,7 +1738,7 @@
 
     var steps = [
       { key: 'pending_approval', label: 'Pending',   icon: '&#9679;'  },
-      { key: 'accepted',         label: 'Accepted <span style="color:#6f6;font-size:0.75em;margin-left:2px">&#9654;</span>',  icon: '&#10003;', action: 'accept' },
+      { key: 'working',          label: 'Accept <span style="color:#6f6;font-size:0.75em;margin-left:2px">&#9654;</span>',  icon: '&#10003;', action: 'accept' },
       { key: 'closed',           label: 'Closed',    icon: '&#9632;', action: 'close'  }
     ];
     var sideStates = [
@@ -1755,7 +1753,7 @@
     html += '<div class="status-pipeline-row">';
 
     // Working indicator (before autopilot)
-    var isWorking = current === 'in_progress' || current === 'planning' || current === 'revision_needed';
+    var isWorking = current === 'working' || current === 'planning';
     if (isWorking) {
       html += '<span class="pipeline-working-indicator"><span class="agent-working-dot"></span> Working</span>';
     }
@@ -1803,7 +1801,7 @@
     // Side states (improve, hold, cancel)
     for (var j = 0; j < sideStates.length; j++) {
       var ss = sideStates[j];
-      var isActiveSide = (ss.key === 'improve' && current === 'revision_needed') || ss.key === current;
+      var isActiveSide = ss.key === current;
       if (ss.needsFeedback) {
         html += '<button class="status-step status-step-side' + (isActiveSide ? ' status-step-active' : '') + '" onclick="App.toggleFeedback()" title="Send feedback for revision">';
       } else {
@@ -1862,7 +1860,7 @@
     }
 
     // Result display
-    if (task.result && (current === 'closed' || current === 'accepted')) {
+    if (task.result && (current === 'closed' || current === 'done')) {
       html += '<div class="session-outcome">';
       html += '<div class="session-outcome-result">' + linkifyText(escHtml(task.result)).replace(/\n/g, '<br>') + '</div>';
       html += '</div>';
@@ -2047,8 +2045,8 @@
       }
       var labels = {
         planning: 'Set to planning', pending_approval: 'Pending review',
-        in_progress: 'Working', accept: 'Accepted',
-        close: 'Closed', hold: 'On hold', cancelled: 'Cancelled'
+        working: 'Working', accept: 'Accepted',
+        close: 'Closed', done: 'Done', hold: 'On hold', cancelled: 'Cancelled'
       };
       toast(labels[newStatus] || 'Status updated');
 
@@ -3463,7 +3461,7 @@
       try {
         var tasks = await api.get('/api/tasks');
         var activeTasks = (tasks.tasks || []).filter(function(t) {
-          return t.status === 'in_progress' || t.status === 'accepted';
+          return t.status === 'working';
         });
         if (activeTasks.length > 0) {
           if (warningEl) warningEl.classList.remove('hidden');
@@ -5162,7 +5160,7 @@
         '<h3>What Happens (In Order)</h3>' +
         '<p><strong>Phase 1: Execute</strong> - The orchestrator acts before it reports:</p>' +
         '<ul>' +
-        '<li>Closes all accepted tasks immediately</li>' +
+        '<li>Launches agents on working tasks (after accept)</li>' +
         '<li>Launches agents on tasks that have your feedback (improve status)</li>' +
         '<li>Starts agents on any ready tasks that haven' + q + 't been picked up</li>' +
         '<li>Flags stalled work with no recent progress</li>' +

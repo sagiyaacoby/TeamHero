@@ -14,8 +14,8 @@
     previousAgentId: null,
     currentTaskId: null,
     mediaFilter: 'all',
-    dashboardTaskFilter: 'all',
-    agentTaskFilter: 'all',
+    dashboardTaskFilter: 'pending',
+    agentTaskFilter: 'pending',
     cachedDashboardTasks: [],
     cachedAgentTasks: [],
     dashboardViewMode: 'hierarchy',
@@ -307,6 +307,196 @@
   var globalWs = null;
   var wsReconnectTimer = null;
 
+  // ── Notification System ─────────────────────────────
+  var notifications = [];
+  var notifUnreadCount = 0;
+  var notifSoundLastPlayed = 0;
+  var NOTIF_SOUND_DEBOUNCE = 5000;
+
+  function addNotification(type, data) {
+    var priorityMap = { 'task.pending_approval': 'high', 'task.blocker': 'high', 'task.closed': 'low' };
+    var iconMap = { 'task.pending_approval': '\u2610', 'task.blocker': '\u26A0', 'task.closed': '\u2714' };
+    var textMap = {
+      'task.pending_approval': (data.agentName || 'Agent') + ' submitted "' + (data.title || 'task') + '" for review',
+      'task.blocker': (data.agentName || 'Agent') + ' hit a blocker on "' + (data.title || 'task') + '"',
+      'task.closed': '"' + (data.title || 'Task') + '" has been closed'
+    };
+    var priority = priorityMap[type] || 'low';
+    var notif = {
+      id: 'n-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+      type: type,
+      priority: priority,
+      title: textMap[type] || type,
+      detail: data.reason || '',
+      taskId: data.taskId || null,
+      timestamp: new Date().toISOString(),
+      read: false
+    };
+    notifications.unshift(notif);
+    if (notifications.length > 50) notifications = notifications.slice(0, 50);
+    notifUnreadCount++;
+    renderNotifications();
+    animateBell();
+    if (priority === 'high') {
+      sendBrowserNotification(notif);
+      playNotifSound();
+    }
+  }
+
+  function renderNotifications() {
+    var badges = document.querySelectorAll('.notif-badge');
+    var bells = document.querySelectorAll('.notif-bell');
+    var list = document.getElementById('notif-list');
+    for (var b = 0; b < badges.length; b++) {
+      if (notifUnreadCount > 0) {
+        badges[b].style.display = '';
+        badges[b].textContent = notifUnreadCount > 99 ? '99+' : notifUnreadCount;
+      } else {
+        badges[b].style.display = 'none';
+      }
+    }
+    for (var b = 0; b < bells.length; b++) {
+      if (notifUnreadCount > 0) {
+        bells[b].classList.add('has-unread');
+      } else {
+        bells[b].classList.remove('has-unread');
+      }
+    }
+    if (!list) return;
+    if (notifications.length === 0) {
+      list.innerHTML = '<div class="notif-empty">No notifications</div>';
+      return;
+    }
+    var iconMap = { 'task.pending_approval': '\u2610', 'task.blocker': '\u26A0', 'task.closed': '\u2714' };
+    var html = '';
+    for (var i = 0; i < notifications.length; i++) {
+      var n = notifications[i];
+      html += '<div class="notif-item ' + (n.read ? '' : 'unread ') + 'priority-' + n.priority + '" onclick="App.clickNotification(' + i + ')">' +
+        '<span class="notif-item-icon">' + (iconMap[n.type] || '\u25CF') + '</span>' +
+        '<div class="notif-item-body">' +
+        '<div class="notif-item-text">' + escHtml(n.title) + '</div>' +
+        (n.detail ? '<div class="notif-item-text" style="color:var(--text-dim);font-size:11px">' + escHtml(n.detail) + '</div>' : '') +
+        '<div class="notif-item-time">' + timeAgo(n.timestamp) + '</div>' +
+        '</div></div>';
+    }
+    list.innerHTML = html;
+  }
+
+  function animateBell() {
+    var bells = document.querySelectorAll('.notif-bell');
+    for (var i = 0; i < bells.length; i++) {
+      bells[i].classList.remove('pulse');
+      void bells[i].offsetWidth;
+      bells[i].classList.add('pulse');
+    }
+  }
+
+  function toggleNotifications(e) {
+    var dd = document.getElementById('notif-dropdown');
+    if (!dd) return;
+    if (dd.style.display === 'none') {
+      dd.style.display = 'flex';
+      // Position dropdown relative to the clicked bell using fixed positioning
+      var bell = e ? e.target.closest('.notif-bell') : null;
+      if (!bell) {
+        // Fallback: find the visible bell
+        var bells = document.querySelectorAll('.notif-bell');
+        for (var i = 0; i < bells.length; i++) {
+          if (bells[i].offsetParent !== null) { bell = bells[i]; break; }
+        }
+      }
+      if (bell) {
+        var rect = bell.getBoundingClientRect();
+        dd.style.top = (rect.bottom + 6) + 'px';
+        dd.style.left = Math.max(8, rect.left) + 'px';
+      }
+      renderNotifications();
+    } else {
+      dd.style.display = 'none';
+    }
+  }
+
+  function clickNotification(index) {
+    if (index >= 0 && index < notifications.length) {
+      var n = notifications[index];
+      if (!n.read) { n.read = true; notifUnreadCount = Math.max(0, notifUnreadCount - 1); }
+      renderNotifications();
+      if (n.taskId) {
+        document.getElementById('notif-dropdown').style.display = 'none';
+        showTaskDetail(n.taskId);
+      }
+    }
+  }
+
+  function clearAllNotifications() {
+    notifications = [];
+    notifUnreadCount = 0;
+    renderNotifications();
+  }
+
+  // Browser Notifications
+  function sendBrowserNotification(notif) {
+    if (localStorage.getItem('teamhero-notifications-browser') === 'false') return;
+    if (!document.hidden) return;
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'granted') {
+      var bn = new Notification('TeamHero', {
+        body: notif.title,
+        icon: '/favicon.ico',
+        tag: 'teamhero-' + (notif.taskId || notif.id),
+        requireInteraction: false
+      });
+      bn.onclick = function() {
+        window.focus();
+        if (notif.taskId) showTaskDetail(notif.taskId);
+        bn.close();
+      };
+    } else if (Notification.permission !== 'denied') {
+      Notification.requestPermission();
+    }
+  }
+
+  // Sound Alerts
+  function playNotifSound() {
+    if (localStorage.getItem('teamhero-notifications-sound') === 'false') return;
+    var now = Date.now();
+    if (now - notifSoundLastPlayed < NOTIF_SOUND_DEBOUNCE) return;
+    notifSoundLastPlayed = now;
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.setValueAtTime(660, ctx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.3);
+      setTimeout(function() { ctx.close(); }, 500);
+    } catch(e) {}
+  }
+
+  // Settings: load notification prefs
+  function loadNotifPrefs() {
+    var br = document.getElementById('notif-toggle-browser');
+    var snd = document.getElementById('notif-toggle-sound');
+    if (br) br.checked = localStorage.getItem('teamhero-notifications-browser') !== 'false';
+    if (snd) snd.checked = localStorage.getItem('teamhero-notifications-sound') !== 'false';
+  }
+
+  function saveNotifPrefs() {
+    var br = document.getElementById('notif-toggle-browser');
+    var snd = document.getElementById('notif-toggle-sound');
+    if (br) localStorage.setItem('teamhero-notifications-browser', br.checked ? 'true' : 'false');
+    if (snd) localStorage.setItem('teamhero-notifications-sound', snd.checked ? 'true' : 'false');
+    if (br && br.checked && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }
+
   // ── Terminal State ──────────────────────────────────
   var terminal = null;
   var fitAddon = null;
@@ -334,6 +524,15 @@
         var data = JSON.parse(evt.data);
         if (data.type === 'refresh') {
           handleRefresh(data.scope);
+        } else if (data.type === 'agent-activity') {
+          // Update agent activity state in sidebar
+          if (data.agentId) {
+            var agentInState = state.agents.find(function(a) { return a.id === data.agentId; });
+            if (agentInState) agentInState.active = data.active;
+            renderSidebarAgents();
+          }
+        } else if (data.type === 'event' && data.event) {
+          addNotification(data.event, data.data || {});
         }
       } catch(e) {
         console.error('WS parse error:', e);
@@ -447,10 +646,14 @@
     var orchAgents = state.agents.filter(function(a) { return a.isOrchestrator; });
     var subAgents = state.agents.filter(function(a) { return !a.isOrchestrator; });
 
-    // Build set of agents with in_progress tasks
+    // Build set of agents with working tasks or active activity state
     var workingAgents = {};
     (state.tasks || []).forEach(function(t) {
-      if (t.status === 'in_progress' && t.assignedTo) workingAgents[t.assignedTo] = true;
+      if (t.status === 'working' && t.assignedTo) workingAgents[t.assignedTo] = true;
+    });
+    // Also include agents with active activity state
+    state.agents.forEach(function(a) {
+      if (a.active) workingAgents[a.id] = true;
     });
 
     var html = '';
@@ -532,23 +735,24 @@
       renderSidebarAgents();
 
       document.getElementById('stat-agents').textContent = state.agents.length;
-      var working = 0, pending = 0, accepted = 0, done = 0, closed = 0;
+      var pendingCount = 0, workingCount = 0, doneCount = 0, holdCount = 0, cancelledCount = 0, closedCount = 0;
       state.tasks.forEach(function(t) {
         // Pending counts ALL tasks (including subtasks) - owner must see everything needing review
-        if (t.status === 'pending_approval') { pending++; return; }
+        if (t.status === 'planning' || t.status === 'pending_approval') { pendingCount++; return; }
         // Other stats count top-level only
         if (t.parentTaskId) return;
-        if (t.status === 'in_progress' || t.status === 'planning' || t.status === 'revision_needed') working++;
-        else if (t.status === 'accepted') accepted++;
-        else if (t.status === 'done') done++;
-        else if (t.status === 'closed') closed++;
+        if (t.status === 'working') workingCount++;
+        else if (t.status === 'done') doneCount++;
+        else if (t.status === 'hold') holdCount++;
+        else if (t.status === 'cancelled') cancelledCount++;
+        else if (t.status === 'closed') closedCount++;
       });
-      document.getElementById('stat-total').textContent = state.tasks.filter(function(t) { return !t.parentTaskId && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled' && t.status !== 'hold'; }).length;
-      document.getElementById('stat-hold').textContent = state.tasks.filter(function(t) { return !t.parentTaskId && t.status === 'hold'; }).length;
-      document.getElementById('stat-working').textContent = working;
-      document.getElementById('stat-pending').textContent = pending;
-      document.getElementById('stat-accepted').textContent = accepted;
-      document.getElementById('stat-closed').textContent = done + closed;
+      document.getElementById('stat-pending').textContent = pendingCount;
+      document.getElementById('stat-working').textContent = workingCount;
+      document.getElementById('stat-done').textContent = doneCount;
+      document.getElementById('stat-hold').textContent = holdCount;
+      document.getElementById('stat-cancelled').textContent = cancelledCount;
+      document.getElementById('stat-closed').textContent = closedCount;
       // Highlight active filter stat card
       document.querySelectorAll('.stat-card[data-filter]').forEach(function(card) {
         card.classList.toggle('stat-card-active', card.dataset.filter === state.dashboardTaskFilter);
@@ -564,6 +768,7 @@
       renderFilteredTasks('dashboard');
 
       loadRoundTable();
+      renderTeamPerformance();
     } catch(e) { console.error('Dashboard load error:', e); }
   }
 
@@ -644,24 +849,23 @@
     var summaryEl = document.getElementById('agent-tasks-summary');
     if (!summaryEl) return;
 
-    var working = 0, pending = 0, accepted = 0, agentDone = 0, closed = 0, hold = 0;
+    var pendingA = 0, workingA = 0, doneA = 0, holdA = 0, cancelledA = 0, closedA = 0;
     tasks.forEach(function(t) {
-      if (t.status === 'in_progress' || t.status === 'planning' || t.status === 'revision_needed') working++;
-      else if (t.status === 'pending_approval') pending++;
-      else if (t.status === 'accepted') accepted++;
-      else if (t.status === 'done') agentDone++;
-      else if (t.status === 'closed') closed++;
-      else if (t.status === 'hold') hold++;
+      if (t.status === 'planning' || t.status === 'pending_approval') pendingA++;
+      else if (t.status === 'working') workingA++;
+      else if (t.status === 'done') doneA++;
+      else if (t.status === 'hold') holdA++;
+      else if (t.status === 'cancelled') cancelledA++;
+      else if (t.status === 'closed') closedA++;
     });
     var af = state.agentTaskFilter;
-    var total = tasks.filter(function(t) { return t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled' && t.status !== 'hold'; }).length;
     summaryEl.innerHTML =
-      '<span class="badge badge-all clickable-badge' + (af === 'all' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'all\',\'agent\')">' + total + ' Active</span> ' +
-      '<span class="badge badge-pending_approval clickable-badge' + (af === 'pending_approval' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'pending_approval\',\'agent\')">' + pending + ' Pending</span> ' +
-      '<span class="badge badge-in_progress clickable-badge' + (af === 'in_progress' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'in_progress\',\'agent\')">' + working + ' Working</span> ' +
-      '<span class="badge badge-accepted clickable-badge' + (af === 'accepted' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'accepted\',\'agent\')">' + accepted + ' Accepted</span> ' +
-      '<span class="badge badge-hold clickable-badge' + (af === 'hold' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'hold\',\'agent\')">' + hold + ' Hold</span> ' +
-      '<span class="badge badge-closed clickable-badge' + (af === 'closed' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'closed\',\'agent\')">' + (agentDone + closed) + ' Closed</span>';
+      '<span class="badge badge-pending_approval clickable-badge' + (af === 'pending' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'pending\',\'agent\')">' + pendingA + ' Pending</span> ' +
+      '<span class="badge badge-working clickable-badge' + (af === 'working' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'working\',\'agent\')">' + workingA + ' Working</span> ' +
+      '<span class="badge badge-done clickable-badge' + (af === 'done' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'done\',\'agent\')">' + doneA + ' Done</span> ' +
+      '<span class="badge badge-hold clickable-badge' + (af === 'hold' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'hold\',\'agent\')">' + holdA + ' Hold</span> ' +
+      '<span class="badge badge-cancelled clickable-badge' + (af === 'cancelled' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'cancelled\',\'agent\')">' + cancelledA + ' Cancelled</span> ' +
+      '<span class="badge badge-closed clickable-badge' + (af === 'closed' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'closed\',\'agent\')">' + closedA + ' Closed</span>';
 
     state.cachedAgentTasks = tasks;
     updateSortButtons('agent');
@@ -673,15 +877,19 @@
     var tasks = context === 'dashboard' ? state.cachedDashboardTasks : state.cachedAgentTasks;
 
     var filtered;
-    if (filter === 'all') {
-      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled' && t.status !== 'hold'; });
-    } else if (filter === 'in_progress') {
-      filtered = tasks.filter(function(t) { return !t.parentTaskId && (t.status === 'in_progress' || t.status === 'planning' || t.status === 'revision_needed'); });
+    if (filter === 'pending') {
+      // Pending shows ALL tasks needing attention - including subtasks
+      filtered = tasks.filter(function(t) { return t.status === 'planning' || t.status === 'pending_approval'; });
+    } else if (filter === 'working') {
+      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === 'working'; });
+    } else if (filter === 'done') {
+      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === 'done'; });
+    } else if (filter === 'hold') {
+      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === 'hold'; });
+    } else if (filter === 'cancelled') {
+      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === 'cancelled'; });
     } else if (filter === 'closed') {
-      filtered = tasks.filter(function(t) { return !t.parentTaskId && (t.status === 'closed' || t.status === 'done'); });
-    } else if (filter === 'pending_approval') {
-      // Pending shows ALL tasks needing review - including subtasks, since the owner must see them
-      filtered = tasks.filter(function(t) { return t.status === 'pending_approval'; });
+      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === 'closed'; });
     } else {
       filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === filter; });
     }
@@ -734,7 +942,7 @@
     if (!task.dependsOn || task.dependsOn.length === 0) return false;
     return task.dependsOn.some(function(depId) {
       var dep = allTasks.find(function(t) { return t.id === depId; });
-      return !dep || (dep.status !== 'accepted' && dep.status !== 'closed' && dep.status !== 'done');
+      return !dep || (dep.status !== 'closed' && dep.status !== 'done');
     });
   }
 
@@ -846,7 +1054,7 @@
     nodes.forEach(function(t) { columns[colMap[t.id] || 0].push(t); });
 
     // Sort within columns: active statuses first
-    var statusPriority = { in_progress: 0, revision_needed: 1, pending_approval: 2, planning: 3, accepted: 4, done: 5, hold: 6, closed: 7, cancelled: 8 };
+    var statusPriority = { working: 0, pending_approval: 1, planning: 2, done: 3, hold: 4, closed: 5, cancelled: 6 };
     columns.forEach(function(col) {
       col.sort(function(a, b) {
         var sa = statusPriority[a.status] !== undefined ? statusPriority[a.status] : 8;
@@ -1124,9 +1332,9 @@
   }
 
   var STATUS_LABELS = {
-    planning: 'planning', in_progress: 'working', pending_approval: 'pending',
-    accepted: 'accepted', done: 'done', closed: 'closed',
-    revision_needed: 'improve', hold: 'hold', cancelled: 'cancelled',
+    planning: 'planning', working: 'working', pending_approval: 'pending',
+    done: 'done', closed: 'closed',
+    hold: 'hold', cancelled: 'cancelled',
     approved: 'execute'
   };
 
@@ -1140,7 +1348,7 @@
     }
     var hasOutput = t.knowledgeDocId || t.hasDeliverable;
     var outputIcon = hasOutput ? '<span class="task-output-icon" title="Has output"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>' : '';
-    var isWorking = t.status === 'in_progress';
+    var isWorking = t.status === 'working';
     var workingDot = isWorking ? '<span class="agent-working-dot" title="Working"></span>' : '';
     var autopilotIcon = t.autopilot ? '<span class="autopilot-badge" title="Autopilot">&#9881;</span>' : '';
     var blocked = isTaskBlocked(t, state.tasks);
@@ -1162,7 +1370,7 @@
       var dueDate = new Date(t.dueDate);
       var now = new Date();
       now.setHours(0, 0, 0, 0);
-      var isOverdue = dueDate < now && t.status !== 'closed' && t.status !== 'done' && t.status !== 'accepted';
+      var isOverdue = dueDate < now && t.status !== 'closed' && t.status !== 'done';
       dueDateHtml = '<span class="task-due' + (isOverdue ? ' task-due-overdue' : '') + '" title="Due: ' + dueDate.toLocaleDateString() + '">' + dueDate.toLocaleDateString() + '</span>';
     }
     var timeAgoHtml = t.createdAt ? '<span class="task-time-ago">' + timeAgo(t.createdAt) + '</span>' : '';
@@ -1208,7 +1416,7 @@
       // Update panel title text without destroying the view-mode-toggle buttons inside the h3
       var titleEl = document.getElementById('dashboard-tasks-title');
       if (titleEl) {
-        var labels = { all: 'All Tasks', pending_approval: 'Pending Review', in_progress: 'Working', accepted: 'Accepted', done: 'Done', closed: 'Closed', revision_needed: 'Improve', hold: 'On Hold' };
+        var labels = { pending: 'Pending', working: 'Working', done: 'Done', hold: 'On Hold', cancelled: 'Cancelled', closed: 'Closed' };
         var titleText = labels[filter] || filter.replace(/_/g, ' ');
         var firstText = titleEl.firstChild;
         if (firstText && firstText.nodeType === 3) {
@@ -1366,6 +1574,9 @@
     if (tab === 'files' && state.currentAgentId) {
       loadAgentFiles(state.currentAgentId);
     }
+    if (tab === 'stats' && state.currentAgentId) {
+      loadAgentStats(state.currentAgentId);
+    }
   }
 
   function switchFilesSubTab(subtab) {
@@ -1375,6 +1586,117 @@
     document.querySelectorAll('.agent-files-subtab-panel').forEach(function(panel) {
       panel.classList.toggle('active', panel.id === 'agent-files-subtab-' + subtab);
     });
+  }
+
+  // ── Agent Stats Tab ─────────────────────────────
+  var statsCache = null;
+
+  async function loadStats() {
+    if (statsCache && Date.now() - statsCache._ts < 30000) return statsCache;
+    try {
+      var data = await api.get('/api/stats');
+      data._ts = Date.now();
+      statsCache = data;
+      return data;
+    } catch(e) {
+      console.error('Failed to load stats:', e);
+      return null;
+    }
+  }
+
+  function formatHours(h) {
+    if (h < 1) return '<1h';
+    if (h < 24) return Math.round(h) + 'h';
+    var d = h / 24;
+    return d < 2 ? '1 day' : Math.round(d * 10) / 10 + ' days';
+  }
+
+  async function loadAgentStats(agentId) {
+    var el = document.getElementById('agent-stats-content');
+    if (!el) return;
+    el.innerHTML = '<p class="empty-state">Loading stats...</p>';
+    var data = await loadStats();
+    if (!data) { el.innerHTML = '<p class="empty-state">Failed to load stats</p>'; return; }
+    var ag = null;
+    (data.agents || []).forEach(function(a) { if (a.id === agentId) ag = a; });
+    if (!ag) { el.innerHTML = '<p class="empty-state">No stats available for this agent</p>'; return; }
+
+    var revPct = Math.round(ag.revisionRate * 100);
+    var revColor = revPct <= 10 ? 'var(--green)' : revPct <= 25 ? 'var(--yellow)' : 'var(--red)';
+
+    var html = '<div class="perf-stats-row">';
+    html += '<div class="perf-stat-card"><div class="perf-stat-value">' + ag.closedTasks + '</div><div class="perf-stat-label">Closed</div></div>';
+    html += '<div class="perf-stat-card"><div class="perf-stat-value">' + ag.activeTasks + '</div><div class="perf-stat-label">Active</div></div>';
+    html += '<div class="perf-stat-card"><div class="perf-stat-value">' + formatHours(ag.avgCloseTimeHours) + '</div><div class="perf-stat-label">Avg Close Time</div></div>';
+    html += '<div class="perf-stat-card"><div class="perf-stat-value" style="color:' + revColor + '">' + revPct + '%</div><div class="perf-stat-label">Revision Rate</div></div>';
+    html += '</div>';
+
+    // Activity - last 7d / 30d
+    html += '<div class="panel" style="margin-top:16px"><h3>Activity</h3>';
+    html += '<div class="perf-activity-row">';
+    html += '<div class="perf-activity-block"><div class="perf-activity-label">Last 7 days</div><div class="perf-activity-nums"><span class="perf-num-green">' + ag.last7Days.closed + ' closed</span> <span class="perf-num-muted">' + ag.last7Days.created + ' created</span></div></div>';
+    html += '<div class="perf-activity-block"><div class="perf-activity-label">Last 30 days</div><div class="perf-activity-nums"><span class="perf-num-green">' + ag.last30Days.closed + ' closed</span> <span class="perf-num-muted">' + ag.last30Days.created + ' created</span></div></div>';
+    html += '</div></div>';
+
+    // Task type breakdown
+    var types = ag.tasksByType || {};
+    var typeKeys = Object.keys(types);
+    if (typeKeys.length > 0) {
+      var maxType = Math.max.apply(null, typeKeys.map(function(k) { return types[k]; }));
+      html += '<div class="panel" style="margin-top:16px"><h3>Task Types</h3>';
+      typeKeys.sort(function(a,b) { return types[b] - types[a]; });
+      typeKeys.forEach(function(k) {
+        var pct = maxType > 0 ? Math.round(types[k] / maxType * 100) : 0;
+        html += '<div class="perf-type-row"><span class="perf-type-name">' + escHtml(k) + '</span><div class="perf-type-bar-bg"><div class="perf-type-bar" style="width:' + pct + '%"></div></div><span class="perf-type-count">' + types[k] + '</span></div>';
+      });
+      html += '</div>';
+    }
+
+    // Blockers
+    if (ag.blockerCount > 0) {
+      html += '<div class="panel" style="margin-top:16px"><h3>Blockers</h3><p style="color:var(--red)">' + ag.blockerCount + ' task(s) currently blocked</p></div>';
+    }
+
+    el.innerHTML = html;
+  }
+
+  async function renderTeamPerformance() {
+    var section = document.getElementById('team-performance-section');
+    if (!section) return;
+    var data = await loadStats();
+    if (!data || !data.agents || data.agents.length === 0) { section.style.display = 'none'; return; }
+    section.style.display = '';
+    var cardsEl = document.getElementById('team-perf-cards');
+    var html = '';
+    data.agents.forEach(function(ag) {
+      if (ag.totalTasks === 0) return;
+      var revPct = Math.round(ag.revisionRate * 100);
+      var revColor = revPct <= 10 ? 'var(--green)' : revPct <= 25 ? 'var(--yellow)' : 'var(--red)';
+      html += '<div class="team-perf-card" onclick="App.navigate(\'agent-detail\',\'' + ag.id + '\'); setTimeout(function(){App.switchAgentTab(\'stats\');},100);">';
+      html += '<div class="team-perf-card-name">' + escHtml(ag.name) + '</div>';
+      html += '<div class="team-perf-card-role">' + escHtml(ag.role) + '</div>';
+      html += '<div class="team-perf-card-stats">';
+      html += '<div><span class="team-perf-num">' + ag.closedTasks + '</span> closed</div>';
+      html += '<div><span class="team-perf-num">' + ag.activeTasks + '</span> active</div>';
+      html += '<div>Avg: <span class="team-perf-num">' + formatHours(ag.avgCloseTimeHours) + '</span></div>';
+      html += '<div>Rev: <span class="team-perf-num" style="color:' + revColor + '">' + revPct + '%</span></div>';
+      html += '</div></div>';
+    });
+    cardsEl.innerHTML = html;
+  }
+
+  var teamPerfExpanded = false;
+  function toggleTeamPerf() {
+    teamPerfExpanded = !teamPerfExpanded;
+    var cardsEl = document.getElementById('team-perf-cards');
+    var icon = document.getElementById('team-perf-toggle-icon');
+    if (teamPerfExpanded) {
+      cardsEl.style.display = '';
+      icon.innerHTML = '&#9660;';
+    } else {
+      cardsEl.style.display = 'none';
+      icon.innerHTML = '&#9654;';
+    }
   }
 
   // ── Agent Files Tab ─────────────────────────────
@@ -1462,7 +1784,7 @@
       var statusEl = document.getElementById('task-detail-status');
       var displayStatus = task.status || 'planning';
       var statusLabel = STATUS_LABELS[displayStatus] || displayStatus.replace(/_/g, ' ');
-      if (displayStatus === 'in_progress') {
+      if (displayStatus === 'working') {
         statusEl.innerHTML = escHtml(statusLabel) + ' <span class="agent-working-dot"></span>';
       } else {
         statusEl.textContent = statusLabel;
@@ -1485,7 +1807,7 @@
       if (task.dueDate) {
         var dueDate = new Date(task.dueDate);
         var today = new Date(); today.setHours(0, 0, 0, 0);
-        var isOverdue = dueDate < today && task.status !== 'closed' && task.status !== 'done' && task.status !== 'accepted';
+        var isOverdue = dueDate < today && task.status !== 'closed' && task.status !== 'done';
         dateHtml += ' | <span class="' + (isOverdue ? 'task-due-overdue' : 'task-due-detail') + '">Due: ' + dueDate.toLocaleDateString() + '</span>';
       }
       document.getElementById('task-detail-date').innerHTML = dateHtml || '-';
@@ -1513,7 +1835,7 @@
         promoteBar.classList.add('hidden');
         knowledgeLink.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> <a onclick="App.openKnowledgeDoc(\'' + task.knowledgeDocId + '\')">View in Knowledge Base</a>';
         knowledgeLink.classList.remove('hidden');
-      } else if (task.status === 'accepted' || task.status === 'closed' || task.status === 'done') {
+      } else if (task.status === 'closed' || task.status === 'done') {
         promoteBar.classList.remove('hidden');
         knowledgeLink.classList.add('hidden');
       } else {
@@ -1743,7 +2065,7 @@
 
     var steps = [
       { key: 'pending_approval', label: 'Pending',   icon: '&#9679;'  },
-      { key: 'accepted',         label: 'Accepted <span style="color:#6f6;font-size:0.75em;margin-left:2px">&#9654;</span>',  icon: '&#10003;', action: 'accept' },
+      { key: 'working',          label: 'Accept',     icon: '&#10003;', action: 'accept' },
       { key: 'done',             label: 'Done',      icon: '&#10004;', action: 'done'  },
       { key: 'closed',           label: 'Closed',    icon: '&#9632;', action: 'close'  }
     ];
@@ -1759,7 +2081,7 @@
     html += '<div class="status-pipeline-row">';
 
     // Working indicator (before autopilot)
-    var isWorking = current === 'in_progress' || current === 'planning' || current === 'revision_needed';
+    var isWorking = current === 'working' || current === 'planning';
     if (isWorking) {
       html += '<span class="pipeline-working-indicator"><span class="agent-working-dot"></span> Working</span>';
     }
@@ -1807,7 +2129,7 @@
     // Side states (improve, hold, cancel)
     for (var j = 0; j < sideStates.length; j++) {
       var ss = sideStates[j];
-      var isActiveSide = (ss.key === 'improve' && current === 'revision_needed') || ss.key === current;
+      var isActiveSide = ss.key === current;
       if (ss.needsFeedback) {
         html += '<button class="status-step status-step-side' + (isActiveSide ? ' status-step-active' : '') + '" onclick="App.toggleFeedback()" title="Send feedback for revision">';
       } else {
@@ -1834,7 +2156,7 @@
     html += '<textarea id="task-review-comments" placeholder="Write feedback for the agent..."></textarea>';
     html += '<div class="task-feedback-actions">';
     html += '<button class="btn btn-primary" onclick="App.reviewTask(\'improve\')">Send Feedback</button>';
-    html += '<button class="attach-image-btn" onclick="App.attachTaskImage()" title="Paste image from clipboard">&#128203; Attach Image</button>';
+    html += '<button class="attach-image-btn" onclick="App.attachTaskImage()" title="Paste image from clipboard"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg> Attach Image</button>';
     html += '<button class="btn btn-secondary" onclick="App.toggleFeedback()">Cancel</button>';
     html += '</div>';
     html += '<div id="feedback-image-area"></div>';
@@ -1866,7 +2188,7 @@
     }
 
     // Result display
-    if (task.result && (current === 'closed' || current === 'accepted')) {
+    if (task.result && (current === 'closed' || current === 'done')) {
       html += '<div class="session-outcome">';
       html += '<div class="session-outcome-result">' + linkifyText(escHtml(task.result)).replace(/\n/g, '<br>') + '</div>';
       html += '</div>';
@@ -1893,6 +2215,16 @@
     try {
       var task = await api.get('/api/tasks/' + id);
       var newVal = !task.autopilot;
+      // Confirm before enabling autopilot (higher-risk action)
+      if (newVal) {
+        var ok = await confirmAction({
+          title: 'Enable Autopilot?',
+          message: 'Autopilot lets the agent execute without waiting for your approval. You can turn it off at any time.',
+          confirmLabel: 'Enable',
+          variant: 'neutral'
+        });
+        if (!ok) return;
+      }
       await api.put('/api/tasks/' + id, { autopilot: newVal });
       toast('Autopilot ' + (newVal ? 'enabled' : 'disabled'));
       await openTask(id);
@@ -2030,17 +2362,6 @@
     var id = state.currentTaskId;
     if (!id) return;
 
-    // Confirmation for Accept
-    if (newStatus === 'accept') {
-      var ok = await confirmAction({
-        title: 'Accept this task?',
-        message: 'This will approve the work and trigger the agent to execute.',
-        confirmLabel: 'Accept',
-        variant: 'neutral'
-      });
-      if (!ok) return;
-    }
-
     try {
       // Actions that go through the action handler (write version timeline)
       var actionStatuses = { accept: true, done: true, close: true };
@@ -2051,7 +2372,7 @@
       }
       var labels = {
         planning: 'Set to planning', pending_approval: 'Pending review',
-        in_progress: 'Working', accept: 'Accepted',
+        working: 'Working', accept: 'Accepted',
         done: 'Done', close: 'Closed', hold: 'On hold', cancelled: 'Cancelled'
       };
       toast(labels[newStatus] || 'Status updated');
@@ -2060,7 +2381,7 @@
       if (newStatus === 'accept') {
         if (termWs && termWs.readyState === 1) {
           var task = await api.get('/api/tasks/' + id);
-          var msg = 'Task ' + id + ' "' + task.title + '" was accepted by the owner. Launch the assigned agent to execute it.\r';
+          var msg = 'Task ' + id + ' "' + task.title + '" was accepted and is now working. Launch the assigned agent to execute it.\r';
           termWs.send(JSON.stringify({ type: 'input', data: msg }));
         } else {
           toast('Terminal not connected - tell the orchestrator manually', 'warning');
@@ -2243,7 +2564,7 @@
           '<textarea class="file-preview-feedback-textarea" placeholder="Write feedback for the agent..."></textarea>' +
           '<div class="file-preview-feedback-actions">' +
             '<button class="btn btn-primary" onclick="App.submitPreviewFeedback()">Send Feedback</button>' +
-            '<button class="attach-image-btn" onclick="App.attachPreviewImage()" title="Paste image from clipboard">&#128203; Attach Image</button>' +
+            '<button class="attach-image-btn" onclick="App.attachPreviewImage()" title="Paste image from clipboard"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg> Attach Image</button>' +
             '<button class="btn btn-secondary" onclick="App.togglePreviewFeedback()">Cancel</button>' +
           '</div>' +
           '<div class="file-preview-feedback-images"></div>' +
@@ -2814,10 +3135,10 @@
         container.innerHTML = '<span>&#9888; No vault configured yet</span>';
       } else if (status.locked) {
         container.className = 'vault-status-bar locked';
-        container.innerHTML = '<span>&#128274; Vault is locked</span>';
+        container.innerHTML = '<span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Vault is locked</span>';
       } else {
         container.className = 'vault-status-bar unlocked';
-        container.innerHTML = '<span>&#128275; Vault unlocked</span><button class="btn btn-secondary" onclick="App.lockSecrets()" style="font-size:11px;padding:3px 10px;margin-left:auto">Lock</button>';
+        container.innerHTML = '<span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg> Vault unlocked</span><button class="btn btn-secondary" onclick="App.lockSecrets()" style="font-size:11px;padding:3px 10px;margin-left:auto">Lock</button>';
       }
     }).catch(function() {
       container.className = 'vault-status-bar not-configured';
@@ -2844,6 +3165,7 @@
     loadBackupList();
     renderVaultStatusBar('vault-status-bar-secrets');
     renderVaultStatusBar('vault-status-bar-passwords');
+    loadNotifPrefs();
     // Restore last active section
     if (state.settingsSection) {
       switchSettingsSection(state.settingsSection);
@@ -3479,7 +3801,7 @@
       try {
         var tasks = await api.get('/api/tasks');
         var activeTasks = (tasks.tasks || []).filter(function(t) {
-          return t.status === 'in_progress' || t.status === 'accepted';
+          return t.status === 'working';
         });
         if (activeTasks.length > 0) {
           if (warningEl) warningEl.classList.remove('hidden');
@@ -4035,6 +4357,10 @@
         var data = JSON.parse(evt.data);
         if (data.type === 'terminal-output' && terminal) {
           terminal.write(data.data);
+          // Intercept RC output for Remote Control feature
+          if (rcState.listening || rcState.active) {
+            parseRcOutput(data.data);
+          }
         } else if (data.type === 'terminal-ready') {
           termSessionId = data.session;
           sessionStorage.setItem('termSessionId', termSessionId);
@@ -4082,6 +4408,149 @@
       termSessionId = '';
       if (terminal) terminal.clear();
       connectTerminalWs();
+    }
+  }
+
+  // ── Remote Control ────────────────────────────────
+  var rcState = { active: false, url: '', listening: false };
+
+  function openRemoteControl() {
+    document.getElementById('remote-control-modal').classList.remove('hidden');
+    if (rcState.active && rcState.url) {
+      updateRcModal('active');
+    }
+  }
+
+  function closeRemoteControl() {
+    document.getElementById('remote-control-modal').classList.add('hidden');
+  }
+
+  function startRemoteControl() {
+    if (!termWs || termWs.readyState !== 1) {
+      toast('Terminal not connected - open the Command Center first', 'warning');
+      return;
+    }
+    if (termSessionEnded) {
+      toast('CLI session ended - restart it first', 'warning');
+      return;
+    }
+    rcState.listening = true;
+    rcState.url = '';
+    updateRcModal('generating');
+    termWs.send(JSON.stringify({ type: 'input', data: '/rc\r' }));
+    rcState._timeout = setTimeout(function() {
+      if (rcState.listening && !rcState.active) {
+        rcState.listening = false;
+        updateRcModal('inactive');
+        toast('Remote control timed out - check the terminal output', 'warning');
+      }
+    }, 30000);
+  }
+
+  function stopRemoteControl() {
+    if (termWs && termWs.readyState === 1) {
+      termWs.send(JSON.stringify({ type: 'input', data: '\x03' }));
+    }
+    rcState.active = false;
+    rcState.url = '';
+    rcState.listening = false;
+    if (rcState._timeout) { clearTimeout(rcState._timeout); rcState._timeout = null; }
+    updateRcModal('inactive');
+    var btn = document.getElementById('btn-remote-control');
+    if (btn) btn.classList.remove('rc-active');
+  }
+
+  function parseRcOutput(rawData) {
+    var clean = rawData.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
+    var urlMatch = clean.match(/https:\/\/[^\s\x00-\x1f]+/);
+    if (urlMatch && !rcState.active) {
+      var url = urlMatch[0].replace(/[\s\r\n]+$/, '');
+      if (url.indexOf('claude') !== -1 || url.indexOf('anthropic') !== -1 || url.indexOf('remote') !== -1) {
+        rcState.url = url;
+        rcState.active = true;
+        rcState.listening = false;
+        if (rcState._timeout) { clearTimeout(rcState._timeout); rcState._timeout = null; }
+        updateRcModal('active');
+        var btn = document.getElementById('btn-remote-control');
+        if (btn) btn.classList.add('rc-active');
+      }
+    }
+    var lower = clean.toLowerCase();
+    if (rcState.active && (lower.indexOf('remote control stopped') !== -1 || lower.indexOf('remote control disconnected') !== -1 || lower.indexOf('session ended') !== -1)) {
+      rcState.active = false;
+      rcState.url = '';
+      rcState.listening = false;
+      updateRcModal('inactive');
+      var btn2 = document.getElementById('btn-remote-control');
+      if (btn2) btn2.classList.remove('rc-active');
+    }
+  }
+
+  function updateRcModal(status) {
+    var dot = document.querySelector('#rc-status .rc-status-dot');
+    var text = document.getElementById('rc-status-text');
+    var urlArea = document.getElementById('rc-url-area');
+    var qrArea = document.getElementById('rc-qr-area');
+    var startBtn = document.getElementById('rc-start-btn');
+    var stopBtn = document.getElementById('rc-stop-btn');
+    var urlInput = document.getElementById('rc-url-input');
+    if (!dot || !text) return;
+    dot.className = 'rc-status-dot';
+    if (status === 'generating') {
+      dot.classList.add('rc-status-generating');
+      text.textContent = 'Starting...';
+      urlArea.classList.add('hidden');
+      qrArea.classList.add('hidden');
+      startBtn.classList.add('hidden');
+      stopBtn.classList.remove('hidden');
+    } else if (status === 'active') {
+      dot.classList.add('rc-status-active');
+      text.textContent = 'Connected';
+      urlInput.value = rcState.url;
+      urlArea.classList.remove('hidden');
+      qrArea.classList.remove('hidden');
+      startBtn.classList.add('hidden');
+      stopBtn.classList.remove('hidden');
+      renderRcQr(rcState.url);
+    } else {
+      dot.classList.add('rc-status-inactive');
+      text.textContent = 'Inactive';
+      urlArea.classList.add('hidden');
+      qrArea.classList.add('hidden');
+      startBtn.classList.remove('hidden');
+      stopBtn.classList.add('hidden');
+    }
+  }
+
+  function renderRcQr(url) {
+    var container = document.getElementById('rc-qr-code');
+    if (!container) return;
+    try {
+      if (typeof qrcode === 'function') {
+        var qr = qrcode(0, 'M');
+        qr.addData(url);
+        qr.make();
+        container.innerHTML = qr.createSvgTag(5, 0);
+      } else {
+        container.innerHTML = '<p style="font-size:11px;color:#666;word-break:break-all;">' + url + '</p>';
+      }
+    } catch(e) {
+      container.innerHTML = '<p style="font-size:11px;color:#666;">QR generation failed</p>';
+    }
+  }
+
+  function copyRcUrl() {
+    if (!rcState.url) return;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(rcState.url).then(function() {
+        toast('URL copied to clipboard');
+      }).catch(function() {
+        var input = document.getElementById('rc-url-input');
+        if (input) { input.select(); toast('Select and copy the URL'); }
+      });
+    } else {
+      var input = document.getElementById('rc-url-input');
+      if (input) { input.select(); toast('Select and copy the URL'); }
     }
   }
 
@@ -4157,6 +4626,24 @@
       toast('Team setup complete! Use the Command Center to build your team.');
     } catch(e) {
       toast('Setup failed: ' + e.message, 'error');
+      console.error(e);
+    }
+  }
+
+  async function wizardSkip() {
+    try {
+      await api.post('/api/write-file', {
+        path: 'config/system.json',
+        content: JSON.stringify({ initialized: true, teamName: 'My Team', teamDescription: '', version: '1.0.0' }, null, 2)
+      });
+      await api.post('/api/system/initialize', {});
+      updateSidebarHeader('My Team');
+      document.getElementById('wizard-overlay').classList.add('hidden');
+      await loadSidebarAgents();
+      navigate('chat');
+      toast('Setup skipped - you can configure your profile in Settings anytime.');
+    } catch(e) {
+      toast('Skip failed: ' + e.message, 'error');
       console.error(e);
     }
   }
@@ -4796,52 +5283,86 @@
       renderSkills(data.skills || []);
     } catch(e) {
       console.error('Failed to load skills:', e);
-      document.getElementById('skills-grid').innerHTML = '<div class="empty-state">Failed to load skills</div>';
+      var errGrid = document.getElementById('skills-grid-curated') || document.getElementById('skills-grid');
+      if (errGrid) errGrid.innerHTML = '<div class="empty-state">Failed to load skills</div>';
     }
   }
 
+  function renderSkillCard(s) {
+    var installing = !!skillsInstalling[s.id];
+    var statusText = installing ? 'Installing...' : (s.enabled ? 'Enabled' : 'Not installed');
+    var statusClass = installing ? 'installing' : (s.enabled ? 'enabled' : '');
+    var cardClass = s.enabled ? 'skill-card enabled' : 'skill-card';
+    var isUser = !!s.userInstalled;
+    var sourceLabel = s.source === 'registry' ? 'Registry' : s.source === 'npm' ? 'npm' : (isUser ? 'User' : 'Built-in');
+    var sourceClass = isUser ? 'user' : 'builtin';
+    if (s.source === 'registry') sourceClass = 'registry';
+    if (s.source === 'npm') sourceClass = 'npm';
+    var sourceBadge = '<span class="skill-source-badge ' + sourceClass + '">' + sourceLabel + '</span>';
+    var uninstallBtn = isUser ? ' <button class="skill-uninstall-btn" onclick="event.stopPropagation();App.uninstallUserSkill(' + q + s.id + q + ')">Uninstall</button>' : '';
+    var installDate = isUser && s.installedAt ? '<span class="skill-install-date">Installed ' + timeAgo(s.installedAt) + '</span>' : '';
+    return '<div class="' + cardClass + '" data-skill-id="' + s.id + '">' +
+      '<div class="skill-card-header">' +
+        '<div class="skill-card-info">' +
+          '<span class="skill-icon">' + (s.icon || '') + '</span>' +
+          '<div><div class="skill-card-title">' + escHtml(s.name) + '</div></div>' +
+        '</div>' +
+        '<label class="toggle-switch">' +
+          '<input type="checkbox" ' + (s.enabled ? 'checked' : '') + ' ' + (installing ? 'disabled' : '') +
+          ' onchange="App.toggleSkill(' + q + s.id + q + ', this.checked)">' +
+          '<span class="toggle-slider"></span>' +
+        '</label>' +
+      '</div>' +
+      '<div class="skill-card-desc">' + escHtml(s.description) + '</div>' +
+      (s.missingDeps && s.missingDeps.length && !s.enabled ?
+        '<div class="skill-deps-warning">Requires: ' + s.missingDeps.join(', ') + ' (will auto-install)</div>' : '') +
+      (s.settings && s.settings.length && s.enabled ? renderSkillSettings(s) : '') +
+      (s.id === 'github' && s.enabled ? '<div class="github-status-panel" id="github-status-panel"><span class="text-muted">Checking connection...</span></div>' : '') +
+      '<div class="skill-card-footer">' +
+        '<span class="skill-type-badge skill-type-' + s.type + '">' + s.type + '</span>' +
+        sourceBadge +
+        installDate +
+        '<span class="skill-status ' + statusClass + '">' + statusText + '</span>' +
+        uninstallBtn +
+      '</div>' +
+    '</div>';
+  }
+
   function renderSkills(skills) {
-    var grid = document.getElementById('skills-grid');
-    if (!skills.length) {
-      grid.innerHTML = '<div class="empty-state">No skills available</div>';
+    var curatedGrid = document.getElementById('skills-grid-curated');
+    var userGrid = document.getElementById('skills-grid-user');
+    var userSection = document.getElementById('skills-section-user');
+
+    // Fallback for old HTML structure
+    if (!curatedGrid) {
+      var grid = document.getElementById('skills-grid');
+      if (grid) grid.innerHTML = skills.length ? skills.map(renderSkillCard).join('') : '<div class="empty-state">No skills available</div>';
       return;
     }
+
     // Track loaded skill IDs for cross-referencing in Discover tab
     loadedSkillIds = new Set();
     skills.forEach(function(s) { loadedSkillIds.add(s.id); if (s.sourceId) loadedSkillIds.add(s.sourceId); if (s.npmPackage) loadedSkillIds.add(s.npmPackage); });
-    grid.innerHTML = skills.map(function(s) {
-      var installing = !!skillsInstalling[s.id];
-      var statusText = installing ? 'Installing...' : (s.enabled ? 'Enabled' : 'Not installed');
-      var statusClass = installing ? 'installing' : (s.enabled ? 'enabled' : '');
-      var cardClass = s.enabled ? 'skill-card enabled' : 'skill-card';
-      var isUser = !!s.userInstalled;
-      var sourceBadge = isUser ? '<span class="skill-source-badge user">User</span>' : '<span class="skill-source-badge builtin">Built-in</span>';
-      var uninstallBtn = isUser ? ' <button class="skill-uninstall-btn" onclick="event.stopPropagation();App.uninstallUserSkill(' + q + s.id + q + ')">Uninstall</button>' : '';
-      return '<div class="' + cardClass + '" data-skill-id="' + s.id + '">' +
-        '<div class="skill-card-header">' +
-          '<div class="skill-card-info">' +
-            '<span class="skill-icon">' + (s.icon || '') + '</span>' +
-            '<div><div class="skill-card-title">' + escHtml(s.name) + '</div></div>' +
-          '</div>' +
-          '<label class="toggle-switch">' +
-            '<input type="checkbox" ' + (s.enabled ? 'checked' : '') + ' ' + (installing ? 'disabled' : '') +
-            ' onchange="App.toggleSkill(' + q + s.id + q + ', this.checked)">' +
-            '<span class="toggle-slider"></span>' +
-          '</label>' +
-        '</div>' +
-        '<div class="skill-card-desc">' + escHtml(s.description) + '</div>' +
-        (s.missingDeps && s.missingDeps.length && !s.enabled ?
-          '<div class="skill-deps-warning">Requires: ' + s.missingDeps.join(', ') + ' (will auto-install)</div>' : '') +
-        (s.settings && s.settings.length && s.enabled ? renderSkillSettings(s) : '') +
-        (s.id === 'github' && s.enabled ? '<div class="github-status-panel" id="github-status-panel"><span class="text-muted">Checking connection...</span></div>' : '') +
-        '<div class="skill-card-footer">' +
-          '<span class="skill-type-badge skill-type-' + s.type + '">' + s.type + '</span>' +
-          sourceBadge +
-          '<span class="skill-status ' + statusClass + '">' + statusText + '</span>' +
-          uninstallBtn +
-        '</div>' +
-      '</div>';
-    }).join('');
+
+    var curated = skills.filter(function(s) { return !s.userInstalled; });
+    var userSkills = skills.filter(function(s) { return !!s.userInstalled; });
+
+    // Render curated skills
+    if (curated.length) {
+      curatedGrid.innerHTML = curated.map(renderSkillCard).join('');
+    } else {
+      curatedGrid.innerHTML = '<div class="empty-state">No curated skills available</div>';
+    }
+
+    // Render user-installed skills
+    if (userSkills.length) {
+      userGrid.innerHTML = userSkills.map(renderSkillCard).join('');
+      userSection.style.display = '';
+    } else {
+      userGrid.innerHTML = '<div class="empty-state">No custom skills installed. Use the Discover tab to find and install MCP skills.</div>';
+      userSection.style.display = '';
+    }
+
     // Load GitHub status if enabled
     var ghCard = document.getElementById('github-status-panel');
     if (ghCard) loadGitHubStatus();
@@ -5259,6 +5780,11 @@
     }
     // Close all if clicking outside
     document.querySelectorAll('.custom-select.open').forEach(function(el) { el.classList.remove('open'); });
+    // Close notification dropdown if clicking outside
+    var dd = document.getElementById('notif-dropdown');
+    if (dd && dd.style.display !== 'none' && !e.target.closest('.notif-dropdown') && !e.target.closest('.notif-bell')) {
+      dd.style.display = 'none';
+    }
   });
 
   async function saveAutopilot() {
@@ -5466,9 +5992,9 @@
       title: 'Dashboard & Views',
       icon: '&#9632;',
       content: '<h2>Dashboard &amp; Views</h2>' +
-        '<p>The Dashboard is your <strong>mission control</strong>. It shows all tasks, their statuses, and the latest round table summary. It defaults to showing <strong>Active</strong> tasks - all non-closed work across the team.</p>' +
-        '<h3>Stat Cards</h3>' +
-        '<p>Click any stat card to filter: <strong>Active</strong>, <strong>Pending</strong>, <strong>Working</strong>, <strong>Accepted</strong>, or <strong>Closed</strong>. The pending count includes subtasks so nothing slips through.</p>' +
+        '<p>The Dashboard is your <strong>mission control</strong>. It shows all tasks, their statuses, and the latest round table summary. It defaults to showing <strong>Pending</strong> tasks - everything needing your attention.</p>' +
+        '<h3>Tab Cards</h3>' +
+        '<p>Click any tab card to filter: <strong>Pending</strong> (planning/pending approval), <strong>Working</strong>, <strong>Done</strong>, <strong>Hold</strong>, <strong>Cancelled</strong>, or <strong>Closed</strong>. The pending count includes subtasks so nothing slips through.</p>' +
         '<h3>View Modes</h3>' +
         '<ul>' +
         '<li><strong>Tree</strong> (default) - Hierarchical view showing parent tasks with their subtasks nested below. Expandable/collapsible.</li>' +
@@ -5508,7 +6034,7 @@
         '<h3>Inline Improve</h3>' +
         '<p>When previewing a deliverable file or image, you can click <strong>Improve</strong> directly from the preview modal. Type your feedback right there - no need to go back to the task page first.</p>' +
         '<h3>Confirmation Dialogs</h3>' +
-        '<p>Both <strong>Accept</strong> and <strong>Improve</strong> now show a confirmation dialog before executing. This prevents accidental clicks and gives you a chance to add feedback text for Improve.</p>' +
+        '<p><strong>Improve</strong> shows a confirmation dialog before executing, giving you a chance to add feedback text. <strong>Accept</strong> executes immediately for a frictionless workflow. Toggling <strong>Autopilot ON</strong> requires confirmation since it lets agents execute without approval.</p>' +
         '<h3>Auto-Trigger</h3>' +
         '<p>When you click Accept or Improve, the orchestrator is <strong>immediately notified</strong> via the CLI. You do not need to run a round table or manually tell it - the agent picks up the work right away.</p>' +
         '<h3>Subtasks &amp; Dependencies</h3>' +
@@ -5526,8 +6052,8 @@
         '<h3>What Happens (In Order)</h3>' +
         '<p><strong>Phase 1: Execute</strong> - The orchestrator acts before it reports:</p>' +
         '<ul>' +
-        '<li>Closes all accepted tasks immediately</li>' +
-        '<li>Launches agents on tasks that have your feedback (improve status)</li>' +
+        '<li>Launches agents on working tasks to execute</li>' +
+        '<li>Launches agents on planning tasks that have your feedback</li>' +
         '<li>Starts agents on any ready tasks that haven' + q + 't been picked up</li>' +
         '<li>Flags stalled work with no recent progress</li>' +
         '</ul>' +
@@ -5635,7 +6161,7 @@
     },
     {
       title: 'Security & Secrets',
-      icon: '&#128274;',
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
       content: '<h2>Security &amp; Secrets</h2>' +
         '<p>TeamHero runs <strong>100% locally</strong> on your machine. No cloud, no external servers, no telemetry. Your data never leaves your computer unless you explicitly tell an agent to post or send something.</p>' +
         '<h3>Agent Sandbox - What You Need to Know</h3>' +
@@ -5791,6 +6317,7 @@
     wizardNext: wizardNext,
     wizardBack: wizardBack,
     wizardFinish: wizardFinish,
+    wizardSkip: wizardSkip,
     selectTemplate: selectTemplate,
     saveAgent: saveAgent,
     editAgent: editAgent,
@@ -5800,6 +6327,7 @@
     saveMemory: saveMemory,
     switchAgentTab: switchAgentTab,
     switchFilesSubTab: switchFilesSubTab,
+    toggleTeamPerf: toggleTeamPerf,
     loadAgentFiles: loadAgentFiles,
     toggleFilesSection: toggleFilesSection,
     openTask: openTask,
@@ -5844,6 +6372,11 @@
     checkForUpdates: checkForUpdates,
     performUpgrade: performUpgrade,
     runHealthCheck: runHealthCheck,
+    openRemoteControl: openRemoteControl,
+    startRemoteControl: startRemoteControl,
+    stopRemoteControl: stopRemoteControl,
+    closeRemoteControl: closeRemoteControl,
+    copyRcUrl: copyRcUrl,
     closeUpgradeModal: closeUpgradeModal,
     toggleUpgradeBtn: toggleUpgradeBtn,
     confirmUpgrade: confirmUpgrade,
@@ -5908,6 +6441,10 @@
     toggleGlobalAutopilot: toggleGlobalAutopilot,
     cancelAutopilotConfirm: cancelAutopilotConfirm,
     confirmGlobalAutopilot: confirmGlobalAutopilot,
+    toggleNotifications: toggleNotifications,
+    clickNotification: clickNotification,
+    clearAllNotifications: clearAllNotifications,
+    saveNotifPrefs: saveNotifPrefs,
   };
 
   init();

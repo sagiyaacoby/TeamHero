@@ -1,7 +1,7 @@
 # Team Rules
 
 ## #1 Rule: Plan First, Then Execute
-- Every task follows: Plan -> Review -> Execute -> Verify -> Close
+- Every task follows: Plan -> Review -> Execute -> Done
 - Agent's FIRST action is creating a plan. Plan goes to pending_approval. Only AFTER approval does agent execute.
 - Applies to ALL task types. Exception: owner says "just do it" or task is autopilot.
 - When work is approved, execute fully - no stopping to ask again.
@@ -28,46 +28,62 @@
 
 ## Task Lifecycle
 
-### Flow: Prepare -> Review -> Execute -> Verify -> Close
+### Statuses: planning, pending_approval, working, done, closed, hold, cancelled
+
+### Flow: Plan -> Review -> Execute -> Done -> (auto) Closed
 
 **Phase 1: Plan (MANDATORY)**
-1. Set `in_progress`. Log "Planning: {what I will do}"
+1. Set `working`. Log "Planning: {what I will do}"
 2. Create plan: What will be done, How, which files/sources/platforms
 3. Save plan to `data/tasks/{id}/v{n}/plan.md`
 4. Update version.json: `content` (REQUIRED) + `deliverable` (path to plan)
 5. Set `pending_approval`. STOP and wait.
 
 **Phase 2: Execute (after owner accepts)**
-6. Set `in_progress`. Log "Executing: {action}"
+6. Task becomes `working` (accept action). Log "Executing: {action}"
 7. Execute the approved work
 8. If blocker: `PUT /api/tasks/{id} {"blocker":"reason"}` and STOP
 9. Update version.json: `content` (summary) + `result` (proof - URLs, file paths, verification)
-10. **Auto-close when execution is complete.** Do NOT leave tasks in pending_approval after execution.
+10. **Set `done` when execution is complete.** Do NOT leave tasks in pending_approval after execution.
 
-### Auto-close Rule (HARD RULE - NO NOISE)
-- **After execution, agents MUST set status to `closed` directly** - not `pending_approval`
-- Concrete proof (submitted PRs, deployed code, live URLs, file changes) = close immediately
-- Do not create unnecessary pending_approval states that require owner to manually close
-- The system must stay clean - no stale tasks sitting in pending_approval after work is done
+### Done -> Closed (Auto-Transition)
+- **After execution, agents MUST set status to `done`** - not `closed` or `pending_approval`
+- Tasks stay in `done` for 2 days, giving the owner time to review
+- After 2 days, the system auto-moves `done` to `closed`
+- Owner can manually close a `done` task at any time
+- Owner can send `done` back to `planning` via improve if changes are needed
+- `closed` is terminal - no agent should touch it
 - Exception: only use pending_approval after execution if the deliverable genuinely needs owner review (e.g., content that will be published publicly under owner's name)
+
+### Actions
+- **Accept**: pending_approval -> working (owner approves plan, agent executes)
+- **Improve**: pending_approval -> planning, or done -> planning (owner sends feedback, agent revises)
+- **Close**: done -> closed (manual close, or auto after 2 days)
+- **Hold**: planning/pending_approval/working/done -> hold (pause work)
+- **Cancel**: any status except closed -> cancelled
+- **Resume**: hold -> planning (resume paused work)
+
+### Valid Status Transitions
+- `planning` -> `pending_approval` (agent submits plan), `working`, `hold`, `cancelled`
+- `pending_approval` -> `working` (accept), `planning` (improve), `hold`, `cancelled`
+- `working` -> `done` (agent completes), `pending_approval` (agent needs review), `hold`, `cancelled`
+- `done` -> `closed` (manual or auto), `planning` (improve), `hold`, `cancelled`
+- `hold` -> `planning` (resume)
+- `cancelled` -> (terminal, no transitions out)
+- `closed` -> (terminal, no transitions out)
 
 ### Status Meanings
 - **planning**: Creating plan/materials before first review
-- **in_progress**: Executing after acceptance
-- **pending_approval**: Materials ready for review OR execution proof ready for verify
-- **accepted**: Owner approved - triggers agent execution immediately
-- **revision_needed**: Owner sent feedback - agent revises, resubmits
-- **closed**: Terminal. No agent should touch it.
+- **pending_approval**: Materials ready for review
+- **working**: Executing after acceptance
+- **done**: Agent completed work. Stays for 2 days then auto-closes. Owner can review or send back.
+- **closed**: Terminal. Auto-set after 2 days in done, or manually by owner. No agent should touch it.
 - **hold**: Paused. Do not work until released.
 - **cancelled**: Abandoned.
 
-### Two pending_approval phases
-1. **First** (after planning): version has plan, no execution result yet
-2. **Second** (after execute): ONLY if deliverable needs owner sign-off (public content, external communications)
-
 ### Rules
 - Tasks start in `planning`. Agent creates plan before submitting.
-- Accept = execute (not auto-close). Improve = revise and resubmit.
+- Accept = execute (sets working). Improve = revise and resubmit (sets planning).
 - Server rejects pending_approval with empty version content.
 - Autopilot tasks (`autopilot: true`) skip owner review but follow the same flow.
 
@@ -88,20 +104,20 @@
 - Agents may ONLY begin work when the orchestrator launches them
 - Never work on tasks in `pending_approval`, `hold`, `closed`, or `cancelled` status
 - Never create a new version (v2, v3...) unless owner sent revision feedback
-- When `accepted`, orchestrator launches agent to EXECUTE (not auto-close)
-- When `revision_needed`, read owner's feedback and submit a new revision
+- When a task is `working` after accept, orchestrator launches agent to EXECUTE (set done)
+- When `planning` after improve, read owner's feedback and submit a new revision
 
 ## Task Structure (HARD RULE)
 - Multi-step or multi-agent work MUST use parent/child task structure
 - Create parent first, then subtasks via `POST /api/tasks/{parentId}/subtasks`
 - Parent tasks are containers - may or may not be assigned to an agent
 - Subtask fields: `parentTaskId`, `subtasks[]`, `dependsOn[]`
-- When all subtasks reach accepted/closed, parent auto-advances to `pending_approval`
-- Tasks with `dependsOn` wait until all dependencies are accepted/closed
+- When all subtasks reach done/closed, parent auto-advances to `pending_approval`
+- Tasks with `dependsOn` wait until all dependencies are done/closed
 - Never create 3+ related flat tasks when parent/child would group them
 
 ## Deliverable Tracking (MANDATORY)
-Every closed task MUST have visible outcomes. Update version.json with:
+Every done/closed task MUST have visible outcomes. Update version.json with:
 - `content`: Markdown summary of what was done (REQUIRED)
 - `deliverable`: Description of deliverable files or path
 - `result`: Links, URLs, or outcome summary
@@ -133,15 +149,15 @@ Every closed task MUST have visible outcomes. Update version.json with:
 Round tables are **execution-first**. Act before reporting.
 
 ### Phase 1: Execute
-1. Launch agents on accepted tasks (EXECUTE, not auto-close)
-2. Launch agents on revision_needed tasks
+1. Launch agents on working tasks (EXECUTE, set done when complete)
+2. Launch agents on planning tasks that have feedback (improve was sent)
 3. Launch agents on ready planning tasks
 4. Report blockers directly (don't re-investigate)
 
 ### Phase 2: Surface blockers
 - Tasks with `blocker` field set
 - Tasks stuck on unmet dependencies
-- Stalled in_progress tasks
+- Stalled working tasks
 - Tasks needing owner input (pending_approval)
 - Agents with zero active tasks
 

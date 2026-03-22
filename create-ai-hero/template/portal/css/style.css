@@ -269,11 +269,8 @@ body {
 .badge-inactive { background: transparent; color: var(--text-dim); }
 .badge-pending { background: transparent; color: var(--yellow); }
 .badge-planning { background: transparent; color: #5ba8c8; }
-.badge-in_progress { background: transparent; color: var(--accent); }
-.badge-revision_needed { background: transparent; color: var(--yellow); }
+.badge-working { background: transparent; color: var(--accent); }
 .badge-done { background: transparent; color: var(--green); }
-.badge-approved { background: transparent; color: var(--green); }
-.badge-accepted { background: transparent; color: var(--green); }
 .badge-closed { background: transparent; color: var(--text-dim); }
 
 /* ── Agent detail ────────────────────────────────── */
@@ -590,7 +587,6 @@ body {
 .badge-high { color: var(--yellow); }
 .badge-medium { color: var(--accent); }
 .badge-low { color: var(--text-dim); }
-.badge-revision_needed { color: var(--red); }
 .badge-pending_approval { color: var(--yellow); }
 .badge-all { color: var(--text-dim); }
 
@@ -737,7 +733,7 @@ body {
 .status-step-active[onclick*="planning"] { color: #5ba8c8; border-color: #5ba8c8; background: rgba(91,168,200,0.08); }
 .status-step-active[onclick*="pending_approval"] { color: var(--yellow); border-color: var(--yellow); background: rgba(212,169,74,0.08); }
 .status-step-active[onclick*="'approved'"] { color: var(--green); border-color: var(--green); background: rgba(184,230,184,0.08); }
-.status-step-active[onclick*="in_progress"] { color: var(--accent); border-color: var(--accent); background: rgba(176,176,176,0.08); }
+.status-step-active[onclick*="working"] { color: var(--accent); border-color: var(--accent); background: rgba(176,176,176,0.08); }
 .status-step-active[onclick*="'done'"] { color: var(--green); border-color: var(--green); background: rgba(184,230,184,0.08); }
 .status-step-active[onclick*="toggleFeedback"] { color: var(--yellow); border-color: var(--yellow); background: rgba(212,169,74,0.08); }
 .status-step-active[onclick*="'hold'"] { color: var(--yellow); border-color: var(--yellow); background: rgba(212,169,74,0.08); }
@@ -1552,17 +1548,16 @@ body {
 .flow-node-status { padding: 1px 5px; border-radius: 3px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
 
 .flow-node.status-planning { border-left: 3px solid #5ba8c8; box-shadow: 0 0 8px rgba(91,168,200,0.2); }
-.flow-node.status-in_progress { border-left: 3px solid var(--green); box-shadow: 0 0 12px rgba(76,175,80,0.35); animation: flow-pulse 2s ease-in-out infinite; }
+.flow-node.status-working { border-left: 3px solid var(--green); box-shadow: 0 0 12px rgba(76,175,80,0.35); animation: flow-pulse 2s ease-in-out infinite; }
 .flow-node.status-pending_approval { border-left: 3px solid var(--yellow); box-shadow: 0 0 8px rgba(212,169,74,0.25); }
-.flow-node.status-accepted { border-left: 3px solid var(--green); opacity: 0.5; }
+.flow-node.status-done { border-left: 3px solid var(--green); opacity: 0.7; }
 .flow-node.status-closed { border-left: 3px solid var(--text-dim); opacity: 0.5; }
-.flow-node.status-revision_needed { border-left: 3px solid var(--yellow); }
 .flow-node.status-hold { border-left: 3px solid var(--purple); }
 .flow-node.status-cancelled { border-left: 3px solid var(--text-dim); opacity: 0.5; }
 .flow-node.blocked { border-color: var(--red); box-shadow: 0 0 12px rgba(224, 96, 96, 0.4); }
 
 /* Done/closed nodes restore opacity on hover for readability */
-.flow-node.status-accepted:hover, .flow-node.status-closed:hover, .flow-node.status-cancelled:hover { opacity: 0.85; }
+.flow-node.status-done:hover, .flow-node.status-closed:hover, .flow-node.status-cancelled:hover { opacity: 0.85; }
 
 /* Pulse animation for in-progress nodes */
 @keyframes flow-pulse {

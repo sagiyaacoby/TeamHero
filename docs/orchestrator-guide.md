@@ -191,12 +191,12 @@ curl -X POST http://localhost:3782/api/tasks \
 # Update task status
 curl -X PUT http://localhost:3782/api/tasks/{id} \
   -H "Content-Type: application/json" \
-  -d '{"status": "in_progress"}'
+  -d '{"status": "working"}'
 
 # Submit a review decision (as owner)
 curl -X PUT http://localhost:3782/api/tasks/{id} \
   -H "Content-Type: application/json" \
-  -d '{"action": "approve", "comments": "Great work"}'
+  -d '{"action": "accept", "comments": "Looks good"}'
 
 # Log progress on a task
 curl -X POST http://localhost:3782/api/tasks/{id}/progress \
@@ -244,9 +244,9 @@ curl -X POST http://localhost:3782/api/tasks/{id}/promote
 Every task follows this flow:
 
 ```
-draft → in_progress → pending_approval → approved → done
+planning → working → pending_approval → working (accept) → done → closed (auto, 2 days)
                             ↓
-                      revision_needed → (agent revises) → pending_approval
+                      planning (improve) → working → pending_approval
                             ↓
                           hold / cancelled
 ```
@@ -255,14 +255,13 @@ draft → in_progress → pending_approval → approved → done
 
 | Status | Meaning |
 |--------|---------|
-| `draft` | Created but not started. Agent hasn't begun work. |
-| `in_progress` | Agent is actively working on this task. |
-| `pending_approval` | Agent finished. Waiting for owner review. |
-| `approved` | Owner approved. Ready to mark done or execute. |
-| `revision_needed` | Owner wants changes. Agent should revise and resubmit. |
+| `planning` | Agent is creating a plan before first review. |
+| `working` | Agent is actively working (planning or executing). |
+| `pending_approval` | Agent submitted materials. Waiting for owner review. |
+| `done` | Agent completed work. Stays for 2 days, then auto-closes. Owner can review or reopen. |
+| `closed` | Terminal. Auto-set after 2 days in done, or manually by owner. |
 | `hold` | Paused. Not blocked, just deprioritized. |
 | `cancelled` | Abandoned. No further work needed. |
-| `done` | Complete. Approved and finalized. |
 
 ### How Tasks Are Stored
 
@@ -304,7 +303,7 @@ data/tasks/{task-id}/
 {
   "number": 1,
   "content": "Deliverable content (markdown)",
-  "status": "submitted",        // empty, submitted, approved, revision_needed
+  "status": "submitted",        // empty, submitted, approved
   "decision": "approve",        // approve, improve, hold, cancel
   "comments": "Owner feedback",
   "deliverable": "Link or description of deliverable",
@@ -334,7 +333,7 @@ Agent tool call:
     2. Read your memory: agents/{id}/short-memory.md and agents/{id}/long-memory.md
     3. Adopt the personality, tone, and style defined in your agent profile
     4. Read the task: curl -s http://localhost:{port}/api/tasks/{task-id}
-    5. Set task to in_progress: curl -s -X PUT http://localhost:{port}/api/tasks/{task-id} -H "Content-Type: application/json" -d '{"status":"in_progress"}'
+    5. Set task to working: curl -s -X PUT http://localhost:{port}/api/tasks/{task-id} -H "Content-Type: application/json" -d '{"status":"working"}'
     6. Execute the work as described in the task
     7. Write deliverables to data/tasks/{task-id}/v{n}/
     8. Set task to pending_approval when done
@@ -581,12 +580,12 @@ Follow the Round Table Protocol in Section 8.
 
 The dashboard handles this via the UI, but via API:
 ```bash
-# Approve
+# Accept (sets task to working)
 curl -X PUT http://localhost:3782/api/tasks/{id} \
   -H "Content-Type: application/json" \
-  -d '{"action": "approve", "comments": "Looks good"}'
+  -d '{"action": "accept", "comments": "Looks good"}'
 
-# Request revision
+# Request revision (sets task to planning)
 curl -X PUT http://localhost:3782/api/tasks/{id} \
   -H "Content-Type: application/json" \
   -d '{"action": "improve", "comments": "Please add more detail on X"}'
@@ -665,7 +664,7 @@ http://localhost:{port from config/system.json}
 4. `profile/owner.md` — Who you're working for
 
 ### Task Statuses
-`draft` → `in_progress` → `pending_approval` → `approved` → `done`
+`planning` → `working` → `pending_approval` → `working` (accept) → `done` → `closed` (auto)
 
 ### Agent Memory Paths
 - Short: `agents/{id}/short-memory.md`

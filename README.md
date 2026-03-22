@@ -89,7 +89,7 @@ Talk directly to your orchestrator agent via an integrated terminal. The orchest
 ### Task System
 Full task lifecycle with version tracking:
 ```
-draft -> in_progress -> pending_approval -> approved / revision_needed -> done
+planning -> working -> pending_approval -> working (accept) -> done -> closed (auto)
 ```
 Each task tracks versions, deliverables, attachments, and owner feedback.
 

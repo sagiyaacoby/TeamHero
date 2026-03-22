@@ -541,11 +541,11 @@ function rebuildAgentMd(aid, a) {
     (a.isOrchestrator ? '' :
     '## Task Workflow (MANDATORY)\n\n' +
     '### Two-Phase Flow: Prepare -> Review -> Execute -> Verify\n\n' +
-    '**Phase 1 (Prepare):** Set `in_progress`, do the work, update version.json with `content` (REQUIRED) and `deliverable`. Set `pending_approval`. STOP and wait for owner review.\n\n' +
-    '**Phase 2 (Execute - after owner accepts):** Set `in_progress`, log "Executing: {action}". Execute the approved work. Update version.json `result` with proof (URLs, file paths, verification). Set `pending_approval` for owner to verify.\n\n' +
+    '**Phase 1 (Prepare):** Set `working`, do the work, update version.json with `content` (REQUIRED) and `deliverable`. Set `pending_approval`. STOP and wait for owner review.\n\n' +
+    '**Phase 2 (Execute - after owner accepts):** Task becomes `working` (accept action). Log "Executing: {action}". Execute the approved work. Update version.json `result` with proof (URLs, file paths, verification). Set `done`.\n\n' +
     '**Blocker:** If blocked, set blocker field immediately: `PUT /api/tasks/{id} {"blocker":"reason"}` and STOP. Do not continue past a blocker.\n\n' +
     '- NEVER touch tasks with status `closed`, `hold`, or `cancelled`.\n' +
-    '- If status is `revision_needed` (Improve): read owner feedback comments, revise, then set back to `pending_approval`.\n' +
+    '- If improve action is used: task goes back to `planning`. Read owner feedback comments, revise, then set back to `pending_approval`.\n' +
     '- NEVER create a new version (v2, v3...) unless the owner explicitly sent revision feedback.\n' +
     '- Server rejects `pending_approval` if version content is empty - always fill version.json first.\n' +
     '- If a task has `autopilot: true`, the orchestrator handles acceptance automatically.\n\n') +
@@ -666,8 +666,8 @@ async function handle(pn, m, req, res) {
       var taskDir = path.join(ROOT, 'data/tasks', t.id);
       var taskJson = readJSON(path.join(taskDir, 'task.json'));
       if (!taskJson) return;
-      // Only include closed/accepted tasks for categorized view
-      var isFinal = taskJson.status === 'closed' || taskJson.status === 'accepted' || taskJson.status === 'done';
+      // Only include closed/done tasks for categorized view
+      var isFinal = taskJson.status === 'closed' || taskJson.status === 'done';
       // Find latest version folder
       var latestVn = 0;
       var fileMap = {};
@@ -1125,7 +1125,7 @@ async function handle(pn, m, req, res) {
       } else if (b.action === 'accept') {
         vData.decision = 'accepted';
         writeJSON(vPath, vData);
-        actionResult = Object.assign({}, ex, { status: 'accepted', updatedAt: now });
+        actionResult = Object.assign({}, ex, { status: 'working', updatedAt: now });
       } else if (b.action === 'close') {
         vData.decision = 'closed';
         writeJSON(vPath, vData);
@@ -1133,7 +1133,7 @@ async function handle(pn, m, req, res) {
       } else if (b.action === 'approve') {
         vData.decision = 'approved';
         writeJSON(vPath, vData);
-        actionResult = Object.assign({}, ex, { status: 'approved', updatedAt: now });
+        actionResult = Object.assign({}, ex, { status: 'working', updatedAt: now });
       } else if (b.action === 'improve') {
         vData.decision = 'improve';
         writeJSON(vPath, vData);
@@ -1144,7 +1144,7 @@ async function handle(pn, m, req, res) {
           number: nextV, content: '', status: 'planning',
           decision: null, comments: '', submittedAt: null, decidedAt: null
         });
-        actionResult = Object.assign({}, ex, { status: 'revision_needed', version: nextV, updatedAt: now });
+        actionResult = Object.assign({}, ex, { status: 'planning', version: nextV, updatedAt: now });
       } else if (b.action === 'hold') {
         vData.decision = 'hold';
         writeJSON(vPath, vData);
@@ -1162,8 +1162,8 @@ async function handle(pn, m, req, res) {
       if (ai >= 0) aix.tasks[ai] = { id: id, title: actionResult.title, status: actionResult.status, assignedTo: actionResult.assignedTo, priority: actionResult.priority, type: actionResult.type || 'general', autopilot: actionResult.autopilot || false, parentTaskId: actionResult.parentTaskId || null, blocker: actionResult.blocker || null };
       writeJSON(aip, aix);
 
-      // Auto-advance parent task when all subtasks are accepted/closed (recursive for deep nesting)
-      if ((actionResult.status === 'accepted' || actionResult.status === 'closed') && actionResult.parentTaskId) {
+      // Auto-advance parent task when all subtasks are done/closed (recursive for deep nesting)
+      if ((actionResult.status === 'done' || actionResult.status === 'closed') && actionResult.parentTaskId) {
         var checkParentId = actionResult.parentTaskId;
         while (checkParentId) {
           var parentTp2 = path.join(ROOT, 'data/tasks', checkParentId, 'task.json');
@@ -1171,9 +1171,9 @@ async function handle(pn, m, req, res) {
           if (!parentTask2 || !parentTask2.subtasks || parentTask2.subtasks.length === 0) break;
           var allDone = parentTask2.subtasks.every(function(sid) {
             var sub = readJSON(path.join(ROOT, 'data/tasks', sid, 'task.json'));
-            return sub && (sub.status === 'accepted' || sub.status === 'closed');
+            return sub && (sub.status === 'done' || sub.status === 'closed');
           });
-          if (allDone && parentTask2.status !== 'pending_approval' && parentTask2.status !== 'accepted' && parentTask2.status !== 'closed') {
+          if (allDone && parentTask2.status !== 'pending_approval' && parentTask2.status !== 'done' && parentTask2.status !== 'closed') {
             // Autopilot parent: auto-close instead of pending_approval
             if (parentTask2.autopilot) {
               parentTask2.status = 'closed';
@@ -1193,21 +1193,21 @@ async function handle(pn, m, req, res) {
         }
       }
 
-      // Auto-start dependent tasks when all dependencies are accepted/closed
-      if (actionResult.status === 'accepted' || actionResult.status === 'closed') {
+      // Auto-start dependent tasks when all dependencies are done/closed
+      if (actionResult.status === 'done' || actionResult.status === 'closed') {
         aix.tasks.forEach(function(t) {
           var dep = readJSON(path.join(ROOT, 'data/tasks', t.id, 'task.json'));
           if (dep && dep.dependsOn && dep.dependsOn.length > 0 && dep.status === 'planning') {
             var allMet = dep.dependsOn.every(function(did) {
               var d = readJSON(path.join(ROOT, 'data/tasks', did, 'task.json'));
-              return d && (d.status === 'accepted' || d.status === 'closed');
+              return d && (d.status === 'done' || d.status === 'closed');
             });
             if (allMet) {
-              dep.status = 'in_progress';
+              dep.status = 'working';
               dep.updatedAt = now;
               writeJSON(path.join(ROOT, 'data/tasks', t.id, 'task.json'), dep);
               var di = aix.tasks.findIndex(function(x) { return x.id === t.id; });
-              if (di >= 0) { aix.tasks[di].status = 'in_progress'; }
+              if (di >= 0) { aix.tasks[di].status = 'working'; }
             }
           }
         });
@@ -2067,10 +2067,10 @@ setInterval(function() {
     if (!task.nextRun || new Date(task.nextRun) > now) return;
 
     // Skip if still running (overlap protection) or on hold
-    if (task.status === 'in_progress' || task.status === 'hold' || task.status === 'planning' || task.status === 'pending_approval') return;
+    if (task.status === 'working' || task.status === 'hold' || task.status === 'planning' || task.status === 'pending_approval') return;
 
-    // Reset task to in_progress for next run
-    task.status = 'in_progress';
+    // Reset task to working for next run
+    task.status = 'working';
     task.lastRun = now.toISOString();
     task.nextRun = computeNextRun(now, task.interval, task.intervalUnit);
     task.updatedAt = now.toISOString();
@@ -2084,7 +2084,7 @@ setInterval(function() {
     writeJSON(taskPath, task);
 
     // Update index entry
-    entry.status = 'in_progress';
+    entry.status = 'working';
     changed = true;
 
     // Send prompt to terminal PTY
@@ -2109,7 +2109,7 @@ setInterval(function() {
     // If no terminal found, set blocker
     if (!sentTo) {
       task.blocker = 'No active terminal session found - cannot send autopilot prompt';
-      task.status = 'in_progress';
+      task.status = 'working';
       if (!task.progressLog) task.progressLog = [];
       task.progressLog.push({
         message: 'BLOCKER: No active terminal session found',
@@ -2146,26 +2146,24 @@ fs.mkdirSync(path.join(ROOT, 'config'), { recursive: true });
     '- The orchestrator MUST delegate work to agents via tasks - never do the actual work itself\n' +
     '- All work must be tracked as tasks in the dashboard so the owner has full visibility\n' +
     '- Create tasks via `POST /api/tasks` with the appropriate agent assigned\n\n' +
-    '## Task Lifecycle (CORRECTED FLOW)\n\n' +
-    '### Flow: Prepare -> Review -> Execute -> Verify -> Close\n\n' +
+    '## Task Lifecycle\n\n' +
+    '### Flow: Plan -> Review -> Execute -> Done\n\n' +
     '1. **Planning** (planning): Agent creates plan/materials\n' +
     '2. **Submit for review** (pending_approval): Agent fills version.json + sets pending_approval\n' +
-    '3. **Owner reviews**: Accept (go execute) or Improve (revise)\n' +
-    '4. **Execute** (in_progress): Agent executes the approved work (posts content, deploys code, etc.)\n' +
-    '5. **Submit proof** (pending_approval): Agent updates version with execution proof + sets pending_approval\n' +
-    '6. **Owner verifies**: Checks proof (URL works, code deployed, etc.) and closes\n\n' +
+    '3. **Owner reviews**: Accept (sets working) or Improve (sets planning)\n' +
+    '4. **Execute** (working): Agent executes the approved work\n' +
+    '5. **Done** (done): Agent sets done with proof. Auto-closes after 2 days.\n\n' +
     '### Status Meanings\n' +
     '- **Planning** (`planning`): Agent creating plan/materials before first review\n' +
-    '- **Working** (`in_progress`): Agent executing after acceptance\n' +
-    '- **Pending** (`pending_approval`): Either materials ready for review OR execution proof ready for verify\n' +
-    '- **Accepted** (`accepted`): Owner approved materials - triggers agent execution immediately\n' +
-    '- **Improve** (`revision_needed`): Owner sent feedback - agent revises, resubmits to pending\n' +
-    '- **Closed** (`closed`): Owner verified execution proof. Terminal state.\n' +
+    '- **Working** (`working`): Agent actively working (planning or executing)\n' +
+    '- **Pending** (`pending_approval`): Materials ready for review\n' +
+    '- **Done** (`done`): Agent completed work. Stays 2 days then auto-closes.\n' +
+    '- **Closed** (`closed`): Terminal. Auto-set after 2 days in done, or manually.\n' +
     '- **Hold** (`hold`): Paused - do not work on until the owner releases it.\n' +
     '- **Cancelled** (`cancelled`): Abandoned - no further action.\n\n' +
     '## Agent Execution Checklist\n\n' +
     '### Phase 1: Prepare\n' +
-    '1. Set status to `in_progress`\n' +
+    '1. Set status to `working`\n' +
     '2. Log progress: "Starting: {what I\'m preparing}"\n' +
     '3. Create materials (plan, code, research, etc.)\n' +
     '4. Save materials to `data/tasks/{id}/v{n}/`\n' +
@@ -2173,12 +2171,12 @@ fs.mkdirSync(path.join(ROOT, 'config'), { recursive: true });
     '6. Set status to `pending_approval`\n' +
     '7. STOP and wait for owner review\n\n' +
     '### Phase 2: Execute (after owner accepts)\n' +
-    '8. Set status to `in_progress`\n' +
+    '8. Task becomes `working` (accept action)\n' +
     '9. Log progress: "Executing: {what I\'m doing}"\n' +
     '10. Execute the approved work\n' +
     '11. If blocker: `PUT /api/tasks/{id} {"blocker": "reason"}` and STOP\n' +
     '12. Update version.json: `content` (execution summary), `result` (proof - URLs, screenshots)\n' +
-    '13. Set status to `pending_approval`\n\n' +
+    '13. Set status to `done`\n\n' +
     '### Blocker Protocol\n' +
     '- Hit a blocker? Set blocker field immediately: `PUT /api/tasks/{id} {"blocker": "reason"}`\n' +
     '- Blocker persists with red glow until explicitly cleared\n' +
@@ -2197,13 +2195,13 @@ fs.mkdirSync(path.join(ROOT, 'config'), { recursive: true });
     '## Round Table Protocol\n\n' +
     'Round tables are **execution-first**. The orchestrator acts before it reports.\n\n' +
     '### Phase 1: Execute (do this BEFORE reporting)\n' +
-    '1. **Launch agents on accepted tasks** - owner approved materials, agent must EXECUTE (not auto-close)\n' +
-    '2. **Launch agents on revision_needed tasks** - owner already gave feedback, agent must act\n' +
+    '1. **Launch agents on working tasks** - owner accepted, agent must EXECUTE\n' +
+    '2. **Launch agents on planning tasks** with improve feedback - agent must revise\n' +
     '3. **Launch agents on planning tasks** that are ready (assigned, dependencies met)\n' +
     '4. **Clear blockers** - read blocker field on tasks, report the text directly\n\n' +
     '### Phase 2: Surface blockers\n' +
     '- Tasks with `blocker` field set - report the blocker text directly\n' +
-    '- Tasks in_progress with no recent progress - may be stalled\n' +
+    '- Tasks working with no recent progress - may be stalled\n' +
     '- Tasks that need owner input (pending_approval)\n\n' +
     '### Phase 3: Report\n' +
     '- Brief status summary\n' +

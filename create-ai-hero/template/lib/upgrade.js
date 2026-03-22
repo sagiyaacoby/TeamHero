@@ -100,7 +100,7 @@ function checkActiveTasks(ctx) {
   var index = ctx.readJSON(indexPath);
   if (!index || !index.tasks) return [];
   return index.tasks.filter(function(t) {
-    return t.status === 'in_progress';
+    return t.status === 'working';
   }).map(function(t) {
     return { id: t.id, title: t.title, assignedTo: t.assignedTo };
   });

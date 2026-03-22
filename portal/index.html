@@ -10,6 +10,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
 </head>
 <body>
 
@@ -121,12 +122,16 @@
           Head to the <strong>Command Center</strong> and ask your orchestrator to build your team. For example: <em>"Build me a team with a Content Writer and a Researcher"</em>
         </div>
         <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:16px;margin:16px 0;font-size:12px;line-height:1.6;color:var(--text-muted);">
-          <strong style="color:var(--text);">&#128274; Security Note:</strong>
+          <strong style="color:var(--text);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Security Note:</strong>
           Agents run with the same file access as your user account. On machines with sensitive data, we recommend using <strong>Supervised</strong> permission mode - agents will ask for your confirmation before file writes and shell commands. You can change this anytime in <strong>Settings</strong>. See <strong>Help > Security &amp; Secrets</strong> for details.
         </div>
         <div class="wizard-actions">
           <button class="btn btn-primary btn-lg" onclick="App.wizardFinish()">Go to Command Center</button>
         </div>
+      </div>
+
+      <div class="wizard-skip">
+        <a href="#" onclick="App.wizardSkip(); return false;">Skip - take me to the Command Center</a>
       </div>
     </div>
   </div>
@@ -134,7 +139,9 @@
   <!-- Sidebar -->
   <nav id="sidebar">
     <div class="sidebar-header" id="sidebar-header">
-      <h1>&#9881; Team</h1>
+      <div class="sidebar-header-row">
+        <h1>&#9881; Team</h1>
+      </div>
       <span class="subtitle">Agent Portal</span>
     </div>
     <div class="nav-sticky-top">
@@ -158,6 +165,7 @@
       <li><a href="#" data-view="settings" class="nav-link"><span class="icon">&#9881;</span> Settings</a></li>
       <li class="nav-section">Support</li>
       <li><a href="#" data-view="help" class="nav-link"><span class="icon">&#63;</span> Help</a></li>
+      <li><a href="#" data-view="license" class="nav-link"><span class="icon">&#9878;</span> License</a></li>
     </ul>
     <div id="update-banner" class="update-banner hidden" onclick="App.navigate('settings'); App.switchSettingsSection('updates')">
       <span class="update-dot"></span> Update Available
@@ -170,17 +178,21 @@
 
     <!-- Dashboard -->
     <section id="view-dashboard" class="view active">
-      <header class="view-header"><div class="header-left"><h2>Dashboard</h2><button id="btn-round-table" class="btn btn-secondary btn-rt" onclick="App.runRoundTable()">Round Table <span style="color:#86efac;margin-left:4px;">&#9654;</span></button></div><div class="header-actions"><button id="btn-global-autopilot" class="btn btn-autopilot-toggle" onclick="App.toggleGlobalAutopilot()" title="Global Autopilot"><span class="autopilot-icon">&#9889;</span> Autopilot <span id="autopilot-status-label">OFF</span></button><button class="btn btn-secondary" onclick="App.openAddTask()">+ Add Task</button></div></header>
+      <header class="view-header"><div class="header-left"><h2>Dashboard</h2><button id="btn-round-table" class="btn btn-secondary btn-rt" onclick="App.runRoundTable()">Round Table <span style="color:#86efac;margin-left:4px;">&#9654;</span></button></div><div class="header-actions"><div class="notif-bell" onclick="App.toggleNotifications(event)" title="Notifications"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="notif-badge" style="display:none">0</span></div><button id="btn-global-autopilot" class="btn btn-autopilot-toggle" onclick="App.toggleGlobalAutopilot()" title="Global Autopilot"><span class="autopilot-icon">&#9889;</span> Autopilot <span id="autopilot-status-label">OFF</span></button><button class="btn btn-secondary" onclick="App.openAddTask()">+ Add Task</button></div></header>
       <div class="stats-row">
-        <div class="stat-card clickable-stat" data-filter="all" onclick="App.filterTasks('all','dashboard')"><div class="stat-value" id="stat-total">0</div><div class="stat-label">Active</div></div>
-        <div class="stat-card clickable-stat" data-filter="pending_approval" onclick="App.filterTasks('pending_approval','dashboard')"><div class="stat-value" id="stat-pending">0</div><div class="stat-label">Pending</div></div>
-        <div class="stat-card clickable-stat" data-filter="in_progress" onclick="App.filterTasks('in_progress','dashboard')"><div class="stat-value" id="stat-working">0</div><div class="stat-label">Working</div></div>
-        <div class="stat-card clickable-stat" data-filter="accepted" onclick="App.filterTasks('accepted','dashboard')"><div class="stat-value" id="stat-accepted">0</div><div class="stat-label">Accepted</div></div>
-        <div class="stat-card clickable-stat" data-filter="closed" onclick="App.filterTasks('closed','dashboard')"><div class="stat-value" id="stat-closed">0</div><div class="stat-label">Closed</div></div>
+        <div class="stat-card clickable-stat stat-card-active" data-filter="pending" onclick="App.filterTasks('pending','dashboard')"><div class="stat-value" id="stat-pending">0</div><div class="stat-label">Pending</div></div>
+        <div class="stat-card clickable-stat" data-filter="working" onclick="App.filterTasks('working','dashboard')"><div class="stat-value" id="stat-working">0</div><div class="stat-label">Working</div></div>
+        <div class="stat-card clickable-stat" data-filter="done" onclick="App.filterTasks('done','dashboard')"><div class="stat-value" id="stat-done">0</div><div class="stat-label">Done</div></div>
         <div class="stat-card clickable-stat" data-filter="hold" onclick="App.filterTasks('hold','dashboard')"><div class="stat-value" id="stat-hold">0</div><div class="stat-label">Hold</div></div>
+        <div class="stat-card clickable-stat" data-filter="cancelled" onclick="App.filterTasks('cancelled','dashboard')"><div class="stat-value" id="stat-cancelled">0</div><div class="stat-label">Cancelled</div></div>
+        <div class="stat-card clickable-stat" data-filter="closed" onclick="App.filterTasks('closed','dashboard')"><div class="stat-value" id="stat-closed">0</div><div class="stat-label">Closed</div></div>
         <div class="stat-card"><div class="stat-value" id="stat-agents">0</div><div class="stat-label">Agents</div></div>
       </div>
-      <div class="panel"><h3 id="dashboard-tasks-title">All Tasks
+      <div id="team-performance-section" class="panel team-perf-panel" style="display:none">
+        <h3 class="team-perf-header" onclick="App.toggleTeamPerf()"><span id="team-perf-toggle-icon">&#9654;</span> Team Performance</h3>
+        <div id="team-perf-cards" class="team-perf-cards" style="display:none"></div>
+      </div>
+      <div class="panel"><h3 id="dashboard-tasks-title">Pending
         <span class="view-mode-toggle">
           <button class="view-mode-btn active" data-view="hierarchy" onclick="App.setViewMode('hierarchy','dashboard')">Tree</button>
           <button class="view-mode-btn" data-view="flow" onclick="App.setViewMode('flow','dashboard')">Flow</button>
@@ -258,8 +270,9 @@
     <!-- Command Center (Terminal) -->
     <section id="view-chat" class="view view-chat-fullscreen">
       <header class="view-header">
-        <div class="header-left"><h2>Command Center</h2><button class="btn btn-secondary btn-rt" onclick="App.runRoundTable()" title="Run a round table review">Round Table <span style="color:#86efac;margin-left:4px;">&#9654;</span></button></div>
+        <div class="header-left"><h2>Command Center</h2><button class="btn btn-secondary btn-rt" onclick="App.runRoundTable()" title="Run a round table review">Round Table <span style="color:#86efac;margin-left:4px;">&#9654;</span></button><button class="btn btn-secondary btn-rc" id="btn-remote-control" onclick="App.openRemoteControl()" title="Remote Control - access CLI from phone"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M5.6 7.8a8 8 0 0 1 12.8 0"/><path d="M8.1 10.5a4.5 4.5 0 0 1 7.8 0"/><circle cx="12" cy="14" r="1.5"/><line x1="12" y1="16" x2="12" y2="21"/></svg> Remote</button></div>
         <div class="header-actions">
+          <div class="notif-bell" onclick="App.toggleNotifications(event)" title="Notifications"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="notif-badge" style="display:none">0</span></div>
           <span id="chat-status" class="chat-status disconnected">Disconnected</span>
           <button class="btn btn-secondary" onclick="App.restartTerminal()" title="Restart CLI session">Restart CLI</button>
           <button class="btn btn-secondary" onclick="App.restartServer()" title="Restart the entire server">Restart Server</button>
@@ -290,6 +303,7 @@
       </div>
       <div class="agent-tabs">
         <button class="tab-btn active" data-tab="tasks" onclick="App.switchAgentTab('tasks')">Tasks</button>
+        <button class="tab-btn" data-tab="stats" onclick="App.switchAgentTab('stats')">Stats</button>
         <button class="tab-btn" data-tab="profile" onclick="App.switchAgentTab('profile')">Profile</button>
         <button class="tab-btn" data-tab="memory" onclick="App.switchAgentTab('memory')">Memory</button>
         <button class="tab-btn" data-tab="files" onclick="App.switchAgentTab('files')">Files</button>
@@ -312,6 +326,9 @@
         <div id="agent-agent-filter" class="agent-filter-bar"></div>
         <div id="agent-tag-filter" class="tag-filter-bar"></div>
         <div id="agent-tasks-list" class="task-list"></div>
+      </div>
+      <div id="agent-tab-stats" class="agent-tab">
+        <div id="agent-stats-content"><p class="empty-state">Loading stats...</p></div>
       </div>
       <div id="agent-tab-profile" class="agent-tab">
         <div class="panel"><h3>Mission</h3><p id="agent-detail-mission" class="content-text"></p></div>
@@ -502,6 +519,9 @@
           <div class="settings-sidebar-item" data-section="permission-mode" onclick="App.switchSettingsSection('permission-mode')">
             <span class="settings-icon">&#9744;</span> Permission Mode
           </div>
+          <div class="settings-sidebar-item" data-section="notifications" onclick="App.switchSettingsSection('notifications')">
+            <span class="settings-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span> Notifications
+          </div>
           <div class="settings-sidebar-section">Vault</div>
           <div class="settings-sidebar-item" data-section="api-keys" onclick="App.switchSettingsSection('api-keys')">
             <span class="settings-icon">&#10038;</span> API Keys & Secrets
@@ -557,6 +577,34 @@
               </div>
               <div class="setting-item" style="flex-direction:column;align-items:flex-start;gap:6px">
                 <span id="permission-mode-desc" class="form-hint" style="margin:0"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Notifications -->
+          <div class="settings-section" id="settings-sec-notifications">
+            <div class="settings-section-title">Notifications</div>
+            <div class="settings-section-desc">Configure how you get alerted when tasks need your attention.</div>
+            <div class="settings-group">
+              <div class="setting-item">
+                <div>
+                  <span class="setting-label">Browser Notifications</span>
+                  <span class="form-hint" style="display:block;margin:2px 0 0 0">Show desktop alerts when tasks need review or hit a blocker</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="notif-toggle-browser" onchange="App.saveNotifPrefs()">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="setting-item">
+                <div>
+                  <span class="setting-label">Sound Alerts</span>
+                  <span class="form-hint" style="display:block;margin:2px 0 0 0">Play a chime for high-priority events</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="notif-toggle-sound" onchange="App.saveNotifPrefs()">
+                  <span class="toggle-slider"></span>
+                </label>
               </div>
             </div>
           </div>
@@ -842,7 +890,22 @@
         <button class="tab-btn" onclick="App.switchSkillsTab('discover')">Discover Skills</button>
       </div>
       <div id="skills-tab-installed" class="skills-tab-content active">
-        <div id="skills-grid" class="skills-grid"><div class="empty-state">Loading skills...</div></div>
+        <div id="skills-installed-container">
+          <div id="skills-section-curated">
+            <div class="skills-section-header">
+              <h3>Curated Skills</h3>
+              <span class="skills-section-subtitle">Built-in integrations vetted for your agents</span>
+            </div>
+            <div id="skills-grid-curated" class="skills-grid"><div class="empty-state">Loading skills...</div></div>
+          </div>
+          <div id="skills-section-user">
+            <div class="skills-section-header">
+              <h3>My Skills</h3>
+              <span class="skills-section-subtitle">Installed from MCP Registry or npm</span>
+            </div>
+            <div id="skills-grid-user" class="skills-grid"></div>
+          </div>
+        </div>
       </div>
       <div id="skills-tab-discover" class="skills-tab-content">
         <div class="skills-search-bar">
@@ -870,7 +933,65 @@
       </div>
     </section>
 
+    <!-- License -->
+    <section id="view-license" class="view">
+      <header class="view-header"><h2>License</h2></header>
+      <div class="license-page">
+        <div class="license-summary card">
+          <div class="license-badge-row">
+            <span class="license-badge">MIT License</span>
+            <span class="license-badge license-badge-open">Open Source</span>
+          </div>
+          <p class="license-intro">TeamHero is open source under the <strong>MIT License</strong>. You are free to use, modify, and distribute this software for any purpose, including commercial use.</p>
+          <div class="license-permissions">
+            <div class="license-perm"><span class="license-perm-icon" style="color:#86efac;">&#10003;</span> Commercial use</div>
+            <div class="license-perm"><span class="license-perm-icon" style="color:#86efac;">&#10003;</span> Modification</div>
+            <div class="license-perm"><span class="license-perm-icon" style="color:#86efac;">&#10003;</span> Distribution</div>
+            <div class="license-perm"><span class="license-perm-icon" style="color:#86efac;">&#10003;</span> Private use</div>
+          </div>
+        </div>
+        <div class="license-full card">
+          <h3>Full License Text</h3>
+          <pre class="license-text">MIT License
+
+Copyright (c) 2025-present Sagi Yaacoby
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.</pre>
+        </div>
+        <div class="license-links card">
+          <a href="https://github.com/sagiyaacoby/TeamHero" target="_blank" class="btn btn-secondary">View on GitHub &#8599;</a>
+        </div>
+      </div>
+    </section>
+
   </main>
+
+  <!-- Global Notification Dropdown -->
+  <div class="notif-dropdown" id="notif-dropdown" style="display:none">
+    <div class="notif-dropdown-header">
+      <span>Notifications</span>
+      <button class="notif-clear-btn" onclick="App.clearAllNotifications()">Clear All</button>
+    </div>
+    <div class="notif-list" id="notif-list">
+      <div class="notif-empty">No notifications</div>
+    </div>
+  </div>
 
   <!-- Global Autopilot Confirmation Modal -->
   <div id="autopilot-confirm-modal" class="modal-overlay hidden" onclick="if(event.target===this)App.cancelAutopilotConfirm()">
@@ -1039,7 +1160,7 @@
           <label><input type="checkbox" id="upgrade-force-check" onchange="App.toggleUpgradeBtn()"> I understand agents may be interrupted</label>
         </div>
       </div>
-      <div class="upgrade-backup-note">&#128274; A backup will be created before upgrading.</div>
+      <div class="upgrade-backup-note"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> A backup will be created before upgrading.</div>
       <div id="upgrade-progress-container" class="hidden">
         <div class="upgrade-progress">
           <div class="upgrade-progress-step" data-step="check"><span class="step-icon">&#9675;</span> Checking for active agents...</div>
@@ -1074,6 +1195,42 @@
   <div id="voice-input-container" class="voice-input-container" style="display:none">
     <span id="voice-transcript-preview" class="voice-transcript-preview"></span>
     <button id="voice-input-btn" class="voice-input-btn" onclick="App.toggleVoiceInput()" title="Voice input (Speech-to-Text)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
+  </div>
+
+  <!-- Remote Control Modal -->
+  <div id="remote-control-modal" class="rc-modal-overlay hidden" onclick="if(event.target===this)App.closeRemoteControl()">
+    <div class="rc-modal">
+      <div class="rc-modal-header">
+        <h3>Remote Control</h3>
+        <button class="rc-modal-close" onclick="App.closeRemoteControl()">&times;</button>
+      </div>
+      <div class="rc-modal-body">
+        <div class="rc-status" id="rc-status">
+          <span class="rc-status-dot rc-status-inactive"></span>
+          <span id="rc-status-text">Inactive</span>
+        </div>
+        <div id="rc-url-area" class="rc-url-area hidden">
+          <label class="rc-label">Session URL</label>
+          <div class="rc-url-row">
+            <input type="text" id="rc-url-input" class="rc-url-input" readonly>
+            <button class="btn btn-secondary btn-sm" onclick="App.copyRcUrl()" title="Copy URL">Copy</button>
+          </div>
+        </div>
+        <div id="rc-qr-area" class="rc-qr-area hidden">
+          <div id="rc-qr-code" class="rc-qr-code"></div>
+        </div>
+        <div class="rc-help">
+          <p>Access your team's CLI from your phone or any browser.</p>
+          <p>Send text commands, approve tasks, run round tables - all remotely.</p>
+          <p class="rc-help-note">This is CLI access, not dashboard access. Requires a Claude Pro or Max plan.</p>
+          <p class="rc-help-links"><a href="https://claude.ai/code" target="_blank" rel="noopener">claude.ai/code</a> - <a href="https://apps.apple.com/app/claude/id6473753684" target="_blank" rel="noopener">Claude mobile app</a></p>
+        </div>
+        <div class="rc-actions">
+          <button id="rc-start-btn" class="btn btn-primary" onclick="App.startRemoteControl()">Start Remote Control</button>
+          <button id="rc-stop-btn" class="btn btn-cancel hidden" onclick="App.stopRemoteControl()">Stop Remote Control</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Toast -->

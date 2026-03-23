@@ -737,6 +737,16 @@ async function handle(pn, m, req, res) {
     broadcast('all');
     return J(res, { ok: true });
   }
+  // SETUP: Claude CLI check
+  if (pn === '/api/setup/claude-check' && m === 'POST') {
+    try {
+      var claudePath = execSync(process.platform === 'win32' ? 'where claude' : 'which claude', { encoding: 'utf8', timeout: 5000 }).trim();
+      return J(res, { found: true, path: claudePath.split('\n')[0].trim() });
+    } catch(e) {
+      return J(res, { found: false, path: null });
+    }
+  }
+
   if (pn === '/api/rebuild-context' && m === 'POST') {
     rebuildClaudeMd();
     rebuildAgentOs();

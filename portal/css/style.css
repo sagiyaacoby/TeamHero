@@ -606,6 +606,92 @@ body {
   padding: 16px 20px; margin: 24px 0; font-size: 14px; line-height: 1.8;
 }
 
+/* Wizard cards row (Connect Claude) */
+.wiz-cards-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0;
+}
+.wiz-card {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 24px; position: relative; transition: border-color 0.2s;
+}
+.wiz-card:hover { border-color: var(--text-dim); }
+.wiz-card h3 { font-size: 16px; margin-bottom: 8px; font-weight: 600; }
+.wiz-card-desc { color: var(--text-muted); font-size: 13px; line-height: 1.5; margin-bottom: 8px; }
+.wiz-card-badge {
+  position: absolute; top: 12px; right: 12px;
+  background: var(--yellow); color: #131519; font-size: 10px; font-weight: 700;
+  padding: 2px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.wiz-input {
+  width: 100%; padding: 8px 12px; background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text); font-size: 13px; margin-top: 4px;
+}
+.wiz-input:focus { border-color: var(--focus-border); outline: none; }
+.wiz-link { display: inline-block; margin-top: 8px; color: var(--text-muted); font-size: 12px; }
+.wiz-link:hover { color: var(--text); }
+.wiz-claude-status { margin-top: 10px; font-size: 13px; min-height: 20px; }
+.wiz-claude-status.success { color: var(--green); }
+.wiz-claude-status.error { color: var(--red); }
+.wiz-select {
+  width: 100%; padding: 8px 12px; background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text); font-size: 14px; cursor: pointer;
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23777' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 12px center;
+}
+.wiz-select:focus { border-color: var(--focus-border); outline: none; }
+
+/* Team type grid */
+.wiz-type-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 20px 0;
+}
+.wiz-type-card {
+  background: var(--bg-card); border: 2px solid var(--border); border-radius: var(--radius-lg);
+  padding: 20px 16px; text-align: center; cursor: pointer; transition: all 0.2s;
+}
+.wiz-type-card:hover { border-color: var(--text-dim); background: var(--bg-surface); }
+.wiz-type-card.selected { border-color: var(--yellow); background: rgba(210,153,34,0.08); }
+.wiz-type-icon { font-size: 28px; margin-bottom: 8px; line-height: 1; }
+.wiz-type-name { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.wiz-type-desc { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+
+/* Team list (Step 6) */
+.wiz-team-list { margin: 16px 0; }
+.wiz-team-item {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 16px; margin-bottom: 8px; transition: border-color 0.2s;
+}
+.wiz-team-item:hover { border-color: var(--text-dim); }
+.wiz-team-item-icon { font-size: 18px; width: 32px; text-align: center; flex-shrink: 0; }
+.wiz-team-item-info { flex: 1; min-width: 0; }
+.wiz-team-item-name { font-size: 14px; font-weight: 600; }
+.wiz-team-item-name.orch { color: var(--yellow); }
+.wiz-team-item-role { font-size: 12px; color: var(--text-muted); }
+.wiz-team-item-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.wiz-team-item-actions button { font-size: 11px; padding: 3px 8px; }
+.wiz-team-rename-input {
+  background: var(--bg-surface); border: 1px solid var(--focus-border); border-radius: var(--radius-sm);
+  color: var(--text); font-size: 14px; font-weight: 600; padding: 2px 8px; width: 140px;
+}
+.wiz-team-creating {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 32px; color: var(--text-muted); font-size: 14px;
+}
+.wiz-spinner {
+  width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--yellow);
+  border-radius: 50%; animation: wiz-spin 0.8s linear infinite;
+}
+@keyframes wiz-spin { to { transform: rotate(360deg); } }
+
+/* Wizard step skip links per step */
+.wizard-step .wizard-skip { margin-top: 16px; }
+
+@media (max-width: 600px) {
+  .wiz-cards-row { grid-template-columns: 1fr; }
+  .wiz-type-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
 /* ── Toast ────────────────────────────────────────── */
 .toast {
   position: fixed; bottom: 24px; right: 24px; z-index: 300;

@@ -46,118 +46,161 @@
         </div>
       </div>
 
-      <!-- Step 2: Welcome -->
+      <!-- Step 2: Connect Claude -->
       <div class="wizard-step" data-step="2">
-        <div class="wizard-icon">&#9881;</div>
-        <h1>Welcome to Your Agent Team</h1>
-        <p class="wizard-desc">Set up your multi-agent orchestration system in just a few steps. You'll create your profile, name your team, and configure your first agent.</p>
+        <div class="wizard-icon">&#9889;</div>
+        <h1>Connect Your AI Engine</h1>
+        <p class="wizard-desc">TeamHero uses Claude to power your agent team. Choose how to connect:</p>
+        <div class="wiz-cards-row">
+          <div class="wiz-card" id="wiz-claude-pro-card">
+            <div class="wiz-card-badge">Recommended</div>
+            <h3>Pro/Max Account</h3>
+            <p class="wiz-card-desc">Best for individuals and small teams. Fixed monthly cost, no surprise bills.</p>
+            <p class="wiz-card-desc">Uses your existing Claude Pro ($20/mo) or Max ($100/mo) subscription.</p>
+            <button class="btn btn-primary" onclick="App.wizardCheckClaude()" id="wiz-claude-check-btn">Connect Pro/Max</button>
+            <div id="wiz-claude-status" class="wiz-claude-status"></div>
+          </div>
+          <div class="wiz-card" id="wiz-claude-api-card">
+            <h3>API Token</h3>
+            <p class="wiz-card-desc">Pay per use. Best for high-volume or enterprise use.</p>
+            <p class="wiz-card-desc">Enter your Anthropic API key:</p>
+            <input type="password" id="wiz-api-key" placeholder="sk-ant-..." class="wiz-input">
+            <button class="btn btn-primary" onclick="App.wizardSaveApiKey()" style="margin-top:8px;">Save & Verify</button>
+            <div id="wiz-api-status" class="wiz-claude-status"></div>
+            <a href="https://console.anthropic.com" target="_blank" class="wiz-link">console.anthropic.com</a>
+          </div>
+        </div>
         <div class="wizard-actions">
-          <button class="btn btn-primary btn-lg" onclick="App.wizardNext()">Get Started</button>
+          <button class="btn btn-secondary" onclick="App.wizardBack()">Back</button>
+          <button class="btn btn-primary" onclick="App.wizardNext()">Next</button>
+        </div>
+        <div class="wizard-skip">
+          <a href="#" onclick="App.wizardNext(); return false;">Skip - I'll set this up later</a>
         </div>
       </div>
 
-      <!-- Step 3: Profile -->
+      <!-- Step 3: Team Type -->
       <div class="wizard-step" data-step="3">
-        <h2>Your Profile</h2>
-        <p class="wizard-desc">Tell your agents about yourself so they can tailor their work to your needs.</p>
+        <div class="wizard-icon">&#9881;</div>
+        <h1>What will your team do?</h1>
+        <p class="wizard-desc">Pick a template to get started fast. You can customize everything later.</p>
+        <div class="wiz-type-grid" id="wiz-type-grid">
+          <div class="wiz-type-card" data-type="coding" onclick="App.wizardSelectType('coding')">
+            <div class="wiz-type-icon">&lt;/&gt;</div>
+            <div class="wiz-type-name">Coding</div>
+            <div class="wiz-type-desc">Build software with AI agents</div>
+          </div>
+          <div class="wiz-type-card" data-type="marketing" onclick="App.wizardSelectType('marketing')">
+            <div class="wiz-type-icon">&#128227;</div>
+            <div class="wiz-type-name">Marketing</div>
+            <div class="wiz-type-desc">Content, campaigns, audience growth</div>
+          </div>
+          <div class="wiz-type-card" data-type="sales" onclick="App.wizardSelectType('sales')">
+            <div class="wiz-type-icon">&#127919;</div>
+            <div class="wiz-type-name">Sales</div>
+            <div class="wiz-type-desc">Prospect, outreach, close deals</div>
+          </div>
+          <div class="wiz-type-card" data-type="research" onclick="App.wizardSelectType('research')">
+            <div class="wiz-type-icon">&#128269;</div>
+            <div class="wiz-type-name">Research</div>
+            <div class="wiz-type-desc">Analyze markets, competitors, trends</div>
+          </div>
+          <div class="wiz-type-card" data-type="operations" onclick="App.wizardSelectType('operations')">
+            <div class="wiz-type-icon">&#9881;</div>
+            <div class="wiz-type-name">Operations</div>
+            <div class="wiz-type-desc">Automate workflows, manage processes</div>
+          </div>
+          <div class="wiz-type-card" data-type="custom" onclick="App.wizardSelectType('custom')">
+            <div class="wiz-type-icon">+</div>
+            <div class="wiz-type-name">Custom</div>
+            <div class="wiz-type-desc">Build your own team from scratch</div>
+          </div>
+        </div>
+        <div class="wizard-actions">
+          <button class="btn btn-secondary" onclick="App.wizardBack()">Back</button>
+          <button class="btn btn-primary" onclick="App.wizardNext()">Next</button>
+        </div>
+        <div class="wizard-skip">
+          <a href="#" onclick="App.wizardSelectType('custom'); App.wizardNext(); return false;">Skip - I'll build my own team</a>
+        </div>
+      </div>
+
+      <!-- Step 4: About You -->
+      <div class="wizard-step" data-step="4">
+        <div class="wizard-icon">&#128100;</div>
+        <h1>Tell us about yourself</h1>
+        <p class="wizard-desc">Your agents use this to tailor their work.</p>
         <div class="form-grid">
-          <div class="form-group">
+          <div class="form-group full-width">
             <label>Name</label>
             <input type="text" id="wiz-name" placeholder="Your name">
           </div>
-          <div class="form-group">
-            <label>Role</label>
-            <input type="text" id="wiz-role" placeholder="e.g. Founder, Content Manager, Developer">
+          <div class="form-group full-width">
+            <label>Your role</label>
+            <select id="wiz-role" class="wiz-select">
+              <option value="">Select a role...</option>
+              <option value="Founder">Founder</option>
+              <option value="Developer">Developer</option>
+              <option value="Manager">Manager</option>
+              <option value="Marketer">Marketer</option>
+              <option value="Designer">Designer</option>
+              <option value="Researcher">Researcher</option>
+              <option value="Other">Other</option>
+            </select>
           </div>
           <div class="form-group full-width">
-            <label>Expertise</label>
-            <input type="text" id="wiz-expertise" placeholder="e.g. Marketing, AI, Web Development">
-          </div>
-          <div class="form-group full-width">
-            <label>Goals</label>
-            <textarea id="wiz-goals" rows="2" placeholder="What do you want your team to help you achieve?"></textarea>
-          </div>
-          <div class="form-group full-width">
-            <label>Target Audience</label>
-            <input type="text" id="wiz-audience" placeholder="Who are you trying to reach?">
-          </div>
-          <div class="form-group full-width">
-            <label>Brand Voice</label>
-            <input type="text" id="wiz-voice" placeholder="e.g. Professional, casual, technical, friendly">
+            <label>What's your main goal? (1-2 sentences)</label>
+            <textarea id="wiz-goals" rows="2" placeholder="e.g. Build and launch a SaaS product, grow my audience, automate my workflow..."></textarea>
           </div>
         </div>
         <div class="wizard-actions">
           <button class="btn btn-secondary" onclick="App.wizardBack()">Back</button>
           <button class="btn btn-primary" onclick="App.wizardNext()">Next</button>
         </div>
-      </div>
-
-      <!-- Step 4: Team -->
-      <div class="wizard-step" data-step="4">
-        <h2>Team Setup</h2>
-        <p class="wizard-desc">Name your agent team. This becomes the identity of your orchestration system.</p>
-        <div class="form-grid">
-          <div class="form-group full-width">
-            <label>Team Name</label>
-            <input type="text" id="wiz-team-name" placeholder="e.g. Content Squad, Research Lab, Dev Team">
-          </div>
-          <div class="form-group full-width">
-            <label>Description</label>
-            <textarea id="wiz-team-desc" rows="2" placeholder="What does this team do?"></textarea>
-          </div>
-        </div>
-        <div class="wizard-actions">
-          <button class="btn btn-secondary" onclick="App.wizardBack()">Back</button>
-          <button class="btn btn-primary" onclick="App.wizardNext()">Next</button>
+        <div class="wizard-skip">
+          <a href="#" onclick="App.wizardNext(); return false;">Skip</a>
         </div>
       </div>
 
-      <!-- Step 5: Name Your Orchestrator -->
+      <!-- Step 5: Name Your Sidekick -->
       <div class="wizard-step" data-step="5">
         <div class="wizard-icon" style="color:var(--gold)">&#9733;</div>
-        <h2>Your Orchestrator</h2>
-        <p class="wizard-desc">The orchestrator is the brain of your team. It coordinates all agents, manages tasks, and serves as your main point of contact. Give it a name and personality.</p>
+        <h1>Every hero needs a sidekick.</h1>
+        <p class="wizard-desc">What's yours called?</p>
         <div class="form-grid">
           <div class="form-group full-width">
-            <label>Orchestrator Name</label>
-            <input type="text" id="wiz-orch-name" placeholder="e.g. Commander, Atlas, Chief" value="Orchestrator">
-          </div>
-          <div class="form-group full-width">
-            <label>Personality Traits (comma-separated)</label>
-            <input type="text" id="wiz-orch-traits" placeholder="e.g. strategic, organized, decisive" value="strategic, organized, decisive">
-          </div>
-          <div class="form-group full-width">
-            <label>Tone</label>
-            <input type="text" id="wiz-orch-tone" placeholder="e.g. professional and efficient" value="professional and efficient">
+            <input type="text" id="wiz-orch-name" placeholder="e.g. Hero, Atlas, Chief" value="Hero" style="font-size:18px;text-align:center;padding:14px;">
           </div>
         </div>
+        <p style="color:var(--text-muted);font-size:13px;line-height:1.6;margin-top:12px;">Your sidekick is the orchestrator - it coordinates your entire agent team. Think of it as your chief of staff. You talk to it, it manages everyone else.</p>
         <div class="wizard-actions">
           <button class="btn btn-secondary" onclick="App.wizardBack()">Back</button>
           <button class="btn btn-primary" onclick="App.wizardNext()">Next</button>
         </div>
+        <div class="wizard-skip">
+          <a href="#" onclick="App.wizardNext(); return false;">Skip</a>
+        </div>
       </div>
 
-      <!-- Step 6: Done -->
+      <!-- Step 6: Team Generated -->
       <div class="wizard-step" data-step="6">
         <div class="wizard-icon">&#10003;</div>
-        <h1>You're All Set!</h1>
-        <div id="wizard-summary" class="wizard-summary"></div>
-        <div style="background:rgba(210,153,34,0.1);border:1px solid var(--yellow);border-radius:8px;padding:16px;margin:16px 0;font-size:13px;line-height:1.6;">
-          <strong style="color:var(--yellow);">&#9733; Next Step:</strong>
-          Head to the <strong>Command Center</strong> and ask your orchestrator to build your team. For example: <em>"Build me a team with a Content Writer and a Researcher"</em>
+        <h1 id="wiz-team-title">Your team is ready!</h1>
+        <p class="wizard-desc" id="wiz-team-subtitle">Based on your selection, we created these agents:</p>
+        <div id="wiz-team-list" class="wiz-team-list"></div>
+        <div id="wiz-team-creating" class="wiz-team-creating" style="display:none;">
+          <div class="wiz-spinner"></div>
+          <span>Creating your team...</span>
         </div>
         <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:16px;margin:16px 0;font-size:12px;line-height:1.6;color:var(--text-muted);">
           <strong style="color:var(--text);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Security Note:</strong>
-          Agents run with the same file access as your user account. On machines with sensitive data, we recommend using <strong>Supervised</strong> permission mode - agents will ask for your confirmation before file writes and shell commands. You can change this anytime in <strong>Settings</strong>. See <strong>Help > Security &amp; Secrets</strong> for details.
+          Agents run with the same file access as your user account. On machines with sensitive data, we recommend using <strong>Supervised</strong> permission mode in <strong>Settings</strong>.
         </div>
         <div class="wizard-actions">
-          <button class="btn btn-primary btn-lg" onclick="App.wizardFinish()">Go to Command Center</button>
+          <button class="btn btn-primary btn-lg" id="wiz-finish-btn" onclick="App.wizardFinish()">Start - Go to Command Center</button>
         </div>
       </div>
 
-      <div class="wizard-skip">
-        <a href="#" onclick="App.wizardSkip(); return false;">Skip - take me to the Command Center</a>
-      </div>
     </div>
   </div>
 

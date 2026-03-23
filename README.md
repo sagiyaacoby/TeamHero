@@ -179,16 +179,6 @@ Whether it's a bug fix, new feature, documentation improvement, or agent templat
 
 ---
 
-## Roadmap
-
-- [ ] Agent marketplace (community templates and skill packs)
-- [ ] Advanced analytics and agent performance metrics
-- [ ] Vector DB integration for long-term agent memory
-- [ ] Multi-user collaboration
-- [ ] `npx create-teamhero` one-command setup
-
----
-
 ## License
 
 [MIT](LICENSE) - Created by [Sagi Yaacoby](https://github.com/sagiyaacoby)

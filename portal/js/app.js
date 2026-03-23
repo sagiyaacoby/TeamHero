@@ -213,6 +213,7 @@
       if (viewId === 'knowledge') loadKnowledge();
       if (viewId === 'help') loadHelp(0);
       if (viewId === 'autopilot') loadAutopilotPage();
+      if (viewId === 'terms') loadTerms();
     }
 
     // Update hash unless this navigation was triggered by hashchange
@@ -314,11 +315,12 @@
   var NOTIF_SOUND_DEBOUNCE = 5000;
 
   function addNotification(type, data) {
-    var priorityMap = { 'task.pending_approval': 'high', 'task.blocker': 'high', 'task.closed': 'low' };
-    var iconMap = { 'task.pending_approval': '\u2610', 'task.blocker': '\u26A0', 'task.closed': '\u2714' };
+    var priorityMap = { 'task.pending_approval': 'high', 'task.blocker': 'high', 'task.done': 'medium', 'task.closed': 'low' };
+    var iconMap = { 'task.pending_approval': '\u2610', 'task.blocker': '\u26A0', 'task.done': '\u2714', 'task.closed': '\u2500' };
     var textMap = {
       'task.pending_approval': (data.agentName || 'Agent') + ' submitted "' + (data.title || 'task') + '" for review',
       'task.blocker': (data.agentName || 'Agent') + ' hit a blocker on "' + (data.title || 'task') + '"',
+      'task.done': (data.agentName || 'Agent') + ' completed "' + (data.title || 'task') + '"',
       'task.closed': '"' + (data.title || 'Task') + '" has been closed'
     };
     var priority = priorityMap[type] || 'low';
@@ -333,10 +335,11 @@
       read: false
     };
     notifications.unshift(notif);
-    if (notifications.length > 50) notifications = notifications.slice(0, 50);
+    if (notifications.length > 100) notifications = notifications.slice(0, 100);
     notifUnreadCount++;
     renderNotifications();
     animateBell();
+    persistNotification(notif);
     if (priority === 'high') {
       sendBrowserNotification(notif);
       playNotifSound();
@@ -367,17 +370,21 @@
       list.innerHTML = '<div class="notif-empty">No notifications</div>';
       return;
     }
-    var iconMap = { 'task.pending_approval': '\u2610', 'task.blocker': '\u26A0', 'task.closed': '\u2714' };
+    var iconMap = { 'task.pending_approval': '\u2610', 'task.blocker': '\u26A0', 'task.done': '\u2714', 'task.closed': '\u2500' };
+    var statusColorMap = { 'task.blocker': 'notif-status-blocker', 'task.done': 'notif-status-done', 'task.pending_approval': 'notif-status-pending', 'task.closed': 'notif-status-closed' };
     var html = '';
     for (var i = 0; i < notifications.length; i++) {
       var n = notifications[i];
-      html += '<div class="notif-item ' + (n.read ? '' : 'unread ') + 'priority-' + n.priority + '" onclick="App.clickNotification(' + i + ')">' +
+      var statusClass = statusColorMap[n.type] || 'notif-status-default';
+      html += '<div class="notif-item ' + (n.read ? '' : 'unread ') + statusClass + '" data-index="' + i + '">' +
         '<span class="notif-item-icon">' + (iconMap[n.type] || '\u25CF') + '</span>' +
-        '<div class="notif-item-body">' +
+        '<div class="notif-item-body" onclick="App.clickNotification(' + i + ')">' +
         '<div class="notif-item-text">' + escHtml(n.title) + '</div>' +
         (n.detail ? '<div class="notif-item-text" style="color:var(--text-dim);font-size:11px">' + escHtml(n.detail) + '</div>' : '') +
         '<div class="notif-item-time">' + timeAgo(n.timestamp) + '</div>' +
-        '</div></div>';
+        '</div>' +
+        '<button class="notif-dismiss-btn" onclick="event.stopPropagation();App.dismissNotification(' + i + ')" title="Dismiss">&times;</button>' +
+        '</div>';
     }
     list.innerHTML = html;
   }
@@ -423,8 +430,19 @@
       renderNotifications();
       if (n.taskId) {
         document.getElementById('notif-dropdown').style.display = 'none';
-        showTaskDetail(n.taskId);
+        openTask(n.taskId);
       }
+    }
+  }
+
+  function dismissNotification(index) {
+    if (index >= 0 && index < notifications.length) {
+      var n = notifications[index];
+      if (!n.read) notifUnreadCount = Math.max(0, notifUnreadCount - 1);
+      var nid = n.id;
+      notifications.splice(index, 1);
+      renderNotifications();
+      fetch('/api/notifications/' + nid, { method: 'DELETE' }).catch(function() {});
     }
   }
 
@@ -432,6 +450,7 @@
     notifications = [];
     notifUnreadCount = 0;
     renderNotifications();
+    fetch('/api/notifications', { method: 'DELETE' }).catch(function() {});
   }
 
   // Browser Notifications
@@ -448,7 +467,7 @@
       });
       bn.onclick = function() {
         window.focus();
-        if (notif.taskId) showTaskDetail(notif.taskId);
+        if (notif.taskId) openTask(notif.taskId);
         bn.close();
       };
     } else if (Notification.permission !== 'denied') {
@@ -495,6 +514,24 @@
     if (br && br.checked && 'Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
     }
+  }
+
+  function persistNotification(notif) {
+    fetch('/api/notifications', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(notif) }).catch(function() {});
+  }
+
+  async function loadNotificationsFromServer() {
+    try {
+      var stored = await api.get('/api/notifications');
+      if (Array.isArray(stored) && stored.length > 0) {
+        notifications = stored;
+        notifUnreadCount = 0;
+        for (var i = 0; i < notifications.length; i++) {
+          if (!notifications[i].read) notifUnreadCount++;
+        }
+        renderNotifications();
+      }
+    } catch(e) {}
   }
 
   // ── Terminal State ──────────────────────────────────
@@ -578,6 +615,62 @@
     }, delay);
   }
 
+  // Check if user is actively interacting with the task detail view
+  function isTaskDetailUserActive() {
+    if (state.currentView !== 'task-detail') return false;
+    // Check if any input/textarea in the task detail view has focus
+    var active = document.activeElement;
+    if (active) {
+      var tag = (active.tagName || '').toLowerCase();
+      if (tag === 'textarea' || tag === 'input' || tag === 'select' || active.isContentEditable) {
+        var taskView = document.getElementById('view-task-detail');
+        if (taskView && taskView.contains(active)) return true;
+      }
+    }
+    // Check if feedback area is visible and has content
+    var feedbackArea = document.getElementById('task-feedback-area');
+    if (feedbackArea && !feedbackArea.classList.contains('hidden')) {
+      var textarea = document.getElementById('task-review-comments');
+      if (textarea && textarea.value.trim().length > 0) return true;
+    }
+    // Check if any file preview feedback textarea has content
+    var previewTextareas = document.querySelectorAll('.file-preview-feedback-textarea');
+    for (var i = 0; i < previewTextareas.length; i++) {
+      if (previewTextareas[i].value && previewTextareas[i].value.trim().length > 0) return true;
+    }
+    return false;
+  }
+
+  // Lightweight update for task detail - updates status/priority badges without full re-render
+  async function softRefreshTaskDetail(taskId) {
+    try {
+      var task = await api.get('/api/tasks/' + taskId);
+      // Update status badge
+      var statusEl = document.getElementById('task-detail-status');
+      if (statusEl) {
+        var displayStatus = task.status || 'planning';
+        var statusLabel = STATUS_LABELS[displayStatus] || displayStatus.replace(/_/g, ' ');
+        if (displayStatus === 'working') {
+          statusEl.innerHTML = escHtml(statusLabel) + ' <span class="agent-working-dot"></span>';
+        } else {
+          statusEl.textContent = statusLabel;
+        }
+        statusEl.className = 'badge badge-' + displayStatus;
+      }
+      // Update priority badge
+      var priorityEl = document.getElementById('task-detail-priority');
+      if (priorityEl) {
+        priorityEl.textContent = task.priority || 'medium';
+        priorityEl.className = 'badge badge-' + (task.priority || 'medium');
+      }
+      // Update title
+      var titleEl = document.getElementById('task-detail-title');
+      if (titleEl) titleEl.textContent = task.title || 'Untitled';
+    } catch(e) {
+      // Soft refresh failed - not critical, full refresh will happen when user finishes editing
+    }
+  }
+
   function doRefresh(scope) {
     // Always update sidebar (agents, pending badge, working indicators)
     loadSidebarAgents();
@@ -590,7 +683,14 @@
     if (scope === 'all' || scope === 'agents' || scope === 'tasks') {
       if (v === 'dashboard') loadDashboard();
       if (v === 'agent-detail' && state.currentAgentId) loadAgentDetail(state.currentAgentId);
-      if (v === 'task-detail' && state.currentTaskId) openTask(state.currentTaskId);
+      if (v === 'task-detail' && state.currentTaskId) {
+        // Skip full re-render if user is actively typing/editing - preserve their input
+        if (isTaskDetailUserActive()) {
+          softRefreshTaskDetail(state.currentTaskId);
+        } else {
+          openTask(state.currentTaskId);
+        }
+      }
     }
     if (scope === 'all' || scope === 'agents') {
       if (v === 'settings') loadSettings();
@@ -646,22 +746,39 @@
     var orchAgents = state.agents.filter(function(a) { return a.isOrchestrator; });
     var subAgents = state.agents.filter(function(a) { return !a.isOrchestrator; });
 
-    // Build set of agents with working tasks or active activity state
-    var workingAgents = {};
+    // Build agent dot state: 'blocked' (red pulse), 'pending' (yellow pulse), 'active' (green pulse), or undefined (no dot)
+    var agentDotState = {};
+    var workingStatuses = { planning: true, working: true, in_progress: true };
+    // Group tasks by agent (only working/planning/pending_approval + blocker tasks)
+    var agentTaskMap = {};
     (state.tasks || []).forEach(function(t) {
-      if (t.status === 'working' && t.assignedTo) workingAgents[t.assignedTo] = true;
+      if (!t.assignedTo) return;
+      if (!workingStatuses[t.status] && t.status !== 'pending_approval' && !(t.blocker)) return;
+      if (!agentTaskMap[t.assignedTo]) agentTaskMap[t.assignedTo] = [];
+      agentTaskMap[t.assignedTo].push(t);
     });
-    // Also include agents with active activity state
+    // Determine dot state per agent: blocked > pending > active > no dot
+    Object.keys(agentTaskMap).forEach(function(agentId) {
+      var tasks = agentTaskMap[agentId];
+      var anyBlocked = tasks.some(function(t) { return !!t.blocker && t.status !== 'cancelled' && t.status !== 'closed'; });
+      var anyPending = tasks.some(function(t) { return t.status === 'pending_approval'; });
+      var anyActive = tasks.some(function(t) { return !!workingStatuses[t.status]; });
+      if (anyBlocked) agentDotState[agentId] = 'blocked';
+      else if (anyPending) agentDotState[agentId] = 'pending';
+      else if (anyActive) agentDotState[agentId] = 'active';
+    });
+    // Also include agents with active activity state from API
     state.agents.forEach(function(a) {
-      if (a.active) workingAgents[a.id] = true;
+      if (a.active && !agentDotState[a.id]) agentDotState[a.id] = 'active';
     });
 
     var html = '';
 
     orchAgents.forEach(function(a) {
       var isActive = state.currentView === 'agent-detail' && state.currentAgentId === a.id;
-      var dotClass = 'agent-dot' + (workingAgents[a.id] ? ' agent-dot-working' : '');
-      var dotTitle = workingAgents[a.id] ? 'Working on task' : 'Idle';
+      var ds = agentDotState[a.id];
+      var dotClass = ds === 'blocked' ? 'agent-dot agent-dot-blocked' : ds === 'pending' ? 'agent-dot agent-dot-pending' : ds === 'active' ? 'agent-dot agent-dot-working' : 'agent-dot agent-dot-idle';
+      var dotTitle = ds === 'blocked' ? 'Has blocked task' : ds === 'pending' ? 'Awaiting approval' : ds === 'active' ? 'Working on task' : '';
       var nameHtml = escHtml(a.name);
       if (a.role || a.mission) {
         nameHtml = '<span data-tooltip="' + escHtml((a.role || '') + (a.role && a.mission ? '\n' : '') + (a.mission || '')) + '">' + escHtml(a.name) + '</span>';
@@ -672,8 +789,9 @@
 
     subAgents.forEach(function(a) {
       var isActive = state.currentView === 'agent-detail' && state.currentAgentId === a.id;
-      var dotClass = 'agent-dot' + (workingAgents[a.id] ? ' agent-dot-working' : '');
-      var dotTitle = workingAgents[a.id] ? 'Working on task' : 'Idle';
+      var ds = agentDotState[a.id];
+      var dotClass = ds === 'blocked' ? 'agent-dot agent-dot-blocked' : ds === 'pending' ? 'agent-dot agent-dot-pending' : ds === 'active' ? 'agent-dot agent-dot-working' : 'agent-dot agent-dot-idle';
+      var dotTitle = ds === 'blocked' ? 'Has blocked task' : ds === 'pending' ? 'Awaiting approval' : ds === 'active' ? 'Working on task' : '';
       var nameHtml = escHtml(a.name);
       if (a.role || a.mission) {
         nameHtml = '<span data-tooltip="' + escHtml((a.role || '') + (a.role && a.mission ? '\n' : '') + (a.mission || '')) + '">' + escHtml(a.name) + '</span>';
@@ -701,11 +819,15 @@
       addAgentLink.closest('li').style.display = orchAgents.length > 0 ? '' : 'none';
     }
 
-    // Update pending count badge on Dashboard nav
+    // Update pending and working count badges
     var pendingCount = 0;
+    var workingCount = 0;
     (state.tasks || []).forEach(function(t) {
       if (t.status === 'pending_approval') pendingCount++;
+      if (t.status === 'working' || t.status === 'planning') workingCount++;
     });
+
+    // Dashboard nav badge (pending)
     var dashLink = document.querySelector('[data-view="dashboard"]');
     if (dashLink) {
       var badge = dashLink.querySelector('.nav-badge');
@@ -720,15 +842,37 @@
         badge.remove();
       }
     }
+
+    // Header status bubbles
+    var pendingBubble = document.getElementById('header-pending-bubble');
+    var workingBubble = document.getElementById('header-working-bubble');
+    if (pendingBubble) {
+      if (pendingCount > 0) {
+        pendingBubble.textContent = pendingCount;
+        pendingBubble.style.display = 'flex';
+      } else {
+        pendingBubble.style.display = 'none';
+      }
+    }
+    if (workingBubble) {
+      if (workingCount > 0) {
+        workingBubble.textContent = workingCount;
+        workingBubble.style.display = 'flex';
+      } else {
+        workingBubble.style.display = 'none';
+      }
+    }
+
     updateAutopilotBadge();
   }
 
   // ── Dashboard ──────────────────────────────────────
   async function loadDashboard() {
     try {
-      const [agentsData, tasksData] = await Promise.all([
+      const [agentsData, tasksData, archiveData] = await Promise.all([
         api.get('/api/agents'),
         api.get('/api/tasks'),
+        api.get('/api/tasks?include=archive'),
       ]);
       state.agents = agentsData.agents || [];
       state.tasks = tasksData.tasks || [];
@@ -736,7 +880,9 @@
 
       document.getElementById('stat-agents').textContent = state.agents.length;
       var pendingCount = 0, workingCount = 0, doneCount = 0, holdCount = 0, cancelledCount = 0, closedCount = 0;
-      state.tasks.forEach(function(t) {
+      // Use merged (active + archive) data for closed/cancelled counts
+      var allTasks = (archiveData && archiveData.tasks) || state.tasks;
+      allTasks.forEach(function(t) {
         // Pending counts ALL tasks (including subtasks) - owner must see everything needing review
         if (t.status === 'planning' || t.status === 'pending_approval') { pendingCount++; return; }
         // Other stats count top-level only
@@ -858,6 +1004,20 @@
       else if (t.status === 'cancelled') cancelledA++;
       else if (t.status === 'closed') closedA++;
     });
+    // Auto-select first non-empty filter so user always sees tasks
+    var filterCounts = [
+      { key: 'pending', count: pendingA },
+      { key: 'working', count: workingA },
+      { key: 'done', count: doneA },
+      { key: 'hold', count: holdA },
+      { key: 'cancelled', count: cancelledA },
+      { key: 'closed', count: closedA }
+    ];
+    var currentFilterCount = filterCounts.filter(function(f) { return f.key === state.agentTaskFilter; });
+    if (currentFilterCount.length === 0 || currentFilterCount[0].count === 0) {
+      var firstNonEmpty = filterCounts.filter(function(f) { return f.count > 0; })[0];
+      if (firstNonEmpty) state.agentTaskFilter = firstNonEmpty.key;
+    }
     var af = state.agentTaskFilter;
     summaryEl.innerHTML =
       '<span class="badge badge-pending_approval clickable-badge' + (af === 'pending' ? ' badge-active-filter' : '') + '" onclick="App.filterTasks(\'pending\',\'agent\')">' + pendingA + ' Pending</span> ' +
@@ -1406,7 +1566,7 @@
     });
   }
 
-  function filterTasks(filter, context) {
+  async function filterTasks(filter, context) {
     if (context === 'dashboard') {
       state.dashboardTaskFilter = filter;
       // Update stat card highlights
@@ -1425,6 +1585,17 @@
           titleEl.insertBefore(document.createTextNode(titleText + '\n        '), titleEl.firstChild);
         }
       }
+      // For closed/cancelled filters, fetch with archive included
+      if (filter === 'closed' || filter === 'cancelled') {
+        try {
+          var archiveData = await api.get('/api/tasks?include=archive');
+          var archiveTasks = archiveData.tasks || [];
+          var fullArchiveTasks = await Promise.all(archiveTasks.map(function(t) {
+            return api.get('/api/tasks/' + t.id).catch(function() { return Object.assign({ priority: 'medium' }, t); });
+          }));
+          state.cachedDashboardTasks = fullArchiveTasks;
+        } catch(e) { console.error('Failed to load archive tasks:', e); }
+      }
     } else {
       state.agentTaskFilter = filter;
       // Re-render agent summary badges to update highlight
@@ -1434,6 +1605,18 @@
           var badgeFilter = badge.getAttribute('onclick').match(/'([^']+)'/);
           if (badgeFilter) badge.classList.toggle('badge-active-filter', badgeFilter[1] === filter);
         });
+      }
+      // For closed/cancelled filters on agent page, fetch with archive included
+      if (filter === 'closed' || filter === 'cancelled') {
+        try {
+          var archiveData = await api.get('/api/tasks?include=archive');
+          var agentId = state.currentAgent ? state.currentAgent.id : null;
+          var archiveTasks = (archiveData.tasks || []).filter(function(t) { return t.assignedTo === agentId; });
+          var fullArchiveTasks = await Promise.all(archiveTasks.map(function(t) {
+            return api.get('/api/tasks/' + t.id).catch(function() { return Object.assign({ priority: 'medium' }, t); });
+          }));
+          state.cachedAgentTasks = fullArchiveTasks;
+        } catch(e) { console.error('Failed to load archive tasks:', e); }
       }
     }
     renderFilteredTasks(context);
@@ -1937,13 +2120,20 @@
       });
     }
 
+    // Add agent history entries (assignment/stage changes)
+    if (task.agentHistory && task.agentHistory.length > 0) {
+      task.agentHistory.forEach(function(entry) {
+        timeline.push({ type: 'agent_change', data: entry, timestamp: entry.at || '' });
+      });
+    }
+
     // Sort chronologically (versions and their feedback stay ordered by _after flag)
     timeline.sort(function(a, b) {
       var ta = new Date(a.timestamp || 0).getTime();
       var tb = new Date(b.timestamp || 0).getTime();
       if (ta !== tb) return ta - tb;
-      // Same timestamp: version before feedback, feedback before progress
-      var order = { version: 0, feedback: 1, progress: 2 };
+      // Same timestamp: version before feedback, feedback before progress, agent_change first
+      var order = { agent_change: -1, version: 0, feedback: 1, progress: 2 };
       return (order[a.type] || 0) - (order[b.type] || 0);
     });
 
@@ -2031,9 +2221,12 @@
         } else if (evt.type === 'progress') {
           var entry = evt.data;
           var isBlocker = /blocker/i.test(entry.message);
+          var isActiveBlocker = isBlocker && !!task.blocker;
+          var isResolvedBlocker = isBlocker && !task.blocker;
           var hasUrl = /(https?:\/\/[^\s]+)/i.test(entry.message);
           var entryClass = 'timeline-progress';
-          if (isBlocker) entryClass += ' timeline-progress-blocker';
+          if (isActiveBlocker) entryClass += ' timeline-progress-blocker';
+          if (isResolvedBlocker) entryClass += ' timeline-progress-blocker-resolved';
           if (hasUrl) entryClass += ' timeline-progress-url';
           var agentLabel = entry.agentId || '';
           var agents = state.agents || [];
@@ -2042,12 +2235,31 @@
           }
           var timeStr = entry.timestamp ? new Date(entry.timestamp).toLocaleDateString() : '';
 
-          var progressAccent = isBlocker ? 'tl-accent-blocker' : 'tl-accent-progress';
+          var progressAccent = isActiveBlocker ? 'tl-accent-blocker' : isResolvedBlocker ? 'tl-accent-blocker-resolved' : 'tl-accent-progress';
           html += '<div class="' + entryClass + '">';
           html += '<div class="tl-accent ' + progressAccent + '">';
-          if (isBlocker) html += '<span class="progress-blocker-badge">BLOCKER</span> ';
+          if (isActiveBlocker) html += '<span class="progress-blocker-badge">BLOCKER</span> ';
+          if (isResolvedBlocker) html += '<span class="progress-blocker-badge progress-blocker-resolved">RESOLVED</span> ';
           html += '<span class="timeline-progress-message">' + linkifyText(escHtml(entry.message)) + '</span>';
           html += '<span class="timeline-progress-meta">' + escHtml(agentLabel) + (timeStr ? ' - ' + timeStr : '') + '</span>';
+          html += '</div></div>';
+
+        } else if (evt.type === 'agent_change') {
+          var ah = evt.data;
+          var ahAgentLabel = ah.agentId || 'Unassigned';
+          var agents = state.agents || [];
+          for (var ahi = 0; ahi < agents.length; ahi++) {
+            if (agents[ahi].id === ah.agentId) { ahAgentLabel = agents[ahi].name; break; }
+          }
+          var stageLabels = { planning: 'Planning', pending_approval: 'Pending', working: 'Working', done: 'Done', closed: 'Closed', hold: 'Hold', cancelled: 'Cancelled' };
+          var ahStage = stageLabels[ah.stage] || ah.stage || '';
+          var ahTime = ah.at ? new Date(ah.at).toLocaleDateString() : '';
+          html += '<div class="timeline-agent-change">';
+          html += '<div class="tl-accent tl-accent-agent-change">';
+          html += '<span class="agent-change-icon">&#8594;</span> ';
+          html += '<span class="agent-change-label">' + escHtml(ahAgentLabel) + '</span>';
+          html += '<span class="agent-change-stage">' + escHtml(ahStage) + '</span>';
+          if (ahTime) html += '<span class="timeline-progress-meta">' + ahTime + '</span>';
           html += '</div></div>';
         }
       });
@@ -4556,15 +4768,15 @@
 
   // ── Wizard (5 steps) ──────────────────────────────
   function wizardNext() {
-    // Step 4 = orchestrator, prepare summary for step 5
-    if (state.wizardStep === 4) {
+    // Step 5 = orchestrator, prepare summary for step 6
+    if (state.wizardStep === 5) {
       var orchName = document.getElementById('wiz-orch-name') ? document.getElementById('wiz-orch-name').value : 'Orchestrator';
       var summary = '<strong>Profile:</strong> ' + escHtml(document.getElementById('wiz-name').value || 'Not set') + '<br>' +
         '<strong>Team:</strong> ' + escHtml(document.getElementById('wiz-team-name').value || 'Not set') + '<br>' +
         '<strong>Orchestrator:</strong> ' + escHtml(orchName || 'Orchestrator');
       document.getElementById('wizard-summary').innerHTML = summary;
     }
-    if (state.wizardStep < 5) {
+    if (state.wizardStep < 6) {
       state.wizardStep++;
       updateWizardStep();
     }
@@ -4581,7 +4793,7 @@
     document.querySelectorAll('.wizard-step').forEach(function(s) {
       s.classList.toggle('active', parseInt(s.dataset.step) === state.wizardStep);
     });
-    document.getElementById('wizard-progress-bar').style.width = Math.round(state.wizardStep / 5 * 100) + '%';
+    document.getElementById('wizard-progress-bar').style.width = Math.round(state.wizardStep / 6 * 100) + '%';
   }
 
   async function wizardFinish() {
@@ -4600,7 +4812,7 @@
       var teamDesc = document.getElementById('wiz-team-desc').value.trim();
       await api.post('/api/write-file', {
         path: 'config/system.json',
-        content: JSON.stringify({ initialized: true, teamName: teamName, teamDescription: teamDesc, version: '1.0.0' }, null, 2)
+        content: JSON.stringify({ initialized: true, teamName: teamName, teamDescription: teamDesc, version: '1.0.0', disclaimerAcceptedAt: new Date().toISOString() }, null, 2)
       });
 
       // Update orchestrator with custom name and personality from wizard
@@ -4634,7 +4846,7 @@
     try {
       await api.post('/api/write-file', {
         path: 'config/system.json',
-        content: JSON.stringify({ initialized: true, teamName: 'My Team', teamDescription: '', version: '1.0.0' }, null, 2)
+        content: JSON.stringify({ initialized: true, teamName: 'My Team', teamDescription: '', version: '1.0.0', disclaimerAcceptedAt: new Date().toISOString() }, null, 2)
       });
       await api.post('/api/system/initialize', {});
       updateSidebarHeader('My Team');
@@ -5211,6 +5423,7 @@
   // ── Init ───────────────────────────────────────────
   async function init() {
     connectWebSocket();
+    loadNotificationsFromServer();
 
     // Voice input: show container only if Web Speech API is supported
     var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -6274,6 +6487,22 @@
     contentEl.innerHTML = helpTopics[idx].content;
   }
 
+  async function loadTerms() {
+    var el = document.getElementById('terms-content');
+    if (!el) return;
+    try {
+      var resp = await fetch('/TERMS.md');
+      var text = await resp.text();
+      if (typeof marked !== 'undefined' && marked.parse) {
+        el.innerHTML = marked.parse(text);
+      } else {
+        el.textContent = text;
+      }
+    } catch(e) {
+      el.textContent = 'Failed to load terms. See TERMS.md in the project root.';
+    }
+  }
+
   function selectHelpTopic(index) {
     var items = document.querySelectorAll('.help-topic-item');
     items.forEach(function(item, i) {
@@ -6444,6 +6673,7 @@
     toggleNotifications: toggleNotifications,
     clickNotification: clickNotification,
     clearAllNotifications: clearAllNotifications,
+    dismissNotification: dismissNotification,
     saveNotifPrefs: saveNotifPrefs,
   };
 

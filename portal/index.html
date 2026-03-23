@@ -21,8 +21,33 @@
         <div class="wizard-progress-bar" id="wizard-progress-bar"></div>
       </div>
 
-      <!-- Step 1: Welcome -->
+      <!-- Step 1: Disclaimer -->
       <div class="wizard-step active" data-step="1">
+        <div class="wizard-icon">&#9888;</div>
+        <h1>Before You Begin</h1>
+        <p class="wizard-desc">TeamHero uses Claude AI to power intelligent agents that can perform actions on your behalf - including running commands, browsing the web, accessing files, and interacting with external services.</p>
+        <p class="wizard-desc"><strong>Your Claude subscription powers this tool.</strong> Your interactions with Claude through TeamHero are governed by <a href="https://www.anthropic.com/legal/consumer-terms" target="_blank" style="color:var(--accent)">Anthropic's Terms of Service</a>. TeamHero is not affiliated with Anthropic.</p>
+        <p class="wizard-desc">AI agents can and will make mistakes. They may misinterpret instructions, take unintended actions, or produce incorrect results.</p>
+        <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:16px;margin:16px 0;font-size:13px;line-height:1.7;color:var(--text-muted);text-align:left;">
+          <strong style="color:var(--text);">Before you proceed:</strong>
+          <ul style="margin:8px 0 0 0;padding-left:20px;">
+            <li>Do not give agents access to sensitive systems, credentials, or data unless you understand and accept the risks</li>
+            <li>Review agent plans before approving execution</li>
+            <li>Maintain backups of any data agents can access</li>
+            <li>You are responsible for all actions your agents take</li>
+          </ul>
+        </div>
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13px;line-height:1.6;text-align:left;margin:16px 0;padding:12px 16px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;">
+          <input type="checkbox" id="wiz-disclaimer-check" onchange="document.getElementById('wiz-disclaimer-btn').disabled=!this.checked" style="margin-top:4px;flex-shrink:0;">
+          <span>I understand that AI agents can make mistakes and I accept full responsibility for supervising their actions. I agree to the <a href="#" onclick="event.preventDefault();App.navigate('terms');" style="color:var(--accent)">Terms of Use</a>.</span>
+        </label>
+        <div class="wizard-actions">
+          <button class="btn btn-primary btn-lg" id="wiz-disclaimer-btn" disabled onclick="App.wizardNext()">Continue</button>
+        </div>
+      </div>
+
+      <!-- Step 2: Welcome -->
+      <div class="wizard-step" data-step="2">
         <div class="wizard-icon">&#9881;</div>
         <h1>Welcome to Your Agent Team</h1>
         <p class="wizard-desc">Set up your multi-agent orchestration system in just a few steps. You'll create your profile, name your team, and configure your first agent.</p>
@@ -31,8 +56,8 @@
         </div>
       </div>
 
-      <!-- Step 2: Profile -->
-      <div class="wizard-step" data-step="2">
+      <!-- Step 3: Profile -->
+      <div class="wizard-step" data-step="3">
         <h2>Your Profile</h2>
         <p class="wizard-desc">Tell your agents about yourself so they can tailor their work to your needs.</p>
         <div class="form-grid">
@@ -67,8 +92,8 @@
         </div>
       </div>
 
-      <!-- Step 3: Team -->
-      <div class="wizard-step" data-step="3">
+      <!-- Step 4: Team -->
+      <div class="wizard-step" data-step="4">
         <h2>Team Setup</h2>
         <p class="wizard-desc">Name your agent team. This becomes the identity of your orchestration system.</p>
         <div class="form-grid">
@@ -87,8 +112,8 @@
         </div>
       </div>
 
-      <!-- Step 4: Name Your Orchestrator -->
-      <div class="wizard-step" data-step="4">
+      <!-- Step 5: Name Your Orchestrator -->
+      <div class="wizard-step" data-step="5">
         <div class="wizard-icon" style="color:var(--gold)">&#9733;</div>
         <h2>Your Orchestrator</h2>
         <p class="wizard-desc">The orchestrator is the brain of your team. It coordinates all agents, manages tasks, and serves as your main point of contact. Give it a name and personality.</p>
@@ -112,8 +137,8 @@
         </div>
       </div>
 
-      <!-- Step 5: Done -->
-      <div class="wizard-step" data-step="5">
+      <!-- Step 6: Done -->
+      <div class="wizard-step" data-step="6">
         <div class="wizard-icon">&#10003;</div>
         <h1>You're All Set!</h1>
         <div id="wizard-summary" class="wizard-summary"></div>
@@ -141,6 +166,10 @@
     <div class="sidebar-header" id="sidebar-header">
       <div class="sidebar-header-row">
         <h1>&#9881; Team</h1>
+        <div class="header-status-bubbles">
+          <span class="header-bubble header-bubble-pending" id="header-pending-bubble" title="Pending approval" style="display:none" onclick="App.navigate('dashboard'); setTimeout(function(){App.filterTasks('pending','dashboard');},100);">0</span>
+          <span class="header-bubble header-bubble-working" id="header-working-bubble" title="Working tasks" style="display:none" onclick="App.navigate('dashboard'); setTimeout(function(){App.filterTasks('working','dashboard');},100);">0</span>
+        </div>
       </div>
       <span class="subtitle">Agent Portal</span>
     </div>
@@ -166,6 +195,7 @@
       <li class="nav-section">Support</li>
       <li><a href="#" data-view="help" class="nav-link"><span class="icon">&#63;</span> Help</a></li>
       <li><a href="#" data-view="license" class="nav-link"><span class="icon">&#9878;</span> License</a></li>
+      <li><a href="#" data-view="terms" class="nav-link"><span class="icon">&#9744;</span> Terms of Use</a></li>
     </ul>
     <div id="update-banner" class="update-banner hidden" onclick="App.navigate('settings'); App.switchSettingsSection('updates')">
       <span class="update-dot"></span> Update Available
@@ -522,6 +552,9 @@
           <div class="settings-sidebar-item" data-section="notifications" onclick="App.switchSettingsSection('notifications')">
             <span class="settings-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span> Notifications
           </div>
+          <div class="settings-sidebar-item" data-section="privacy" onclick="App.switchSettingsSection('privacy')">
+            <span class="settings-icon">&#9737;</span> Privacy
+          </div>
           <div class="settings-sidebar-section">Vault</div>
           <div class="settings-sidebar-item" data-section="api-keys" onclick="App.switchSettingsSection('api-keys')">
             <span class="settings-icon">&#10038;</span> API Keys & Secrets
@@ -605,6 +638,18 @@
                   <input type="checkbox" id="notif-toggle-sound" onchange="App.saveNotifPrefs()">
                   <span class="toggle-slider"></span>
                 </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Privacy -->
+          <div class="settings-section" id="settings-sec-privacy">
+            <div class="settings-section-title">Privacy</div>
+            <div class="settings-section-desc">How TeamHero handles your data.</div>
+            <div class="settings-group">
+              <div class="setting-item" style="flex-direction:column;align-items:flex-start;gap:8px">
+                <span class="setting-label" style="color:var(--text)">Your data stays on your machine</span>
+                <p style="margin:0;font-size:13px;line-height:1.7;color:var(--text-muted);">TeamHero runs entirely on your machine. No data is collected or transmitted to us. All agent data, tasks, credentials, and knowledge stay local. AI interactions go directly to your configured AI provider (e.g. Anthropic) under your own account and subscription.</p>
               </div>
             </div>
           </div>
@@ -976,6 +1021,26 @@ SOFTWARE.</pre>
         </div>
         <div class="license-links card">
           <a href="https://github.com/sagiyaacoby/TeamHero" target="_blank" class="btn btn-secondary">View on GitHub &#8599;</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Terms of Use -->
+    <section id="view-terms" class="view">
+      <header class="view-header"><h2>Terms of Use</h2></header>
+      <div class="license-page">
+        <div class="license-summary card">
+          <div class="license-badge-row">
+            <span class="license-badge">Terms of Use</span>
+          </div>
+          <p class="license-intro">By using TeamHero, you agree to these terms. AI agents act with autonomy and can make mistakes. You are responsible for supervising agent actions and maintaining backups.</p>
+        </div>
+        <div class="license-full card">
+          <h3>Full Terms</h3>
+          <div id="terms-content" class="version-content" style="white-space:pre-wrap;font-size:13px;line-height:1.7;color:var(--text-muted);">Loading...</div>
+        </div>
+        <div class="license-links card">
+          <a href="https://github.com/sagiyaacoby/TeamHero/blob/main/TERMS.md" target="_blank" class="btn btn-secondary">View on GitHub &#8599;</a>
         </div>
       </div>
     </section>

@@ -969,8 +969,19 @@ async function handle(pn, m, req, res) {
   }
 
   // TASKS
-  if (pn === '/api/tasks' && m === 'GET')
-    return J(res, readJSON(path.join(ROOT, 'data/tasks/_index.json')) || { tasks: [] });
+  if (pn === '/api/tasks' && m === 'GET') {
+    var taskParams = new URL(req.url, 'http://localhost').searchParams;
+    var includeArchive = taskParams.get('include') === 'archive';
+    var statusFilter = taskParams.get('status');
+    var needArchive = includeArchive || statusFilter === 'closed' || statusFilter === 'cancelled';
+    var activeIdx = readJSON(path.join(ROOT, 'data/tasks/_index.json')) || { tasks: [] };
+    if (needArchive) {
+      var archiveIdx = readJSON(path.join(ROOT, 'data/tasks/_index-archive.json')) || { tasks: [] };
+      var merged = { tasks: activeIdx.tasks.concat(archiveIdx.tasks) };
+      return J(res, merged);
+    }
+    return J(res, activeIdx);
+  }
 
   if (pn === '/api/tasks' && m === 'POST') {
     const b = await parseBody(req);
@@ -997,9 +1008,14 @@ async function handle(pn, m, req, res) {
       lastRun: b.lastRun || null,
       nextRun: null,
       runCount: b.runCount || 0,
+      agentHistory: [],
       progressLog: [],
       createdAt: now, updatedAt: now
     };
+    // Seed initial agent history entry
+    if (t.assignedTo) {
+      t.agentHistory.push({ agentId: t.assignedTo, stage: t.status, at: now });
+    }
     // Compute nextRun for recurring autopilot tasks
     if (t.autopilot && t.interval && t.intervalUnit) {
       var ms = t.interval * ({ minutes: 60000, hours: 3600000, days: 86400000 }[t.intervalUnit] || 60000);
@@ -1028,6 +1044,10 @@ async function handle(pn, m, req, res) {
       }
     }
     broadcast('tasks');
+    // Warn if orchestrator is assigned to a working task
+    if (t.assignedTo === 'orchestrator' && t.status === 'working') {
+      t.warning = 'Orchestrator should not be assigned to working tasks - delegate to agents';
+    }
     return J(res, t, 201);
   }
 
@@ -1134,9 +1154,14 @@ async function handle(pn, m, req, res) {
       dependsOn: Array.isArray(b.dependsOn) ? b.dependsOn : [],
       dueDate: b.dueDate || null,
       blocker: b.blocker || null,
+      agentHistory: [],
       progressLog: [],
       createdAt: now, updatedAt: now
     };
+    // Seed initial agent history entry
+    if (sub.assignedTo) {
+      sub.agentHistory.push({ agentId: sub.assignedTo, stage: sub.status, at: now });
+    }
     writeJSON(path.join(subDir, 'task.json'), sub);
     writeJSON(path.join(subDir, 'v1/version.json'), {
       number: 1, content: b.content || '', status: 'submitted',
@@ -1319,6 +1344,10 @@ async function handle(pn, m, req, res) {
         actionResult = Object.assign({}, ex, { status: 'cancelled', updatedAt: now });
       }
 
+      // Track agent history on status transition
+      if (!actionResult.agentHistory) actionResult.agentHistory = [];
+      actionResult.agentHistory.push({ agentId: actionResult.assignedTo || null, stage: actionResult.status, at: now });
+
       writeJSON(tp, actionResult);
       var aip = path.join(ROOT, 'data/tasks/_index.json');
       var aix = readJSON(aip) || { tasks: [] };
@@ -1347,6 +1376,9 @@ async function handle(pn, m, req, res) {
               parentTask2.status = 'pending_approval';
             }
             parentTask2.updatedAt = now;
+            // Track agent history for parent auto-advance
+            if (!parentTask2.agentHistory) parentTask2.agentHistory = [];
+            parentTask2.agentHistory.push({ agentId: parentTask2.assignedTo || null, stage: parentTask2.status, at: now });
             writeJSON(parentTp2, parentTask2);
             var pi = aix.tasks.findIndex(function(x) { return x.id === checkParentId; });
             if (pi >= 0) { aix.tasks[pi].status = parentTask2.status; writeJSON(aip, aix); }
@@ -1392,6 +1424,15 @@ async function handle(pn, m, req, res) {
         broadcastEvent('task.pending_approval', { taskId: id, title: actionResult.title, agentName: agentName });
       } else if (actionResult.status === 'closed') {
         broadcastEvent('task.closed', { taskId: id, title: actionResult.title, agentName: agentName });
+        archiveClosedTasks();
+      } else if (actionResult.status === 'cancelled') {
+        archiveClosedTasks();
+      } else if (actionResult.status === 'done') {
+        broadcastEvent('task.done', { taskId: id, title: actionResult.title, agentName: agentName });
+      }
+      // Warn if orchestrator is assigned to a working task
+      if (actionResult.assignedTo === 'orchestrator' && actionResult.status === 'working') {
+        actionResult.warning = 'Orchestrator should not be assigned to working tasks - delegate to agents';
       }
       return J(res, actionResult);
     }
@@ -1431,6 +1472,14 @@ async function handle(pn, m, req, res) {
 
     // Default: merge update
     var merged = Object.assign({}, ex, b, { id: id, updatedAt: now });
+
+    // Track agent history on status or assignee change
+    if (!merged.agentHistory) merged.agentHistory = [];
+    var statusChanged = b.status && b.status !== ex.status;
+    var assigneeChanged = b.assignedTo !== undefined && b.assignedTo !== ex.assignedTo;
+    if (statusChanged || assigneeChanged) {
+      merged.agentHistory.push({ agentId: merged.assignedTo || null, stage: merged.status, at: now });
+    }
 
     // Recompute nextRun if interval fields changed
     if ((b.interval !== undefined || b.intervalUnit !== undefined) && merged.autopilot && merged.interval && merged.intervalUnit) {
@@ -1474,12 +1523,23 @@ async function handle(pn, m, req, res) {
       if (merged.status === 'pending_approval' && ex.status !== 'pending_approval') {
         broadcastEvent('task.pending_approval', { taskId: id, title: merged.title, agentName: evAgentName });
       }
+      if (merged.status === 'done' && ex.status !== 'done') {
+        broadcastEvent('task.done', { taskId: id, title: merged.title, agentName: evAgentName });
+      }
       if (merged.status === 'closed' && ex.status !== 'closed') {
         broadcastEvent('task.closed', { taskId: id, title: merged.title, agentName: evAgentName });
+        archiveClosedTasks();
+      }
+      if (merged.status === 'cancelled' && ex.status !== 'cancelled') {
+        archiveClosedTasks();
       }
       if (b.blocker && b.blocker !== ex.blocker) {
         broadcastEvent('task.blocker', { taskId: id, title: merged.title, agentName: evAgentName, reason: b.blocker });
       }
+    }
+    // Warn if orchestrator is assigned to a working task
+    if (merged.assignedTo === 'orchestrator' && merged.status === 'working') {
+      merged.warning = 'Orchestrator should not be assigned to working tasks - delegate to agents';
     }
     return J(res, merged);
   }
@@ -1488,6 +1548,8 @@ async function handle(pn, m, req, res) {
   if (pn === '/api/stats' && m === 'GET') {
     var agentsReg = readJSON(path.join(ROOT, 'agents/_registry.json')) || { agents: [] };
     var tasksIdx = readJSON(path.join(ROOT, 'data/tasks/_index.json')) || { tasks: [] };
+    var tasksArchive = readJSON(path.join(ROOT, 'data/tasks/_index-archive.json')) || { tasks: [] };
+    tasksIdx = { tasks: tasksIdx.tasks.concat(tasksArchive.tasks) };
     var now = Date.now();
     var d7 = now - 7 * 86400000;
     var d30 = now - 30 * 86400000;
@@ -1647,6 +1709,34 @@ async function handle(pn, m, req, res) {
       const f = fs.readdirSync(d).filter(function(x) { return x.endsWith('.json'); });
       return J(res, f.map(function(x) { return readJSON(path.join(d, x)); }).filter(Boolean));
     } catch(e) { return J(res, []); }
+  }
+
+  // NOTIFICATIONS (persisted)
+  var notifFile = path.join(ROOT, 'data/notifications.json');
+  if (pn === '/api/notifications' && m === 'GET') {
+    var notifs = readJSON(notifFile) || [];
+    return J(res, notifs);
+  }
+  if (pn === '/api/notifications' && m === 'POST') {
+    var nb = await parseBody(req);
+    var notifs = readJSON(notifFile) || [];
+    if (nb && nb.id) {
+      notifs.unshift(nb);
+      if (notifs.length > 100) notifs = notifs.slice(0, 100);
+      writeJSON(notifFile, notifs);
+    }
+    return J(res, { ok: true });
+  }
+  if (pn === '/api/notifications' && m === 'DELETE') {
+    writeJSON(notifFile, []);
+    return J(res, { ok: true });
+  }
+  if (pn.startsWith('/api/notifications/') && m === 'DELETE') {
+    var nid = pn.split('/').pop();
+    var notifs = readJSON(notifFile) || [];
+    notifs = notifs.filter(function(n) { return n.id !== nid; });
+    writeJSON(notifFile, notifs);
+    return J(res, { ok: true });
   }
 
   // TEMP WORKSPACE
@@ -2326,6 +2416,16 @@ async function handle(pn, m, req, res) {
     return J(res, { generated: new Date().toISOString(), team: team, agents: agents });
   }
 
+  // Serve TERMS.md from project root
+  if (pn === '/TERMS.md') {
+    var termsPath = path.join(ROOT, 'TERMS.md');
+    return fs.readFile(termsPath, function(e, data) {
+      if (e) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('Not found'); }
+      res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
+      res.end(data);
+    });
+  }
+
   // STATIC FILES
   var staticPath = pn === '/' ? '/index.html' : pn;
   staticPath = path.join(BASE, staticPath);
@@ -2449,6 +2549,47 @@ autoCloseDoneTasks();
 
 // Run auto-close every hour
 setInterval(autoCloseDoneTasks, 60 * 60 * 1000);
+
+// ── Archive Closed Tasks ─────────────────────────────────
+function archiveClosedTasks() {
+  var indexPath = path.join(ROOT, 'data/tasks/_index.json');
+  var archivePath = path.join(ROOT, 'data/tasks/_index-archive.json');
+  var index = readJSON(indexPath);
+  if (!index || !index.tasks) return;
+  var archive = readJSON(archivePath) || { tasks: [] };
+  var now = Date.now();
+  var thirtyDays = 30 * 24 * 60 * 60 * 1000;
+  var toArchive = [];
+  var remaining = [];
+  index.tasks.forEach(function(t) {
+    if ((t.status === 'closed' || t.status === 'cancelled') && t.updatedAt) {
+      var updatedAt = new Date(t.updatedAt).getTime();
+      if (now - updatedAt >= thirtyDays) {
+        toArchive.push(t);
+        return;
+      }
+    }
+    remaining.push(t);
+  });
+  if (toArchive.length === 0) return;
+  // Append to archive, avoiding duplicates
+  var existingIds = {};
+  archive.tasks.forEach(function(t) { existingIds[t.id] = true; });
+  toArchive.forEach(function(t) {
+    if (!existingIds[t.id]) {
+      archive.tasks.push(t);
+    }
+  });
+  writeJSON(archivePath, archive);
+  writeJSON(indexPath, { tasks: remaining });
+  console.log('[Archive] Moved ' + toArchive.length + ' closed/cancelled tasks to archive');
+}
+
+// Run archive on startup
+archiveClosedTasks();
+
+// Run archive every 6 hours
+setInterval(archiveClosedTasks, 6 * 60 * 60 * 1000);
 
 // ── Autopilot Scheduler Engine ───────────────────────────
 function computeNextRun(from, interval, unit) {

@@ -11,4 +11,5 @@ module.exports = [
   { version: '2.8.1', name: 'autopilot-tasks', run: require('./2.8.1-autopilot-tasks') },
   { version: '2.8.2', name: 'backfill-subtask-links', run: require('./2.8.2-backfill-subtask-links') },
   { version: '2.8.4', name: 'agent-os-layer', run: require('./2.8.4-agent-os-layer') },
+  { version: '2.9.1', name: 'agent-history', run: require('./2.9.1-agent-history') },
 ];

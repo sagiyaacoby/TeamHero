@@ -6096,14 +6096,14 @@
         var statusLabel = isPaused ? '<span style="color:var(--warning)">Paused</span>' : '<span style="color:var(--success)">' + escHtml(task.status) + '</span>';
         var toggleIcon = isPaused ? '\u25B6' : '\u23F8';
         var toggleTitle = isPaused ? 'Resume' : 'Pause';
-        html += '<tr' + (isPaused ? ' class="ap-disabled"' : '') + '>' +
-          '<td><a href="#" onclick="App.openTask(\'' + task.id + '\');return false" style="color:var(--text-primary);text-decoration:underline">' + escHtml(task.title) + '</a></td>' +
+        html += '<tr' + (isPaused ? ' class="ap-disabled"' : '') + ' style="cursor:pointer" onclick="App.openTask(\'' + task.id + '\')">' +
+          '<td style="color:var(--text-primary)">' + escHtml(task.title) + '</td>' +
           '<td>' + escHtml(agentName) + '</td>' +
           '<td>' + interval + '</td>' +
           '<td>' + lastRun + '</td>' +
           '<td>' + nextRun + '</td>' +
           '<td>' + statusLabel + (task.runCount ? ' (#' + task.runCount + ')' : '') + '</td>' +
-          '<td class="ap-controls">' +
+          '<td class="ap-controls" onclick="event.stopPropagation()">' +
             '<button class="btn-icon" title="' + toggleTitle + '" onclick="App.toggleAutopilot(\'' + task.id + '\',' + isPaused + ')">' + toggleIcon + '</button>' +
             '<button class="btn-icon" title="Edit interval" onclick="App.editAutopilot(\'' + task.id + '\')">&#9998;</button>' +
             '<button class="btn-icon" title="Cancel task" onclick="App.deleteAutopilot(\'' + task.id + '\')">&#10005;</button>' +

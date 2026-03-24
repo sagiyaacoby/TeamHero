@@ -595,11 +595,17 @@ function rebuildAgentOs() {
     '## Task Lifecycle (MANDATORY)\n\n' +
     '### Statuses: planning, pending_approval, working, done, closed, hold, cancelled\n\n' +
     '### Two-Phase Flow: Plan -> Review -> Execute -> Done\n\n' +
-    '**Phase 1 - Plan:**\n' +
+    '**Phase 1 - Plan (HARD RULE: Planning = Active Execution)**\n\n' +
+    '`planning` means an agent is ACTIVELY working on producing the plan document right now. It is NOT a waiting state, idle state, or queue.\n\n' +
+    '- When a task enters `planning`, the orchestrator MUST launch an agent immediately to write the plan.\n' +
+    '- A task in `planning` with no active agent is a VIOLATION. Every `planning` task must have an agent actively working on it.\n' +
+    '- No task should ever sit in `planning` without an agent producing the plan document.\n\n' +
+    'Steps:\n' +
     '1. Set task `working`. Log "Planning: {what}"\n' +
     '2. Create plan, save to `data/tasks/{id}/v{n}/plan.md`\n' +
     '3. Update version.json: `content` (REQUIRED) + `deliverable`\n' +
     '4. Set `pending_approval`. STOP.\n\n' +
+    '`pending_approval` = the plan document is written and ready for owner review. This is the ONLY waiting state in the planning phase.\n\n' +
     '**Phase 2 - Execute (after owner accepts):**\n' +
     '5. Task becomes `working` (accept action). Log "Executing: {action}"\n' +
     '6. Do the work. If blocked: `PUT /api/tasks/{id} {"blocker":"reason"}` and STOP.\n' +
@@ -637,6 +643,14 @@ function rebuildAgentOs() {
     '## Content Rules\n' +
     '- No em/en dashes (use hyphens). Minimal emojis. No AI cliches.\n' +
     '- Never post without an image. Log published URLs via progress.\n\n' +
+    '## Secrets & Vault\n\n' +
+    'Secrets are stored encrypted (AES-256-GCM) in the vault. Agents never see actual values.\n\n' +
+    '- Keys are injected as environment variables into the session automatically - no manual unlock needed\n' +
+    '- Use them blindly via `$VAR_NAME` in commands (e.g. `curl -H "apikey: $SUPABASE_ANON_KEY"`)\n' +
+    '- NEVER echo, log, write to files, or output the actual secret values\n' +
+    '- The shell resolves the variables at runtime, not the agent\n' +
+    '- Available secrets are listed in CLAUDE.md under the "Available Secrets" section\n' +
+    '- If a secret is needed but not in the vault, flag it as a blocker to the orchestrator - don\'t try to work around it\n\n' +
     '## API Base\n' +
     'Server: `http://localhost:' + port + '`\n' +
     'Task progress: `POST /api/tasks/{id}/progress` with `{"message":"...","agentId":"..."}`\n' +

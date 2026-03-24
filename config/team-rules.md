@@ -88,12 +88,22 @@ Violation: If an agent is launched without a tracked task, the sidebar will not 
 
 ### Flow: Plan -> Review -> Execute -> Done -> (auto) Closed
 
-**Phase 1: Plan (MANDATORY)**
+**Phase 1: Plan (HARD RULE: Planning = Active Execution)**
+
+`planning` means an agent is ACTIVELY working on producing the plan document right now. It is NOT a waiting state, idle state, or queue.
+
+- When a task enters `planning`, the orchestrator MUST launch an agent immediately to write the plan.
+- A task in `planning` with no active agent is a VIOLATION. Every `planning` task must have an agent actively working on it.
+- No task should ever sit in `planning` without an agent producing the plan document.
+
+Steps:
 1. Set `working`. Log "Planning: {what I will do}"
 2. Create plan: What will be done, How, which files/sources/platforms
 3. Save plan to `data/tasks/{id}/v{n}/plan.md`
 4. Update version.json: `content` (REQUIRED) + `deliverable` (path to plan)
 5. Set `pending_approval`. STOP and wait.
+
+`pending_approval` = the plan document is written and ready for owner review. This is the ONLY waiting state in the planning phase.
 
 **Phase 2: Execute (after owner accepts)**
 6. Task becomes `working` (accept action). Log "Executing: {action}"
@@ -129,7 +139,7 @@ Violation: If an agent is launched without a tracked task, the sidebar will not 
 - `closed` -> (terminal, no transitions out)
 
 ### Status Meanings
-- **planning**: Creating plan/materials before first review
+- **planning**: Agent is ACTIVELY producing the plan document. Not idle - an agent must be working on it. A planning task with no active agent is a violation.
 - **pending_approval**: Materials ready for review
 - **working**: Executing after acceptance
 - **done**: Agent completed work. Stays for 2 days then auto-closes. Owner can review or send back.

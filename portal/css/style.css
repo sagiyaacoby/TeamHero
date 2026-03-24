@@ -509,6 +509,8 @@ body {
 .autopilot-table th { text-align: left; padding: 8px 10px; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); font-size: 12px; }
 .autopilot-table td { padding: 10px 10px; border-bottom: 1px solid var(--border); }
 .autopilot-table tr:last-child td { border-bottom: none; }
+.autopilot-table tbody tr { cursor: pointer; transition: background 0.15s; }
+.autopilot-table tbody tr:hover { background: var(--item-hover); }
 .autopilot-table tr.ap-disabled td { opacity: 0.5; }
 .ap-controls { white-space: nowrap; }
 .btn-icon { background: none; border: 1px solid var(--border); color: var(--text); cursor: pointer; padding: 4px 8px; border-radius: 4px; font-size: 14px; margin-right: 4px; }

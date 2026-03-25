@@ -181,4 +181,10 @@ Whether it's a bug fix, new feature, documentation improvement, or agent templat
 
 ## License
 
-[MIT](LICENSE) - Created by [Sagi Yaacoby](https://github.com/sagiyaacoby)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+TeamHero is open source software released under the [MIT License](LICENSE).
+
+You are free to use, modify, and distribute the code. However, the names "TeamHero" and "Kapow" are trademarks of Sagi Yaacoby. Forked or modified versions must be renamed and may not use the TeamHero or Kapow names or logos.
+
+See [TRADEMARK.md](TRADEMARK.md) for the full trademark policy.

@@ -166,6 +166,30 @@ Steps:
 - **Research**: `deliverable` = report file path in version folder
 - **Operations**: `result` = verification or outcome description
 
+## Autopilot & Scheduling
+
+### Three Task Modes
+
+| Mode | Icon | Description |
+|------|------|-------------|
+| Manual | (none) | Standard lifecycle - agent plans, owner reviews, agent executes, owner verifies |
+| Autopilot | Gear | Agent delivers, system auto-advances to done without owner review |
+| Timed | Clock | Scheduled tasks (recurring or one-time). Always autopilot (locked) |
+
+### Rules
+- **Timed = Autopilot enforced**: Any task with an interval or scheduledAt automatically has autopilot=true. Cannot be disabled while schedule is active.
+- **Autopilot advances to done, not closed**: When an autopilot task hits pending_approval, it auto-advances to done (stays 2 days, then auto-closes). This gives the owner a window to review.
+- **30-second scheduler**: The scheduler checks for due tasks every 30 seconds (not 60s).
+- **Overlap protection**: If a recurring task is still working/planning/pending_approval/hold when the next run is due, it is skipped.
+- **Drift compensation**: Recurring nextRun is anchored to the scheduled time, not the actual run time, preventing gradual drift.
+- **Startup catch-up**: The scheduler runs immediately on server start to fire any overdue tasks.
+- **One-time scheduled tasks**: Use `scheduledAt` field. After firing, `scheduledAt` is cleared and the task proceeds as a normal autopilot task.
+
+### Icon Legend
+- No icon = Manual task
+- Gear icon = Autopilot (no schedule)
+- Clock icon = Timed (recurring or one-time scheduled)
+
 ## Agent Execution Guards
 - Agents may ONLY begin work when the orchestrator launches them
 - Never work on tasks in `pending_approval`, `hold`, `closed`, or `cancelled` status
@@ -213,6 +237,13 @@ Every done/closed task MUST have visible outcomes. Update version.json with:
 ## Round Table Protocol
 
 Round tables are **execution-first**. Act before reporting.
+
+### Phase 0: Recover Stalled Tasks (MANDATORY - DO THIS FIRST)
+1. Query `GET /api/tasks` and filter for `status: working`
+2. For each working task, check if the assigned agent is actively running
+3. If no agent is running for a working task, relaunch the assigned agent immediately to resume execution
+4. This catches all interruptions: rate limits, crashes, session deaths, timeouts
+5. Do NOT skip this phase - stalled tasks are invisible failures that block progress
 
 ### Phase 1: Execute
 1. Launch agents on working tasks (EXECUTE, set done when complete)

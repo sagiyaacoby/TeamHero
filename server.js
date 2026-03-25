@@ -201,6 +201,154 @@ function J(res, data, s) { s=s||200; res.writeHead(s, {'Content-Type':'applicati
 function E(res, msg, s) { J(res, {error:msg}, s||400); }
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
 
+// ── Auto-promote deliverables (KB + Media) ────────
+var IMAGE_EXTS_SERVER = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+var TEXT_EXTS_SERVER = ['.md', '.txt'];
+
+function getLatestVersion(taskId, task) {
+  var taskDir = path.join(ROOT, 'data/tasks', taskId);
+  var latestV = task.version || 1;
+  try {
+    var entries = fs.readdirSync(taskDir);
+    entries.forEach(function(e) {
+      if (/^v\d+$/.test(e)) { var n = parseInt(e.slice(1)); if (n > latestV) latestV = n; }
+    });
+  } catch(e) {}
+  return latestV;
+}
+
+function getVersionFiles(taskId, vNum) {
+  var vDir = path.join(ROOT, 'data/tasks', taskId, 'v' + vNum);
+  try {
+    return fs.readdirSync(vDir).filter(function(f) { return f !== 'version.json' && f !== 'plan.md'; });
+  } catch(e) { return []; }
+}
+
+function readMediaIndex() {
+  return readJSON(path.join(ROOT, 'data/media/_index.json')) || { files: {} };
+}
+
+function writeMediaIndex(idx) {
+  writeJSON(path.join(ROOT, 'data/media/_index.json'), idx);
+}
+
+function addMediaEntry(relPath, meta) {
+  var idx = readMediaIndex();
+  idx.files[relPath] = Object.assign({ addedAt: new Date().toISOString() }, meta);
+  writeMediaIndex(idx);
+}
+
+function copyFileToMedia(srcPath, destSubfolder, filename, meta) {
+  var destDir = path.join(ROOT, 'data/media', destSubfolder);
+  fs.mkdirSync(destDir, { recursive: true });
+  var destPath = path.join(destDir, filename);
+  fs.copyFileSync(srcPath, destPath);
+  var relPath = destSubfolder + '/' + filename;
+  addMediaEntry(relPath, meta || {});
+  return relPath;
+}
+
+function autoPromoteToKb(taskId, task) {
+  if (task.skipAutoPromote) return;
+  if (task.knowledgeDocId || task.promotedToKb) return;
+
+  var shouldPromoteKb = false;
+  var kbCategory = 'reference';
+  var kbTags = task.tags || [];
+
+  // Determine if task qualifies for KB auto-promote
+  if (task.type === 'research') { shouldPromoteKb = true; kbCategory = 'research'; }
+  else if (task.type === 'review') { shouldPromoteKb = true; kbCategory = 'analysis'; }
+  else if (kbTags.indexOf('legal') >= 0) { shouldPromoteKb = true; kbCategory = 'reference'; if (kbTags.indexOf('legal') < 0) kbTags.push('legal'); }
+
+  // Content tasks with text deliverables
+  var latestV = getLatestVersion(taskId, task);
+  var vDir = path.join(ROOT, 'data/tasks', taskId, 'v' + latestV);
+  var vFiles = getVersionFiles(taskId, latestV);
+  var vData = readJSON(path.join(vDir, 'version.json')) || {};
+
+  if (task.type === 'content') {
+    var hasTextFiles = vFiles.some(function(f) { var ext = path.extname(f).toLowerCase(); return TEXT_EXTS_SERVER.indexOf(ext) >= 0; });
+    if (hasTextFiles) { shouldPromoteKb = true; kbCategory = 'reference'; }
+  }
+  if (task.type === 'development') {
+    var hasArchDocs = vFiles.some(function(f) { return f === 'plan.md' || f.indexOf('architecture') >= 0 || f.indexOf('design') >= 0; });
+    // Check if version content mentions architecture
+    if (hasArchDocs || (vData.content && /architect/i.test(vData.content))) { shouldPromoteKb = true; kbCategory = 'guide'; }
+  }
+
+  if (shouldPromoteKb) {
+    try {
+      var content = vData.content || vData.deliverable || task.description || '';
+      if (!content) return;
+
+      var docId = genId();
+      var now = new Date().toISOString();
+      var doc = {
+        id: docId, title: task.title, content: content,
+        category: kbCategory,
+        tags: kbTags, summary: task.description || '',
+        sourceTaskId: taskId, authorAgentId: task.assignedTo || null,
+        project: task.project || null,
+        createdAt: now, updatedAt: now
+      };
+      var kDir = path.join(ROOT, 'data/knowledge');
+      fs.mkdirSync(kDir, { recursive: true });
+      writeText(path.join(kDir, docId + '.md'), content);
+      var kip = path.join(kDir, '_index.json');
+      var kix = readJSON(kip) || { documents: [] };
+      var meta = Object.assign({}, doc);
+      delete meta.content;
+      kix.documents.push(meta);
+      writeJSON(kip, kix);
+
+      task.knowledgeDocId = docId;
+      task.promotedToKb = true;
+      task.updatedAt = now;
+      var tp = path.join(ROOT, 'data/tasks', taskId, 'task.json');
+      writeJSON(tp, task);
+      broadcast('knowledge');
+    } catch(e) {
+      console.error('Auto-promote KB failed for task ' + taskId + ':', e.message);
+    }
+  }
+
+  // Auto-promote images to media library
+  autoPromoteToMedia(taskId, task, latestV, vFiles);
+}
+
+function autoPromoteToMedia(taskId, task, latestV, vFiles) {
+  if (task.skipAutoPromote || task.promotedToMedia) return;
+  var imageFiles = vFiles.filter(function(f) { return IMAGE_EXTS_SERVER.indexOf(path.extname(f).toLowerCase()) >= 0; });
+  if (imageFiles.length === 0) return;
+
+  var subfolder = task.type === 'content' ? 'social-images' : 'deliverables';
+  var vDir = path.join(ROOT, 'data/tasks', taskId, 'v' + latestV);
+  var promoted = false;
+
+  imageFiles.forEach(function(f) {
+    try {
+      copyFileToMedia(path.join(vDir, f), subfolder, f, {
+        tags: task.tags || [],
+        description: 'Auto-promoted from task: ' + task.title,
+        sourceTaskId: taskId,
+        project: task.project || null
+      });
+      promoted = true;
+    } catch(e) {
+      console.error('Auto-promote media failed for ' + f + ':', e.message);
+    }
+  });
+
+  if (promoted) {
+    task.promotedToMedia = true;
+    task.updatedAt = new Date().toISOString();
+    var tp = path.join(ROOT, 'data/tasks', taskId, 'task.json');
+    writeJSON(tp, task);
+    broadcast('media');
+  }
+}
+
 // ── Task Lifecycle Constants ─────────────────────────────
 var VALID_STATUSES = ['planning', 'pending_approval', 'working', 'done', 'closed', 'hold', 'cancelled'];
 
@@ -323,6 +471,83 @@ function broadcastEvent(eventType, data) {
   wsClients.forEach(function(socket) {
     try { socket.write(frame); } catch(e) {}
   });
+}
+
+// ── Dependency Resolution ────────────────────────────────
+// When a task moves to done/closed, check all tasks that depend on it.
+// If all their dependencies are now met, clear depsPending and optionally auto-advance.
+function checkAndResolveDependents(completedTaskId, now, indexData, indexPath) {
+  var changed = false;
+  indexData.tasks.forEach(function(t) {
+    var dep = readJSON(path.join(ROOT, 'data/tasks', t.id, 'task.json'));
+    if (!dep || !dep.dependsOn || dep.dependsOn.length === 0) return;
+    if (dep.dependsOn.indexOf(completedTaskId) === -1) return;
+    // Skip terminal states
+    if (dep.status === 'cancelled' || dep.status === 'closed') return;
+    // Skip if already resolved
+    if (dep.depsPending === false || dep.depsPending === undefined) {
+      // Check if it was never flagged - only process if depsPending is true
+      if (dep.depsPending !== true) return;
+    }
+
+    var allMet = dep.dependsOn.every(function(did) {
+      var d = readJSON(path.join(ROOT, 'data/tasks', did, 'task.json'));
+      return d && (d.status === 'closed' || d.status === 'done');
+    });
+
+    if (!allMet) return;
+
+    // All dependencies met - clear depsPending
+    dep.depsPending = false;
+    dep.updatedAt = now;
+    if (!dep.progressLog) dep.progressLog = [];
+
+    if (dep.status === 'hold') {
+      // User intent respected - just clear flag, don't change status
+      dep.progressLog.push({ message: 'Dependencies resolved (task remains on hold)', agentId: dep.assignedTo || null, timestamp: now });
+    } else if (dep.autopilot && dep.status === 'planning') {
+      // Autopilot task: auto-advance to working
+      dep.status = 'working';
+      dep.progressLog.push({ message: 'Dependencies resolved - autopilot advancing to working', agentId: dep.assignedTo || null, timestamp: now });
+      if (!dep.agentHistory) dep.agentHistory = [];
+      dep.agentHistory.push({ agentId: dep.assignedTo || null, stage: 'working', at: now });
+    } else {
+      dep.progressLog.push({ message: 'Dependencies resolved - ready for execution', agentId: dep.assignedTo || null, timestamp: now });
+    }
+
+    writeJSON(path.join(ROOT, 'data/tasks', t.id, 'task.json'), dep);
+
+    // Update index entry
+    var di = indexData.tasks.findIndex(function(x) { return x.id === t.id; });
+    if (di >= 0) {
+      indexData.tasks[di].status = dep.status;
+      indexData.tasks[di].depsPending = dep.depsPending;
+    }
+    changed = true;
+
+    // Add notification
+    var notifFilePath = path.join(ROOT, 'data/notifications.json');
+    var notifs = readJSON(notifFilePath) || [];
+    notifs.unshift({
+      id: 'notif-' + genId(),
+      type: 'dependency_resolved',
+      taskId: t.id,
+      title: 'Task unblocked: ' + (dep.title || t.title),
+      message: 'All dependencies met for "' + (dep.title || t.title) + '"',
+      timestamp: now,
+      read: false
+    });
+    if (notifs.length > 100) notifs = notifs.slice(0, 100);
+    writeJSON(notifFilePath, notifs);
+
+    // Broadcast event
+    broadcastEvent('task.dependency_resolved', { taskId: t.id, title: dep.title || t.title, status: dep.status });
+  });
+
+  if (changed) {
+    writeJSON(indexPath, indexData);
+  }
+  return changed;
 }
 
 // ── Orchestrator Auto-Create ────────────────────────────
@@ -724,6 +949,163 @@ var sharedCtx = {
   rebuildAgentOs: function() { rebuildAgentOs(); },
 };
 
+// ── Model Routing ─────────────────────────────────────────
+var MODEL_RANK = { haiku: 1, sonnet: 2, opus: 3 };
+var RANK_MODEL = { 1: 'haiku', 2: 'sonnet', 3: 'opus' };
+var VALID_MODELS = { opus: true, sonnet: true, haiku: true };
+
+var MODEL_PRESETS = {
+  balanced: {
+    description: 'Quality for creative work, efficiency for ops',
+    savings: '~40%',
+    models: {
+      orchestrator: 'sonnet',
+      mmseaqj5hyzjmm: 'sonnet',
+      mmsgzss0845l7c: 'sonnet',
+      mmsihktfavfrjh: 'haiku',
+      mmtq328qparoui: 'sonnet',
+      mmtq3e094tcbzk: 'haiku',
+      mn22zs8tpg5hsx: 'sonnet',
+      mn22zz9p6bjrqn: 'sonnet',
+      mn2twxv851kkgs: 'sonnet',
+      mn2vg1em4kilj1: 'sonnet'
+    }
+  },
+  economy: {
+    description: 'Minimize cost, acceptable quality',
+    savings: '~60%',
+    models: {
+      orchestrator: 'haiku',
+      mmseaqj5hyzjmm: 'sonnet',
+      mmsgzss0845l7c: 'haiku',
+      mmsihktfavfrjh: 'haiku',
+      mmtq328qparoui: 'haiku',
+      mmtq3e094tcbzk: 'haiku',
+      mn22zs8tpg5hsx: 'haiku',
+      mn22zz9p6bjrqn: 'sonnet',
+      mn2twxv851kkgs: 'haiku',
+      mn2vg1em4kilj1: 'sonnet'
+    }
+  },
+  quality: {
+    description: 'Maximum quality, moderate savings',
+    savings: '~20%',
+    models: {
+      orchestrator: 'sonnet',
+      mmseaqj5hyzjmm: 'opus',
+      mmsgzss0845l7c: 'sonnet',
+      mmsihktfavfrjh: 'haiku',
+      mmtq328qparoui: 'sonnet',
+      mmtq3e094tcbzk: 'sonnet',
+      mn22zs8tpg5hsx: 'sonnet',
+      mn22zz9p6bjrqn: 'sonnet',
+      mn2twxv851kkgs: 'sonnet',
+      mn2vg1em4kilj1: 'sonnet'
+    }
+  }
+};
+
+var BASE_MODELS = {
+  research: 'sonnet',
+  development: 'sonnet',
+  content: 'sonnet',
+  operations: 'haiku',
+  review: 'opus',
+  general: 'sonnet'
+};
+
+function modelUpgrade(current, target) {
+  return MODEL_RANK[target] > MODEL_RANK[current] ? target : current;
+}
+
+function modelClamp(model, minModel, maxModel, reasons) {
+  var rank = MODEL_RANK[model] || 2;
+  var min = MODEL_RANK[minModel] || 1;
+  var max = MODEL_RANK[maxModel] || 3;
+  if (rank < min) { rank = min; reasons.push('Clamped up to floor: ' + minModel); }
+  if (rank > max) { rank = max; reasons.push('Clamped down to ceiling: ' + maxModel); }
+  return RANK_MODEL[rank] || 'sonnet';
+}
+
+function resolveModel(agentId, taskType, taskPhase, taskMeta, config) {
+  var reasons = [];
+  var model = null;
+  var sc = config.smartConfig || {};
+
+  // Step 1: Agent override
+  if (sc.agentOverrides && sc.agentOverrides[agentId]) {
+    model = sc.agentOverrides[agentId];
+    reasons.push('Agent override: ' + model);
+    model = modelClamp(model, sc.minModel || 'haiku', sc.maxModel || 'opus', reasons);
+    return { model: model, reasons: reasons };
+  }
+
+  // Step 2: Task type override
+  if (sc.taskTypeOverrides && sc.taskTypeOverrides[taskType]) {
+    model = sc.taskTypeOverrides[taskType];
+    reasons.push('Task type override: ' + taskType + ' -> ' + model);
+    model = modelClamp(model, sc.minModel || 'haiku', sc.maxModel || 'opus', reasons);
+    return { model: model, reasons: reasons };
+  }
+
+  // Step 3: Base model from task type
+  model = BASE_MODELS[taskType] || 'sonnet';
+  reasons.push('Base: ' + taskType + ' -> ' + model);
+
+  // Step 4: Complexity upgrades (only upgrade, never downgrade)
+  var revision = (taskMeta && taskMeta.revision) || 1;
+  if (revision >= 3) {
+    model = modelUpgrade(model, 'opus');
+    reasons.push('Revision v3+ -> opus');
+  } else if (revision >= 2) {
+    model = modelUpgrade(model, 'sonnet');
+    reasons.push('Revision v2+ -> min sonnet');
+  }
+
+  if (taskMeta && (taskMeta.hasSubtasks || taskMeta.hasDependencies)) {
+    model = modelUpgrade(model, 'sonnet');
+    reasons.push('Has subtasks/dependencies -> min sonnet');
+  }
+
+  if (taskMeta && taskMeta.isArchitecture) {
+    model = modelUpgrade(model, 'opus');
+    reasons.push('Architecture decision -> opus');
+  }
+
+  if (taskMeta && taskMeta.touchesExternalSystems) {
+    model = modelUpgrade(model, 'sonnet');
+    reasons.push('External systems -> min sonnet');
+  }
+
+  // Step 5: Clamp
+  model = modelClamp(model, sc.minModel || 'haiku', sc.maxModel || 'opus', reasons);
+  return { model: model, reasons: reasons };
+}
+
+function getModelRoutingDefaults() {
+  return {
+    mode: 'default',
+    agentModels: {},
+    orchestratorModel: null,
+    smartConfig: {
+      agentOverrides: {},
+      taskTypeOverrides: {},
+      showRoutingDecision: true,
+      minModel: 'haiku',
+      maxModel: 'opus'
+    }
+  };
+}
+
+function selectOsTier(taskPhase, taskType, model, isAutopilot) {
+  if (isAutopilot && model === 'haiku') return 'slim';
+  if (taskPhase === 'planning') return 'full';
+  if (taskType === 'review' || taskType === 'development') return 'full';
+  if (taskPhase === 'execution') return 'slim';
+  if (taskType === 'operations') return 'minimal';
+  return 'slim';
+}
+
 // ── Request Handler ──────────────────────────────────────
 async function handle(pn, m, req, res) {
   // SYSTEM
@@ -783,6 +1165,127 @@ async function handle(pn, m, req, res) {
     writeJSON(path.join(ROOT, 'config/system.json'), sysCfg);
     broadcast('config');
     return J(res, { enabled: sysCfg.globalAutopilot });
+  }
+
+  // MODEL ROUTING
+  if (pn === '/api/settings/model-routing' && m === 'GET') {
+    var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
+    return J(res, sys.modelRouting || getModelRoutingDefaults());
+  }
+  if (pn === '/api/settings/model-routing' && m === 'PUT') {
+    const b = await parseBody(req);
+    var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
+    var mr = sys.modelRouting || getModelRoutingDefaults();
+
+    // Validate mode
+    if (b.mode !== undefined) {
+      if (!{ default: 1, manual: 1, smart: 1 }[b.mode]) return J(res, { error: 'Invalid mode' }, 400);
+      // Mode transition: manual -> smart imports agentModels as overrides
+      if (mr.mode === 'manual' && b.mode === 'smart') {
+        var existingOverrides = (mr.smartConfig && mr.smartConfig.agentOverrides) || {};
+        if (Object.keys(existingOverrides).length === 0 && Object.keys(mr.agentModels || {}).length > 0) {
+          if (!mr.smartConfig) mr.smartConfig = {};
+          mr.smartConfig.agentOverrides = Object.assign({}, mr.agentModels);
+        }
+      }
+      mr.mode = b.mode;
+    }
+
+    // Merge agentModels
+    if (b.agentModels) {
+      if (!mr.agentModels) mr.agentModels = {};
+      Object.keys(b.agentModels).forEach(function(k) {
+        var v = b.agentModels[k];
+        if (v === null || v === '') { delete mr.agentModels[k]; }
+        else if (VALID_MODELS[v]) { mr.agentModels[k] = v; }
+      });
+    }
+
+    // Merge orchestratorModel
+    if (b.orchestratorModel !== undefined) {
+      mr.orchestratorModel = (b.orchestratorModel && VALID_MODELS[b.orchestratorModel]) ? b.orchestratorModel : null;
+    }
+
+    // Merge smartConfig
+    if (b.smartConfig) {
+      if (!mr.smartConfig) mr.smartConfig = getModelRoutingDefaults().smartConfig;
+      if (b.smartConfig.showRoutingDecision !== undefined) mr.smartConfig.showRoutingDecision = !!b.smartConfig.showRoutingDecision;
+      if (b.smartConfig.minModel && VALID_MODELS[b.smartConfig.minModel]) mr.smartConfig.minModel = b.smartConfig.minModel;
+      if (b.smartConfig.maxModel && VALID_MODELS[b.smartConfig.maxModel]) mr.smartConfig.maxModel = b.smartConfig.maxModel;
+      // Validate floor <= ceiling
+      if (MODEL_RANK[mr.smartConfig.minModel] > MODEL_RANK[mr.smartConfig.maxModel]) {
+        return J(res, { error: 'Model floor cannot exceed ceiling' }, 400);
+      }
+      if (b.smartConfig.agentOverrides !== undefined) {
+        mr.smartConfig.agentOverrides = {};
+        Object.keys(b.smartConfig.agentOverrides).forEach(function(k) {
+          var v = b.smartConfig.agentOverrides[k];
+          if (v && VALID_MODELS[v]) mr.smartConfig.agentOverrides[k] = v;
+        });
+      }
+      if (b.smartConfig.taskTypeOverrides !== undefined) {
+        mr.smartConfig.taskTypeOverrides = {};
+        Object.keys(b.smartConfig.taskTypeOverrides).forEach(function(k) {
+          var v = b.smartConfig.taskTypeOverrides[k];
+          if (v && VALID_MODELS[v]) mr.smartConfig.taskTypeOverrides[k] = v;
+        });
+      }
+    }
+
+    sys.modelRouting = mr;
+    writeJSON(path.join(ROOT, 'config/system.json'), sys);
+    broadcast('config');
+    return J(res, mr);
+  }
+  if (pn === '/api/settings/model-routing/presets' && m === 'GET') {
+    var presets = Object.keys(MODEL_PRESETS).map(function(name) {
+      var p = MODEL_PRESETS[name];
+      var summary = { opus: 0, sonnet: 0, haiku: 0 };
+      Object.keys(p.models).forEach(function(k) { if (k !== 'orchestrator' && summary[p.models[k]] !== undefined) summary[p.models[k]]++; });
+      return { name: name, description: p.description, savings: p.savings, agentSummary: summary };
+    });
+    return J(res, { presets: presets });
+  }
+  if (pn.match(/^\/api\/settings\/model-routing\/presets\/\w+$/) && m === 'POST') {
+    var presetName = pn.split('/').pop();
+    var preset = MODEL_PRESETS[presetName];
+    if (!preset) return J(res, { error: 'Unknown preset: ' + presetName }, 404);
+    var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
+    var mr = sys.modelRouting || getModelRoutingDefaults();
+    // Apply preset models
+    mr.agentModels = {};
+    Object.keys(preset.models).forEach(function(k) {
+      if (k === 'orchestrator') { mr.orchestratorModel = preset.models[k]; }
+      else { mr.agentModels[k] = preset.models[k]; }
+    });
+    if (mr.mode !== 'manual') mr.mode = 'manual';
+    sys.modelRouting = mr;
+    writeJSON(path.join(ROOT, 'config/system.json'), sys);
+    broadcast('config');
+    return J(res, mr);
+  }
+  if (pn === '/api/settings/model-routing/resolve' && m === 'GET') {
+    var qs = require('url').parse(req.url, true).query || {};
+    var sys = readJSON(path.join(ROOT, 'config/system.json')) || {};
+    var mr = sys.modelRouting || getModelRoutingDefaults();
+    var titleDesc = '';
+    // Try to detect complexity signals from task data if agentId and taskType provided
+    var meta = {
+      revision: parseInt(qs.revision) || 1,
+      hasSubtasks: qs.hasSubtasks === 'true',
+      hasDependencies: qs.hasDependencies === 'true',
+      isArchitecture: false,
+      touchesExternalSystems: false
+    };
+    if (qs.title) titleDesc += qs.title + ' ';
+    if (qs.description) titleDesc += qs.description;
+    if (titleDesc) {
+      var td = titleDesc.toLowerCase();
+      meta.isArchitecture = /architecture|refactor|design system|infrastructure/.test(td);
+      meta.touchesExternalSystems = /\bapi\b|deploy|publish|external|integration/.test(td);
+    }
+    var result = resolveModel(qs.agentId || '', qs.taskType || 'general', qs.phase || 'execution', meta, mr);
+    return J(res, result);
   }
 
   // PROFILE
@@ -1031,11 +1534,16 @@ async function handle(pn, m, req, res) {
       intervalUnit: b.intervalUnit || null,
       lastRun: b.lastRun || null,
       nextRun: null,
+      scheduledAt: b.scheduledAt || null,
       runCount: b.runCount || 0,
+      project: b.project || null,
       agentHistory: [],
       progressLog: [],
       createdAt: now, updatedAt: now
     };
+    // Enforce: timed tasks are always autopilot
+    if (t.interval && t.intervalUnit) t.autopilot = true;
+    if (t.scheduledAt) t.autopilot = true;
     // Seed initial agent history entry
     if (t.assignedTo) {
       t.agentHistory.push({ agentId: t.assignedTo, stage: t.status, at: now });
@@ -1044,6 +1552,15 @@ async function handle(pn, m, req, res) {
     if (t.autopilot && t.interval && t.intervalUnit) {
       var ms = t.interval * ({ minutes: 60000, hours: 3600000, days: 86400000 }[t.intervalUnit] || 60000);
       t.nextRun = new Date(Date.now() + ms).toISOString();
+    }
+    // Check if dependencies are met
+    if (t.dependsOn.length > 0) {
+      var anyUnmet = t.dependsOn.some(function(did) {
+        var d = readJSON(path.join(ROOT, 'data/tasks', did, 'task.json'));
+        return !d || (d.status !== 'closed' && d.status !== 'done');
+      });
+      if (anyUnmet) t.depsPending = true;
+      else t.depsPending = false;
     }
     writeJSON(path.join(dir, 'task.json'), t);
     // Write initial v1/version.json
@@ -1054,7 +1571,7 @@ async function handle(pn, m, req, res) {
     });
     const ip = path.join(ROOT, 'data/tasks/_index.json');
     const ix = readJSON(ip) || { tasks: [] };
-    ix.tasks.push({ id: id, title: t.title, status: t.status, assignedTo: t.assignedTo, priority: t.priority, type: t.type, autopilot: t.autopilot, parentTaskId: t.parentTaskId, blocker: t.blocker, interval: t.interval || null, intervalUnit: t.intervalUnit || null });
+    ix.tasks.push({ id: id, title: t.title, status: t.status, assignedTo: t.assignedTo, priority: t.priority, type: t.type, autopilot: t.autopilot, parentTaskId: t.parentTaskId, blocker: t.blocker, interval: t.interval || null, intervalUnit: t.intervalUnit || null, scheduledAt: t.scheduledAt || null, depsPending: t.depsPending || false });
     writeJSON(ip, ix);
     // If this is a subtask, auto-link to parent
     if (t.parentTaskId) {
@@ -1131,6 +1648,7 @@ async function handle(pn, m, req, res) {
       category: task.type === 'research' ? 'research' : 'reference',
       tags: task.tags || [], summary: task.description || '',
       sourceTaskId: taskId, authorAgentId: task.assignedTo || null,
+      project: task.project || null,
       createdAt: now, updatedAt: now
     };
     var kDir = path.join(ROOT, 'data/knowledge');
@@ -1144,6 +1662,7 @@ async function handle(pn, m, req, res) {
     writeJSON(kip, kix);
 
     task.knowledgeDocId = docId;
+    task.promotedToKb = true;
     task.updatedAt = now;
     writeJSON(tp, task);
     broadcast('tasks');
@@ -1178,6 +1697,7 @@ async function handle(pn, m, req, res) {
       dependsOn: Array.isArray(b.dependsOn) ? b.dependsOn : [],
       dueDate: b.dueDate || null,
       blocker: b.blocker || null,
+      project: b.project || parent.project || null,
       agentHistory: [],
       progressLog: [],
       createdAt: now, updatedAt: now
@@ -1185,6 +1705,15 @@ async function handle(pn, m, req, res) {
     // Seed initial agent history entry
     if (sub.assignedTo) {
       sub.agentHistory.push({ agentId: sub.assignedTo, stage: sub.status, at: now });
+    }
+    // Check if dependencies are met
+    if (sub.dependsOn.length > 0) {
+      var anyUnmetSub = sub.dependsOn.some(function(did) {
+        var d = readJSON(path.join(ROOT, 'data/tasks', did, 'task.json'));
+        return !d || (d.status !== 'closed' && d.status !== 'done');
+      });
+      if (anyUnmetSub) sub.depsPending = true;
+      else sub.depsPending = false;
     }
     writeJSON(path.join(subDir, 'task.json'), sub);
     writeJSON(path.join(subDir, 'v1/version.json'), {
@@ -1200,7 +1729,7 @@ async function handle(pn, m, req, res) {
     // Update index
     const ip = path.join(ROOT, 'data/tasks/_index.json');
     const ix = readJSON(ip) || { tasks: [] };
-    ix.tasks.push({ id: subId, title: sub.title, status: sub.status, assignedTo: sub.assignedTo, priority: sub.priority, type: sub.type, autopilot: sub.autopilot, parentTaskId: parentId, blocker: sub.blocker });
+    ix.tasks.push({ id: subId, title: sub.title, status: sub.status, assignedTo: sub.assignedTo, priority: sub.priority, type: sub.type, autopilot: sub.autopilot, parentTaskId: parentId, blocker: sub.blocker, depsPending: sub.depsPending || false });
     writeJSON(ip, ix);
     broadcast('tasks');
     return J(res, sub, 201);
@@ -1335,6 +1864,25 @@ async function handle(pn, m, req, res) {
         vData.decision = 'accepted';
         writeJSON(vPath, vData);
         actionResult = Object.assign({}, ex, { status: 'working', updatedAt: now });
+        // Check if dependencies are met - if not, set depsPending
+        if (actionResult.dependsOn && actionResult.dependsOn.length > 0) {
+          var acceptDepsUnmet = actionResult.dependsOn.some(function(did) {
+            var d = readJSON(path.join(ROOT, 'data/tasks', did, 'task.json'));
+            return !d || (d.status !== 'closed' && d.status !== 'done');
+          });
+          if (acceptDepsUnmet) {
+            actionResult.depsPending = true;
+            if (!actionResult.progressLog) actionResult.progressLog = [];
+            var pendingDepTitles = actionResult.dependsOn.filter(function(did) {
+              var d = readJSON(path.join(ROOT, 'data/tasks', did, 'task.json'));
+              return !d || (d.status !== 'closed' && d.status !== 'done');
+            }).map(function(did) {
+              var d = readJSON(path.join(ROOT, 'data/tasks', did, 'task.json'));
+              return d ? d.title : did;
+            });
+            actionResult.progressLog.push({ message: 'Task accepted but waiting for dependencies: ' + pendingDepTitles.join(', '), agentId: actionResult.assignedTo || null, timestamp: now });
+          }
+        }
       } else if (b.action === 'close') {
         if (ex.status !== 'done') return E(res, 'Close is only valid from done status', 400);
         vData.decision = 'closed';
@@ -1376,7 +1924,7 @@ async function handle(pn, m, req, res) {
       var aip = path.join(ROOT, 'data/tasks/_index.json');
       var aix = readJSON(aip) || { tasks: [] };
       var ai = aix.tasks.findIndex(function(x) { return x.id === id; });
-      if (ai >= 0) aix.tasks[ai] = { id: id, title: actionResult.title, status: actionResult.status, assignedTo: actionResult.assignedTo, priority: actionResult.priority, type: actionResult.type || 'general', autopilot: actionResult.autopilot || false, parentTaskId: actionResult.parentTaskId || null, blocker: actionResult.blocker || null };
+      if (ai >= 0) aix.tasks[ai] = { id: id, title: actionResult.title, status: actionResult.status, assignedTo: actionResult.assignedTo, priority: actionResult.priority, type: actionResult.type || 'general', autopilot: actionResult.autopilot || false, parentTaskId: actionResult.parentTaskId || null, blocker: actionResult.blocker || null, depsPending: actionResult.depsPending || false };
       writeJSON(aip, aix);
 
       // Auto-advance parent task when all subtasks are done/closed (recursive for deep nesting)
@@ -1390,22 +1938,26 @@ async function handle(pn, m, req, res) {
             var sub = readJSON(path.join(ROOT, 'data/tasks', sid, 'task.json'));
             return sub && (sub.status === 'closed' || sub.status === 'done');
           });
-          if (allDone && parentTask2.status !== 'pending_approval' && parentTask2.status !== 'closed') {
-            // Autopilot parent: auto-close instead of pending_approval
-            if (parentTask2.autopilot) {
-              parentTask2.status = 'closed';
-              if (!parentTask2.progressLog) parentTask2.progressLog = [];
-              parentTask2.progressLog.push({ message: 'Autopilot: auto-closed (all subtasks done)', agentId: parentTask2.assignedTo || null, timestamp: now });
-            } else {
-              parentTask2.status = 'pending_approval';
-            }
+          if (allDone && (parentTask2.status === 'working' || parentTask2.status === 'planning' || parentTask2.status === 'pending_approval')) {
+            // Autopilot parent: auto-advance to done; non-autopilot: pending_approval
+            var newStatus = parentTask2.autopilot ? 'done' : 'pending_approval';
+            parentTask2.status = newStatus;
             parentTask2.updatedAt = now;
+            if (!parentTask2.progressLog) parentTask2.progressLog = [];
+            parentTask2.progressLog.push({ message: 'All subtasks complete - auto-advanced to ' + newStatus, agentId: parentTask2.assignedTo || null, timestamp: now });
             // Track agent history for parent auto-advance
             if (!parentTask2.agentHistory) parentTask2.agentHistory = [];
             parentTask2.agentHistory.push({ agentId: parentTask2.assignedTo || null, stage: parentTask2.status, at: now });
             writeJSON(parentTp2, parentTask2);
             var pi = aix.tasks.findIndex(function(x) { return x.id === checkParentId; });
             if (pi >= 0) { aix.tasks[pi].status = parentTask2.status; writeJSON(aip, aix); }
+            // Broadcast parent status change events (parity with general PUT handler)
+            if (newStatus === 'pending_approval') {
+              broadcastEvent('task.pending_approval', { taskId: checkParentId, title: parentTask2.title, agentName: '' });
+            } else if (newStatus === 'done') {
+              broadcastEvent('task.done', { taskId: checkParentId, title: parentTask2.title, agentName: '' });
+              autoPromoteToKb(checkParentId, parentTask2);
+            }
             checkParentId = parentTask2.parentTaskId;
           } else {
             break;
@@ -1413,25 +1965,9 @@ async function handle(pn, m, req, res) {
         }
       }
 
-      // Auto-start dependent tasks when all dependencies are done/closed
+      // Auto-resolve dependent tasks when all dependencies are done/closed
       if (actionResult.status === 'closed' || actionResult.status === 'done') {
-        aix.tasks.forEach(function(t) {
-          var dep = readJSON(path.join(ROOT, 'data/tasks', t.id, 'task.json'));
-          if (dep && dep.dependsOn && dep.dependsOn.length > 0 && dep.status === 'planning') {
-            var allMet = dep.dependsOn.every(function(did) {
-              var d = readJSON(path.join(ROOT, 'data/tasks', did, 'task.json'));
-              return d && (d.status === 'closed' || d.status === 'done');
-            });
-            if (allMet) {
-              dep.status = 'working';
-              dep.updatedAt = now;
-              writeJSON(path.join(ROOT, 'data/tasks', t.id, 'task.json'), dep);
-              var di = aix.tasks.findIndex(function(x) { return x.id === t.id; });
-              if (di >= 0) { aix.tasks[di].status = 'working'; }
-            }
-          }
-        });
-        writeJSON(aip, aix);
+        checkAndResolveDependents(id, now, aix, aip);
       }
 
       broadcast('tasks');
@@ -1453,6 +1989,7 @@ async function handle(pn, m, req, res) {
         archiveClosedTasks();
       } else if (actionResult.status === 'done') {
         broadcastEvent('task.done', { taskId: id, title: actionResult.title, agentName: agentName });
+        autoPromoteToKb(id, actionResult);
       }
       // Warn if orchestrator is assigned to a working task
       if (actionResult.assignedTo === 'orchestrator' && actionResult.status === 'working') {
@@ -1479,23 +2016,32 @@ async function handle(pn, m, req, res) {
     if (b.status && b.status !== ex.status) {
       var allowed = VALID_TRANSITIONS[ex.status];
       if (allowed && allowed.indexOf(b.status) === -1) {
-        // Special case: autopilot auto-close (pending_approval -> closed) is allowed
-        var isAutopilotClose = b.status === 'closed' && ex.status === 'pending_approval' && (b.autopilot || ex.autopilot);
-        if (!isAutopilotClose) {
+        // Special case: autopilot auto-done (pending_approval -> done) is allowed
+        var isAutopilotDone = b.status === 'done' && ex.status === 'pending_approval' && (b.autopilot || ex.autopilot);
+        if (!isAutopilotDone) {
           return E(res, 'Invalid status transition: ' + ex.status + ' -> ' + b.status, 400);
         }
       }
     }
 
-    // Autopilot auto-close: if task is autopilot and being set to pending_approval, auto-close it
-    var autopilotClosed = false;
+    // Autopilot auto-advance: if task is autopilot and being set to pending_approval, auto-advance to done
+    var autopilotDone = false;
     if (b.status === 'pending_approval' && ex.status !== 'pending_approval' && (b.autopilot || ex.autopilot)) {
-      b.status = 'closed';
-      autopilotClosed = true;
+      b.status = 'done';
+      autopilotDone = true;
     }
 
     // Default: merge update
     var merged = Object.assign({}, ex, b, { id: id, updatedAt: now });
+
+    // Enforce: timed tasks are always autopilot
+    if (merged.interval && merged.intervalUnit) merged.autopilot = true;
+    if (merged.scheduledAt) merged.autopilot = true;
+
+    // Reject attempt to disable autopilot while schedule is active
+    if (b.autopilot === false && (merged.interval || merged.scheduledAt)) {
+      return E(res, 'Cannot disable autopilot while a schedule is active. Remove the schedule first.', 400);
+    }
 
     // Track agent history on status or assignee change
     if (!merged.agentHistory) merged.agentHistory = [];
@@ -1511,10 +2057,10 @@ async function handle(pn, m, req, res) {
       merged.nextRun = new Date(Date.now() + intMs).toISOString();
     }
 
-    // Autopilot auto-close: log progress
-    if (autopilotClosed) {
+    // Autopilot auto-advance: log progress
+    if (autopilotDone) {
       if (!merged.progressLog) merged.progressLog = [];
-      merged.progressLog.push({ message: 'Autopilot: auto-closed', agentId: merged.assignedTo || null, timestamp: now });
+      merged.progressLog.push({ message: 'Autopilot: auto-advanced to done', agentId: merged.assignedTo || null, timestamp: now });
     }
 
     // Blocker field handling: auto-log progress when blocker changes
@@ -1531,8 +2077,52 @@ async function handle(pn, m, req, res) {
     var mip = path.join(ROOT, 'data/tasks/_index.json');
     var mix = readJSON(mip) || { tasks: [] };
     var mi = mix.tasks.findIndex(function(x) { return x.id === id; });
-    if (mi >= 0) mix.tasks[mi] = { id: id, title: merged.title, status: merged.status, assignedTo: merged.assignedTo, priority: merged.priority, type: merged.type || 'general', autopilot: merged.autopilot || false, parentTaskId: merged.parentTaskId || null, blocker: merged.blocker || null, interval: merged.interval || null, intervalUnit: merged.intervalUnit || null };
+    if (mi >= 0) mix.tasks[mi] = { id: id, title: merged.title, status: merged.status, assignedTo: merged.assignedTo, priority: merged.priority, type: merged.type || 'general', autopilot: merged.autopilot || false, parentTaskId: merged.parentTaskId || null, blocker: merged.blocker || null, interval: merged.interval || null, intervalUnit: merged.intervalUnit || null, scheduledAt: merged.scheduledAt || null, depsPending: merged.depsPending || false };
     writeJSON(mip, mix);
+
+    // Auto-advance parent task when all subtasks are done/closed (for direct status updates)
+    if ((merged.status === 'done' || merged.status === 'closed') && merged.status !== ex.status && merged.parentTaskId) {
+      var checkParentId2 = merged.parentTaskId;
+      while (checkParentId2) {
+        var parentTp3 = path.join(ROOT, 'data/tasks', checkParentId2, 'task.json');
+        var parentTask3 = readJSON(parentTp3);
+        if (!parentTask3 || !parentTask3.subtasks || parentTask3.subtasks.length === 0) break;
+        // Only advance if parent is in working status
+        if (parentTask3.status !== 'working' && parentTask3.status !== 'planning' && parentTask3.status !== 'pending_approval') break;
+        var allSubsDone = parentTask3.subtasks.every(function(sid) {
+          var sub = readJSON(path.join(ROOT, 'data/tasks', sid, 'task.json'));
+          return sub && (sub.status === 'closed' || sub.status === 'done');
+        });
+        if (allSubsDone) {
+          var newParentStatus = parentTask3.autopilot ? 'done' : 'pending_approval';
+          parentTask3.status = newParentStatus;
+          parentTask3.updatedAt = now;
+          if (!parentTask3.progressLog) parentTask3.progressLog = [];
+          parentTask3.progressLog.push({ message: 'All subtasks complete - auto-advanced to ' + newParentStatus, agentId: parentTask3.assignedTo || null, timestamp: now });
+          if (!parentTask3.agentHistory) parentTask3.agentHistory = [];
+          parentTask3.agentHistory.push({ agentId: parentTask3.assignedTo || null, stage: newParentStatus, at: now });
+          writeJSON(parentTp3, parentTask3);
+          var pi2 = mix.tasks.findIndex(function(x) { return x.id === checkParentId2; });
+          if (pi2 >= 0) { mix.tasks[pi2].status = newParentStatus; writeJSON(mip, mix); }
+          // Broadcast parent status change events
+          if (newParentStatus === 'pending_approval') {
+            broadcastEvent('task.pending_approval', { taskId: checkParentId2, title: parentTask3.title, agentName: '' });
+          } else if (newParentStatus === 'done') {
+            broadcastEvent('task.done', { taskId: checkParentId2, title: parentTask3.title, agentName: '' });
+            autoPromoteToKb(checkParentId2, parentTask3);
+          }
+          checkParentId2 = parentTask3.parentTaskId;
+        } else {
+          break;
+        }
+      }
+    }
+
+    // Auto-resolve dependent tasks when status changes to done/closed (general PUT path)
+    if ((merged.status === 'done' || merged.status === 'closed') && merged.status !== ex.status) {
+      checkAndResolveDependents(id, now, mix, mip);
+    }
+
     broadcast('tasks');
     // Emit notification events for general PUT status transitions and blockers
     if (merged.status !== ex.status || (b.blocker !== undefined && b.blocker !== ex.blocker)) {
@@ -1549,6 +2139,7 @@ async function handle(pn, m, req, res) {
       }
       if (merged.status === 'done' && ex.status !== 'done') {
         broadcastEvent('task.done', { taskId: id, title: merged.title, agentName: evAgentName });
+        autoPromoteToKb(id, merged);
       }
       if (merged.status === 'closed' && ex.status !== 'closed') {
         broadcastEvent('task.closed', { taskId: id, title: merged.title, agentName: evAgentName });
@@ -1654,6 +2245,7 @@ async function handle(pn, m, req, res) {
       summary: b.summary || '',
       sourceTaskId: b.sourceTaskId || null,
       authorAgentId: b.authorAgentId || null,
+      project: b.project || null,
       createdAt: now, updatedAt: now
     };
     var kDir = path.join(ROOT, 'data/knowledge');
@@ -2307,6 +2899,97 @@ async function handle(pn, m, req, res) {
     return J(res, health.dismissNotice(sharedCtx, decodeURIComponent(noticeMatch[1])));
   }
 
+  // ── MEDIA METADATA API ──────────────────────────────
+  if (pn === '/api/media/metadata' && m === 'GET') {
+    return J(res, readMediaIndex());
+  }
+
+  var mediaMeta = pn.match(/^\/api\/media\/metadata\/(.+)$/);
+  if (mediaMeta && m === 'PUT') {
+    var metaFile = decodeURIComponent(mediaMeta[1]);
+    if (metaFile.indexOf('..') >= 0) return E(res, 'Invalid path', 403);
+    var idx = readMediaIndex();
+    var b = await parseBody(req);
+    var existing = idx.files[metaFile] || { addedAt: new Date().toISOString() };
+    if (b.tags !== undefined) existing.tags = b.tags;
+    if (b.description !== undefined) existing.description = b.description;
+    if (b.project !== undefined) existing.project = b.project;
+    existing.updatedAt = new Date().toISOString();
+    idx.files[metaFile] = existing;
+    writeMediaIndex(idx);
+    broadcast('media');
+    return J(res, { ok: true, metadata: existing });
+  }
+
+  // LIST MEDIA FOLDERS
+  if (pn === '/api/media/folders' && m === 'GET') {
+    var mediaDir = path.join(ROOT, 'data/media');
+    var folders = [];
+    try {
+      fs.readdirSync(mediaDir).forEach(function(f) {
+        if (f === '_index.json') return;
+        var fp = path.join(mediaDir, f);
+        if (fs.statSync(fp).isDirectory()) folders.push(f);
+      });
+    } catch(e) {}
+    return J(res, { folders: folders });
+  }
+
+  // COPY TASK FILE TO MEDIA LIBRARY
+  var copyMedia = pn.match(/^\/api\/tasks\/([^\/]+)\/versions\/(\d+)\/files\/(.+)\/copy-to-media$/);
+  if (copyMedia && m === 'POST') {
+    var cmTaskId = copyMedia[1], cmVer = copyMedia[2], cmFile = decodeURIComponent(copyMedia[3]);
+    var cmSrc = path.join(ROOT, 'data/tasks', cmTaskId, 'v' + cmVer, cmFile);
+    if (!cmSrc.startsWith(path.join(ROOT, 'data/tasks', cmTaskId))) return E(res, 'Forbidden', 403);
+    if (!fs.existsSync(cmSrc)) return E(res, 'File not found', 404);
+    var b = await parseBody(req);
+    var cmFolder = b.folder || 'deliverables';
+    if (cmFolder.indexOf('..') >= 0) return E(res, 'Invalid folder', 403);
+    var cmNewName = b.newName || cmFile;
+    var cmTask = readJSON(path.join(ROOT, 'data/tasks', cmTaskId, 'task.json')) || {};
+    var relPath = copyFileToMedia(cmSrc, cmFolder, cmNewName, {
+      tags: b.tags || cmTask.tags || [],
+      description: b.description || ('From task: ' + (cmTask.title || cmTaskId)),
+      sourceTaskId: cmTaskId,
+      project: cmTask.project || null
+    });
+    broadcast('media');
+    return J(res, { ok: true, path: relPath });
+  }
+
+  // ADD TASK FILE TO KB
+  var addKb = pn.match(/^\/api\/tasks\/([^\/]+)\/versions\/(\d+)\/files\/(.+)\/add-to-kb$/);
+  if (addKb && m === 'POST') {
+    var kbTaskId = addKb[1], kbVer = addKb[2], kbFile = decodeURIComponent(addKb[3]);
+    var kbSrc = path.join(ROOT, 'data/tasks', kbTaskId, 'v' + kbVer, kbFile);
+    if (!kbSrc.startsWith(path.join(ROOT, 'data/tasks', kbTaskId))) return E(res, 'Forbidden', 403);
+    if (!fs.existsSync(kbSrc)) return E(res, 'File not found', 404);
+    var content = fs.readFileSync(kbSrc, 'utf8');
+    var b = await parseBody(req);
+    var kbTask = readJSON(path.join(ROOT, 'data/tasks', kbTaskId, 'task.json')) || {};
+    var docId = genId();
+    var now = new Date().toISOString();
+    var doc = {
+      id: docId, title: b.title || kbFile.replace(/\.[^.]+$/, ''),
+      category: b.category || 'reference',
+      tags: Array.isArray(b.tags) ? b.tags : (kbTask.tags || []),
+      summary: b.summary || '',
+      sourceTaskId: kbTaskId, authorAgentId: kbTask.assignedTo || null,
+      project: kbTask.project || null,
+      createdAt: now, updatedAt: now
+    };
+    var kDir = path.join(ROOT, 'data/knowledge');
+    fs.mkdirSync(kDir, { recursive: true });
+    writeText(path.join(kDir, docId + '.md'), content);
+    var kip = path.join(kDir, '_index.json');
+    var kix = readJSON(kip) || { documents: [] };
+    var meta = Object.assign({}, doc);
+    kix.documents.push(meta);
+    writeJSON(kip, kix);
+    broadcast('knowledge');
+    return J(res, doc, 201);
+  }
+
   // MEDIA FILE SERVING (supports subdirectories like social-images/)
   if (pn.startsWith('/api/media/files/') && m === 'GET') {
     const filename = decodeURIComponent(pn.slice('/api/media/files/'.length));
@@ -2621,23 +3304,54 @@ function computeNextRun(from, interval, unit) {
   return new Date(from.getTime() + ms).toISOString();
 }
 
-setInterval(function() {
+// Shared helper: send task prompt to terminal PTY
+function sendTaskToTerminal(task, taskPath, entry) {
+  var sentTo = null;
+  var now = new Date();
+  termSessions.forEach(function(session, sid) {
+    if (sentTo) return;
+    if (session.pty) {
+      var prompt = task.description || task.title;
+      prompt = prompt + ' [Task ID: ' + task.id + ']';
+      if (task.assignedTo && task.assignedTo !== 'orchestrator') {
+        var reg = readJSON(path.join(ROOT, 'agents/_registry.json')) || { agents: [] };
+        var agent = reg.agents.find(function(a) { return a.id === task.assignedTo; });
+        var agentName = agent ? agent.name : task.assignedTo;
+        prompt = 'Work as agent ' + agentName + ' (ID: ' + task.assignedTo + '): ' + prompt;
+      }
+      session.pty.write(prompt + '\r');
+      sentTo = sid;
+    }
+  });
+  if (!sentTo) {
+    task.blocker = 'No active terminal session found - cannot send autopilot prompt';
+    task.status = 'working';
+    if (!task.progressLog) task.progressLog = [];
+    task.progressLog.push({
+      message: 'BLOCKER: No active terminal session found',
+      agentId: 'system',
+      timestamp: now.toISOString()
+    });
+    writeJSON(taskPath, task);
+    if (entry) entry.blocker = task.blocker;
+  }
+}
+
+function runScheduler() {
   var index = readJSON(path.join(ROOT, 'data/tasks/_index.json'));
   if (!index || !index.tasks) return;
   var now = new Date();
   var changed = false;
 
+  // Process recurring autopilot tasks
   index.tasks.forEach(function(entry) {
-    // Only process recurring autopilot tasks
     if (!entry.autopilot || !entry.interval || !entry.intervalUnit) return;
     if (entry.status === 'cancelled') return;
 
-    // Read full task
     var taskPath = path.join(ROOT, 'data/tasks', entry.id, 'task.json');
     var task = readJSON(taskPath);
     if (!task) return;
 
-    // Skip if not due yet
     if (!task.nextRun || new Date(task.nextRun) > now) return;
 
     // Skip if still running (overlap protection) or on hold
@@ -2646,7 +3360,12 @@ setInterval(function() {
     // Reset task to working for next run
     task.status = 'working';
     task.lastRun = now.toISOString();
-    task.nextRun = computeNextRun(now, task.interval, task.intervalUnit);
+    // Drift compensation: anchor to scheduled time, not actual run time
+    var anchor = task.nextRun ? new Date(task.nextRun) : now;
+    task.nextRun = computeNextRun(anchor, task.interval, task.intervalUnit);
+    if (new Date(task.nextRun) <= now) {
+      task.nextRun = computeNextRun(now, task.interval, task.intervalUnit);
+    }
     task.updatedAt = now.toISOString();
     task.runCount = (task.runCount || 0) + 1;
     if (!task.progressLog) task.progressLog = [];
@@ -2657,49 +3376,70 @@ setInterval(function() {
     });
     writeJSON(taskPath, task);
 
-    // Update index entry
     entry.status = 'working';
     changed = true;
 
-    // Send prompt to terminal PTY
-    var sentTo = null;
-    termSessions.forEach(function(session, sid) {
-      if (sentTo) return;
-      if (session.pty) {
-        var prompt = task.description || task.title;
-        // Append task ID so orchestrator can track it
-        prompt = prompt + ' [Task ID: ' + task.id + ']';
-        if (task.assignedTo && task.assignedTo !== 'orchestrator') {
-          var reg = readJSON(path.join(ROOT, 'agents/_registry.json')) || { agents: [] };
-          var agent = reg.agents.find(function(a) { return a.id === task.assignedTo; });
-          var agentName = agent ? agent.name : task.assignedTo;
-          prompt = 'Work as agent ' + agentName + ' (ID: ' + task.assignedTo + '): ' + prompt;
-        }
-        session.pty.write(prompt + '\r');
-        sentTo = sid;
-      }
-    });
+    sendTaskToTerminal(task, taskPath, entry);
+  });
 
-    // If no terminal found, set blocker
-    if (!sentTo) {
-      task.blocker = 'No active terminal session found - cannot send autopilot prompt';
-      task.status = 'working';
-      if (!task.progressLog) task.progressLog = [];
-      task.progressLog.push({
-        message: 'BLOCKER: No active terminal session found',
-        agentId: 'system',
-        timestamp: now.toISOString()
-      });
-      writeJSON(taskPath, task);
-      entry.blocker = task.blocker;
-    }
+  // Process one-time scheduled tasks
+  index.tasks.forEach(function(entry) {
+    if (!entry.scheduledAt) return;
+    if (entry.status === 'cancelled' || entry.status === 'closed' || entry.status === 'done') return;
+
+    var taskPath = path.join(ROOT, 'data/tasks', entry.id, 'task.json');
+    var task = readJSON(taskPath);
+    if (!task || !task.scheduledAt) return;
+
+    // Check if scheduled time has arrived
+    if (new Date(task.scheduledAt) > now) return;
+
+    // Skip if still running (overlap protection) or on hold
+    if (task.status === 'working' || task.status === 'hold' || task.status === 'planning' || task.status === 'pending_approval') return;
+
+    // Fire the one-time scheduled task
+    task.status = 'working';
+    task.lastRun = now.toISOString();
+    task.scheduledAt = null; // Clear after firing
+    task.updatedAt = now.toISOString();
+    task.runCount = (task.runCount || 0) + 1;
+    if (!task.progressLog) task.progressLog = [];
+    task.progressLog.push({
+      message: 'Scheduled task triggered (run #' + task.runCount + ')',
+      agentId: 'system',
+      timestamp: now.toISOString()
+    });
+    writeJSON(taskPath, task);
+
+    entry.status = 'working';
+    entry.scheduledAt = null;
+    changed = true;
+
+    sendTaskToTerminal(task, taskPath, entry);
   });
 
   if (changed) {
     writeJSON(path.join(ROOT, 'data/tasks/_index.json'), index);
     broadcast('tasks');
   }
-}, 60000);
+}
+
+// Run scheduler every 30 seconds
+setInterval(runScheduler, 30000);
+
+// Startup catch-up: run immediately to process any overdue tasks
+setTimeout(runScheduler, 0);
+
+// Health logging: log active scheduled task counts every 10 minutes
+setInterval(function() {
+  var index = readJSON(path.join(ROOT, 'data/tasks/_index.json'));
+  if (!index || !index.tasks) return;
+  var recurring = index.tasks.filter(function(t) { return t.autopilot && t.interval && t.intervalUnit && t.status !== 'cancelled'; }).length;
+  var scheduled = index.tasks.filter(function(t) { return t.scheduledAt && t.status !== 'cancelled' && t.status !== 'closed' && t.status !== 'done'; }).length;
+  if (recurring > 0 || scheduled > 0) {
+    console.log('[Scheduler] Active tasks: ' + recurring + ' recurring, ' + scheduled + ' scheduled');
+  }
+}, 600000);
 
 // ── Startup ──────────────────────────────────────────────
 fs.mkdirSync(path.join(ROOT, 'data/knowledge'), { recursive: true });

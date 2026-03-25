@@ -1589,6 +1589,55 @@ body {
 }
 .knowledge-link a { color: var(--purple); cursor: pointer; text-decoration: none; }
 .knowledge-link a:hover { text-decoration: underline; }
+.auto-promoted-badge {
+  display: inline-block; margin-left: 8px; padding: 2px 8px;
+  font-size: 11px; border-radius: 4px;
+  background: var(--surface); color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.auto-promoted-media {
+  color: var(--green); border-color: color-mix(in srgb, var(--green) 30%, transparent);
+}
+
+/* ── Quick-Add File Buttons ──────────────────────── */
+.file-quick-actions {
+  display: flex; gap: 6px; margin-top: 4px;
+}
+.btn-quick-add {
+  padding: 2px 10px; font-size: 11px; border-radius: 4px;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--text-muted); cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-quick-add:hover {
+  background: var(--bg-surface); color: var(--text);
+  border-color: var(--accent);
+}
+.btn-quick-kb:hover { border-color: var(--purple); color: var(--purple); }
+.btn-quick-media:hover { border-color: var(--green); color: var(--green); }
+
+/* ── Media Metadata Panel ────────────────────────── */
+.media-meta-panel {
+  margin-top: 16px; padding: 12px 16px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.media-meta-panel .form-group { margin-bottom: 8px; }
+.media-meta-panel label { font-size: 12px; color: var(--text-muted); margin-bottom: 2px; display: block; }
+.media-meta-panel input {
+  width: 100%; padding: 6px 10px; font-size: 13px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text);
+}
+.btn-sm { padding: 4px 12px; font-size: 12px; }
+
+/* ── Media Thumb Tags ────────────────────────────── */
+.media-thumb-tags {
+  display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px;
+}
+.tag-badge-sm {
+  font-size: 9px; padding: 1px 5px; border-radius: 3px;
+}
 
 /* ── Review Action Feedback ────────────────────── */
 .action-feedback {
@@ -1768,6 +1817,10 @@ body {
   display: inline-flex; align-items: center; gap: 3px;
   font-size: 10px; color: var(--gold); opacity: 0.8;
 }
+.timed-badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 12px; color: var(--accent); opacity: 0.9;
+}
 .autopilot-toggle {
   background: transparent; border: 1px solid var(--border);
   color: var(--text-muted); font-size: 12px; padding: 6px 12px;
@@ -1776,6 +1829,73 @@ body {
 }
 .autopilot-toggle:hover { border-color: var(--gold); color: var(--gold); }
 .autopilot-toggle.active { border-color: var(--gold); color: var(--gold); background: rgba(200,176,96,0.1); }
+.autopilot-toggle.locked {
+  opacity: 0.6; cursor: default; pointer-events: none;
+  border-color: var(--accent); color: var(--accent); background: rgba(99,102,241,0.08);
+}
+
+/* ── Schedule section in task detail ──────────── */
+.schedule-section {
+  margin-top: 12px; padding: 14px 16px;
+  background: var(--card-bg); border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.schedule-section-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 10px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);
+}
+.schedule-type-pill {
+  font-size: 10px; padding: 2px 8px; border-radius: 10px;
+  background: rgba(99,102,241,0.15); color: var(--accent); font-weight: 500;
+}
+.schedule-data-row {
+  display: flex; gap: 24px; flex-wrap: wrap; font-size: 13px;
+  color: var(--text); margin-bottom: 6px;
+}
+.schedule-data-row .label { color: var(--text-muted); min-width: 80px; }
+.schedule-data-row .value { font-weight: 500; }
+.schedule-status-active { color: var(--success); font-weight: 600; }
+.schedule-status-waiting { color: var(--warning); font-weight: 600; }
+.schedule-status-paused { color: var(--text-muted); font-weight: 600; }
+.schedule-actions {
+  display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap;
+}
+.schedule-actions .btn { font-size: 12px; padding: 5px 12px; }
+.btn-danger-subtle {
+  background: transparent; border: 1px solid var(--danger, #ef4444);
+  color: var(--danger, #ef4444); font-size: 12px; padding: 5px 12px;
+  border-radius: var(--radius-sm); cursor: pointer; font-family: inherit;
+  transition: all 0.15s;
+}
+.btn-danger-subtle:hover { background: rgba(239,68,68,0.1); }
+
+/* ── Schedule info on task cards ──────────────── */
+.schedule-info-mini {
+  font-size: 10px; color: var(--text-muted); margin-left: 4px;
+}
+.run-count-mini {
+  font-size: 10px; color: var(--accent); margin-left: 4px; font-weight: 600;
+}
+
+/* ── Schedule type selector in form ──────────── */
+.schedule-type-selector {
+  display: flex; gap: 0; margin-bottom: 12px;
+}
+.sched-type-btn {
+  flex: 1; padding: 8px 12px; font-size: 13px; font-family: inherit;
+  background: var(--card-bg); border: 1px solid var(--border);
+  color: var(--text-muted); cursor: pointer; transition: all 0.15s;
+  text-align: center; font-weight: 500;
+}
+.sched-type-btn:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.sched-type-btn:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; border-left: none; }
+.sched-type-btn.active {
+  background: rgba(99,102,241,0.12); border-color: var(--accent);
+  color: var(--accent); font-weight: 600;
+}
+.sched-type-btn:hover:not(.active) { border-color: var(--text-muted); color: var(--text); }
+.ap-scheduled-fields { margin-top: 8px; }
 
 .pipeline-working-indicator {
   display: inline-flex; align-items: center; gap: 6px;
@@ -2457,3 +2577,80 @@ body {
 .github-star-bar .star-link:hover {
   text-decoration: underline;
 }
+
+/* ── Model Routing ──────────────────────────── */
+.model-routing-modes { display: flex; flex-direction: column; gap: 4px; margin-bottom: 20px; }
+.model-routing-mode-option {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px;
+  cursor: pointer; transition: border-color 0.2s;
+}
+.model-routing-mode-option:hover { border-color: var(--accent); }
+.model-routing-mode-option.active { border-color: var(--accent); background: rgba(99,102,241,0.05); }
+.model-routing-mode-label { font-weight: 600; font-size: 14px; }
+.model-routing-mode-desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.model-routing-mode-option input[type="radio"] { margin-top: 3px; accent-color: var(--accent); }
+
+.preset-buttons { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.preset-btn {
+  padding: 10px 16px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); color: var(--text); cursor: pointer; font-size: 13px;
+  transition: all 0.2s; text-align: left;
+}
+.preset-btn:hover { border-color: var(--accent); background: rgba(99,102,241,0.08); }
+.preset-btn .preset-name { font-weight: 600; display: block; }
+.preset-btn .preset-savings { font-size: 11px; color: var(--text-muted); display: block; margin-top: 2px; }
+
+.model-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.model-table th { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-weight: 500; font-size: 12px; }
+.model-table td { padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.model-table .model-cell { font-weight: 500; }
+.model-table .model-edit-link { color: var(--accent); cursor: pointer; font-size: 12px; text-decoration: none; }
+.model-table .model-edit-link:hover { text-decoration: underline; }
+
+.smart-config-section { margin-top: 16px; }
+.smart-config-section h4 { font-size: 13px; font-weight: 600; margin: 16px 0 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.smart-config-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.smart-config-label { min-width: 140px; font-size: 13px; }
+.smart-config-row select { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; color: var(--text); font-size: 13px; }
+.smart-config-row input[type="checkbox"] { accent-color: var(--accent); }
+
+.override-table { width: 100%; margin-top: 8px; font-size: 13px; }
+.override-table td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.override-table select { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; color: var(--text); font-size: 12px; }
+.override-remove-btn { color: var(--text-muted); cursor: pointer; font-size: 12px; background: none; border: none; padding: 2px 6px; }
+.override-remove-btn:hover { color: #ef4444; }
+.override-add-btn { color: var(--accent); cursor: pointer; font-size: 12px; background: none; border: none; padding: 4px 0; margin-top: 4px; }
+.override-add-btn:hover { text-decoration: underline; }
+.smart-reset-btn { margin-top: 16px; padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-muted); cursor: pointer; font-size: 12px; }
+.smart-reset-btn:hover { border-color: #ef4444; color: #ef4444; }
+
+.mr-section-label { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin: 20px 0 8px; }
+
+/* Agent Model Bar */
+.agent-model-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; margin-bottom: 4px;
+}
+.agent-model-label { font-size: 13px; color: var(--text-muted); }
+.agent-model-bar select {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 10px; color: var(--text); font-size: 13px;
+}
+.agent-model-info { font-size: 11px; color: var(--text-muted); font-style: italic; }
+.agent-model-bar.dimmed { opacity: 0.5; }
+
+/* Model Badges */
+.model-badge {
+  font-size: 10px; font-weight: 700; padding: 1px 4px;
+  border-radius: 3px; margin-left: 4px; vertical-align: middle;
+  display: inline-block; line-height: 1;
+}
+.model-badge-opus { background: rgba(255, 193, 7, 0.2); color: #ffc107; }
+.model-badge-sonnet { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+.model-badge-haiku { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+
+/* Task Model Info */
+.task-model-info { font-size: 12px; color: var(--text-muted); }
+.task-model-label { font-weight: 500; }
+.task-model-reason { font-style: italic; font-size: 11px; }

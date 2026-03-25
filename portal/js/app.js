@@ -716,8 +716,11 @@
     }
     if (scope === 'all' || scope === 'config') {
       loadGlobalAutopilot();
+      if (v === 'settings') renderModelRoutingSettings();
+      // Refresh model routing state for sidebar badges
+      loadModelRoutingState();
     }
-    if (scope === 'all') {
+    if (scope === 'all' || scope === 'media') {
       if (v === 'media') loadMedia();
     }
   }
@@ -731,6 +734,10 @@
       ]);
       state.agents = agentsData.agents || [];
       state.tasks = tasksData.tasks || [];
+      // Load model routing config for sidebar badges
+      if (!state.modelRouting) {
+        try { state.modelRouting = await api.get('/api/settings/model-routing'); } catch(e2) { state.modelRouting = { mode: 'default' }; }
+      }
       renderSidebarAgents();
     } catch(e) { console.error('Failed to load agents:', e); }
   }
@@ -783,8 +790,15 @@
       if (a.role || a.mission) {
         nameHtml = '<span data-tooltip="' + escHtml((a.role || '') + (a.role && a.mission ? '\n' : '') + (a.mission || '')) + '">' + escHtml(a.name) + '</span>';
       }
+      var orchBadge = '';
+      if (state.modelRouting && state.modelRouting.mode !== 'default') {
+        var orchModel = (state.modelRouting.orchestratorModel) || ((state.modelRouting.agentModels || {})[a.id]);
+        if (orchModel && MODEL_DISPLAY[orchModel]) {
+          orchBadge = '<span class="model-badge model-badge-' + orchModel + '" title="' + MODEL_DISPLAY[orchModel] + '">[' + orchModel[0].toUpperCase() + ']</span>';
+        }
+      }
       html += '<a href="#" data-agent-id="' + a.id + '" class="nav-link nav-orchestrator' + (isActive ? ' active' : '') + '">' +
-        '<span class="icon">&#9733;</span> ' + nameHtml + '<span class="' + dotClass + '" title="' + dotTitle + '"></span></a>';
+        '<span class="icon">&#9733;</span> ' + nameHtml + orchBadge + '<span class="' + dotClass + '" title="' + dotTitle + '"></span></a>';
     });
 
     subAgents.forEach(function(a) {
@@ -800,8 +814,15 @@
       html += '<div class="nav-agent-group">';
       html += '<div class="nav-agent-row">';
       html += '<span class="nav-agent-arrow' + (isExpanded ? ' expanded' : '') + '" data-agent-id="' + a.id + '" title="Show files">&#9654;</span>';
+      var agentBadge = '';
+      if (state.modelRouting && state.modelRouting.mode !== 'default') {
+        var agentModel = (state.modelRouting.agentModels || {})[a.id];
+        if (agentModel && MODEL_DISPLAY[agentModel]) {
+          agentBadge = '<span class="model-badge model-badge-' + agentModel + '" title="' + MODEL_DISPLAY[agentModel] + '">[' + agentModel[0].toUpperCase() + ']</span>';
+        }
+      }
       html += '<a href="#" data-agent-id="' + a.id + '" class="nav-link' + (isActive ? ' active' : '') + '" style="flex:1">' +
-        nameHtml + '<span class="' + dotClass + '" title="' + dotTitle + '"></span></a>';
+        nameHtml + agentBadge + '<span class="' + dotClass + '" title="' + dotTitle + '"></span></a>';
       html += '</div>';
       var countText = state.agentFileCounts && state.agentFileCounts[a.id] != null ? state.agentFileCounts[a.id] : '-';
       html += '<div class="nav-agent-sub' + (isExpanded ? '' : ' hidden') + '" data-agent-sub="' + a.id + '">';
@@ -970,6 +991,24 @@
       var deleteBtn = document.getElementById('agent-delete-btn');
       if (deleteBtn) {
         deleteBtn.style.display = agent.isOrchestrator ? 'none' : '';
+      }
+
+      // Model routing integration
+      var modelBar = document.getElementById('agent-model-bar');
+      if (modelBar) {
+        if (agent.isOrchestrator) {
+          modelBar.style.display = 'none';
+        } else {
+          modelBar.style.display = 'flex';
+          try {
+            var routingConfig = state.modelRouting || await api.get('/api/settings/model-routing');
+            state.modelRouting = routingConfig;
+            var select = document.getElementById('agent-model-select');
+            var currentModel = (routingConfig.agentModels || {})[id] || '';
+            if (select) select.value = currentModel;
+            updateAgentModelInfo(routingConfig);
+          } catch(re) { console.error('Model routing load error:', re); }
+        }
       }
 
       // Fetch tasks assigned to this agent
@@ -1213,27 +1252,92 @@
     for (var c = 0; c <= maxCol; c++) columns.push([]);
     nodes.forEach(function(t) { columns[colMap[t.id] || 0].push(t); });
 
-    // Sort within columns: active statuses first
+    // Sort by status priority helper
     var statusPriority = { working: 0, pending_approval: 1, planning: 2, done: 3, hold: 4, closed: 5, cancelled: 6 };
-    columns.forEach(function(col) {
-      col.sort(function(a, b) {
-        var sa = statusPriority[a.status] !== undefined ? statusPriority[a.status] : 8;
-        var sb = statusPriority[b.status] !== undefined ? statusPriority[b.status] : 8;
-        return sa - sb;
-      });
+    function statusSort(a, b) {
+      var sa = statusPriority[a.status] !== undefined ? statusPriority[a.status] : 8;
+      var sb = statusPriority[b.status] !== undefined ? statusPriority[b.status] : 8;
+      return sa - sb;
+    }
+
+    // Build parent-children groups for clustered layout
+    // A "parent" here is a col-0 task that has subtasks visible in the graph
+    var parentGroups = []; // [{parent: task, children: [tasks in col 1+]}]
+    var orphans = [];      // col-0 tasks with no subtasks
+    var childrenPlaced = {}; // track which children are placed via a parent group
+
+    // Identify col-0 tasks that have subtask children
+    var col0 = columns[0] || [];
+    col0.sort(statusSort);
+    col0.forEach(function(t) {
+      var kids = [];
+      if (t.subtasks && t.subtasks.length > 0) {
+        t.subtasks.forEach(function(sid) {
+          if (nodeSet[sid] && colMap[sid] > 0) {
+            kids.push(taskMap[sid]);
+            childrenPlaced[sid] = true;
+          }
+        });
+      }
+      if (kids.length > 0) {
+        kids.sort(statusSort);
+        parentGroups.push({ parent: t, children: kids });
+      } else {
+        orphans.push(t);
+      }
     });
 
-    // Compute positions
+    // Compute positions: lay out groups first, then orphans, then remaining unplaced nodes
     var canvasH = 0;
-    columns.forEach(function(col, ci) {
-      var x = padX + ci * nodeGapX;
-      var y = padY;
-      col.forEach(function(task) {
-        nodePositions[task.id] = { x: x, y: y, w: nodeW, h: nodeH };
-        y += nodeH + nodeGapY;
+    var curY = padY;
+    var groupGapY = 28; // extra gap between groups
+
+    // Lay out parent groups: parent at col 0, children at their assigned columns, all vertically clustered
+    parentGroups.forEach(function(group) {
+      var parentX = padX + (colMap[group.parent.id] || 0) * nodeGapX;
+      var childCount = group.children.length;
+      // Total height of children block
+      var childrenBlockH = childCount * nodeH + (childCount - 1) * nodeGapY;
+      // Parent is vertically centered relative to its children
+      var parentY, childStartY;
+      if (childrenBlockH > nodeH) {
+        childStartY = curY;
+        parentY = curY + (childrenBlockH - nodeH) / 2;
+      } else {
+        parentY = curY;
+        childStartY = curY + (nodeH - childrenBlockH) / 2;
+      }
+      nodePositions[group.parent.id] = { x: parentX, y: parentY, w: nodeW, h: nodeH };
+      var cy = childStartY;
+      group.children.forEach(function(child) {
+        var childCol = colMap[child.id] || 1;
+        var childX = padX + childCol * nodeGapX;
+        nodePositions[child.id] = { x: childX, y: cy, w: nodeW, h: nodeH };
+        cy += nodeH + nodeGapY;
       });
-      if (y > canvasH) canvasH = y;
+      var groupBottom = Math.max(parentY + nodeH, childStartY + childrenBlockH);
+      curY = groupBottom + groupGapY;
     });
+
+    // Lay out orphan col-0 tasks (no subtasks)
+    if (orphans.length > 0) {
+      var orphanX = padX;
+      orphans.forEach(function(t) {
+        nodePositions[t.id] = { x: orphanX, y: curY, w: nodeW, h: nodeH };
+        curY += nodeH + nodeGapY;
+      });
+    }
+
+    // Lay out any remaining nodes not yet placed (e.g. col 1+ nodes that aren't subtasks of a col-0 parent)
+    nodes.forEach(function(t) {
+      if (nodePositions[t.id]) return;
+      var col = colMap[t.id] || 0;
+      var x = padX + col * nodeGapX;
+      nodePositions[t.id] = { x: x, y: curY, w: nodeW, h: nodeH };
+      curY += nodeH + nodeGapY;
+    });
+
+    canvasH = curY;
     canvasH = Math.max(canvasH + padY, 300);
     var canvasW = padX * 2 + (maxCol + 1) * nodeGapX;
 
@@ -1510,7 +1614,21 @@
     var outputIcon = hasOutput ? '<span class="task-output-icon" title="Has output"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>' : '';
     var isWorking = t.status === 'working';
     var workingDot = isWorking ? '<span class="agent-working-dot" title="Working"></span>' : '';
-    var autopilotIcon = t.autopilot ? '<span class="autopilot-badge" title="Autopilot">&#9881;</span>' : '';
+    var autopilotIcon = '';
+    if (t.interval || t.scheduledAt) {
+      var scheduleLabel = t.interval ? 'Every ' + t.interval + ' ' + (t.intervalUnit || '') : 'Scheduled';
+      autopilotIcon = '<span class="timed-badge" title="' + scheduleLabel + '">&#128339;</span>';
+    } else if (t.autopilot) {
+      autopilotIcon = '<span class="autopilot-badge" title="Autopilot">&#9881;</span>';
+    }
+    var scheduleInfo = '';
+    if (t.interval && t.intervalUnit) {
+      scheduleInfo = '<span class="schedule-info-mini">' + formatIntervalFields(t.interval, t.intervalUnit) + '</span>';
+      if (t.runCount) scheduleInfo += '<span class="run-count-mini">#' + t.runCount + '</span>';
+    } else if (t.scheduledAt) {
+      var sd = new Date(t.scheduledAt);
+      scheduleInfo = '<span class="schedule-info-mini">' + sd.toLocaleDateString(undefined, {month:'short',day:'numeric'}) + '</span>';
+    }
     var blocked = isTaskBlocked(t, state.tasks);
     var blockedBadge = blocked ? '<span class="badge badge-blocked">blocked</span>' : '';
     var hasBlocker = !!t.blocker;
@@ -1536,7 +1654,7 @@
     var timeAgoHtml = t.createdAt ? '<span class="task-time-ago">' + timeAgo(t.createdAt) + '</span>' : '';
 
     return '<div class="task-item' + subtaskClass + blockerClass + '"' + depthStyle + ' onclick="App.openTask(' + q + t.id + q + ')">' +
-      '<span class="task-title">' + outputIcon + autopilotIcon + escHtml(t.title) + tagPills + '</span>' +
+      '<span class="task-title">' + outputIcon + autopilotIcon + escHtml(t.title) + scheduleInfo + tagPills + '</span>' +
       '<span class="task-meta">' +
         '<span class="badge ' + priorityClass + '">' + escHtml(t.priority || 'medium') + '</span>' +
         '<span class="badge ' + statusClass + '">' + escHtml(statusLabel) + workingDot + '</span>' +
@@ -1961,6 +2079,7 @@
 
     try {
       var task = await api.get('/api/tasks/' + id);
+      state.currentTask = task;
 
       document.getElementById('task-detail-title').textContent = task.title || 'Untitled';
 
@@ -1984,6 +2103,24 @@
         if (found) agentName = found.name;
       }
       document.getElementById('task-detail-agent').textContent = agentName;
+
+      // Model info for task detail
+      var modelInfoEl = document.getElementById('task-detail-model-info');
+      if (modelInfoEl) {
+        var mr = state.modelRouting || { mode: 'default' };
+        if (mr.mode !== 'default' && task.assignedTo) {
+          var agentModel = (mr.agentModels || {})[task.assignedTo];
+          if (agentModel && MODEL_DISPLAY[agentModel]) {
+            modelInfoEl.innerHTML = '<span class="task-model-label">Model:</span> <span class="model-badge model-badge-' + agentModel + '">[' + agentModel[0].toUpperCase() + ']</span> ' + MODEL_DISPLAY[agentModel];
+            modelInfoEl.style.display = '';
+          } else {
+            modelInfoEl.style.display = 'none';
+          }
+        } else {
+          modelInfoEl.style.display = 'none';
+        }
+      }
+
       var dateHtml = '';
       if (task.createdAt) dateHtml += 'Created: ' + new Date(task.createdAt).toLocaleString() + ' (' + timeAgo(task.createdAt) + ')';
       if (task.updatedAt && task.updatedAt !== task.createdAt) dateHtml += ' | Updated: ' + new Date(task.updatedAt).toLocaleString() + ' (' + timeAgo(task.updatedAt) + ')';
@@ -2016,11 +2153,23 @@
       var knowledgeLink = document.getElementById('task-knowledge-link');
       if (task.knowledgeDocId) {
         promoteBar.classList.add('hidden');
-        knowledgeLink.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> <a onclick="App.openKnowledgeDoc(\'' + task.knowledgeDocId + '\')">View in Knowledge Base</a>';
+        var kbLinkHtml = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> <a onclick="App.openKnowledgeDoc(\'' + task.knowledgeDocId + '\')">View in Knowledge Base</a>';
+        if (task.promotedToKb) {
+          kbLinkHtml += ' <span class="auto-promoted-badge">Auto-promoted to KB</span>';
+        }
+        if (task.promotedToMedia) {
+          kbLinkHtml += ' <span class="auto-promoted-badge auto-promoted-media">Auto-promoted to Media</span>';
+        }
+        knowledgeLink.innerHTML = kbLinkHtml;
         knowledgeLink.classList.remove('hidden');
       } else if (task.status === 'closed' || task.status === 'done') {
         promoteBar.classList.remove('hidden');
-        knowledgeLink.classList.add('hidden');
+        var extraBadges = '';
+        if (task.promotedToMedia) {
+          extraBadges = '<span class="auto-promoted-badge auto-promoted-media" style="margin-left:8px">Auto-promoted to Media</span>';
+        }
+        knowledgeLink.innerHTML = extraBadges;
+        knowledgeLink.classList.toggle('hidden', !extraBadges);
       } else {
         promoteBar.classList.add('hidden');
         knowledgeLink.classList.add('hidden');
@@ -2101,15 +2250,19 @@
     // Collect all events: versions, progress entries, owner feedback
     var timeline = [];
 
-    // Add version events
+    // Add version events (chronological: v1 first, v2 after, etc.)
     versions.forEach(function(v, idx) {
       var ts = v.submittedAt || v.decidedAt || task.createdAt || '';
-      timeline.push({ type: 'version', data: v, idx: idx, timestamp: ts });
-      // Add owner feedback as separate event after version
+      timeline.push({ type: 'version', data: v, idx: idx, timestamp: ts, _versionNum: v.number || (idx + 1) });
+      // Add deliverable/result/files as separate event after progress logs for this round
+      if (v.deliverable || v.result || (v.files && v.files.length > 0)) {
+        var delTs = v.submittedAt || v.decidedAt || task.createdAt || '';
+        timeline.push({ type: 'version_deliverable', data: v, idx: idx, timestamp: delTs, _versionNum: v.number || (idx + 1) });
+      }
+      // Add owner feedback as separate event after version deliverables
       if (v.decision || v.comments) {
         var fbTs = v.decidedAt || v.submittedAt || ts;
-        // Push feedback slightly after version so it sorts after
-        timeline.push({ type: 'feedback', data: v, timestamp: fbTs, _after: true });
+        timeline.push({ type: 'feedback', data: v, timestamp: fbTs, _after: true, _versionNum: v.number || (idx + 1) });
       }
     });
 
@@ -2127,14 +2280,61 @@
       });
     }
 
-    // Sort chronologically (versions and their feedback stay ordered by _after flag)
+    // Sort chronologically with version-aware ordering
+    // Approach: assign each event to a "round" based on which version it belongs to.
+    // Progress/agent_change events are assigned to the version round they fall within.
+    // Within each round: version -> progress/agent_change (by timestamp) -> deliverable -> feedback
+
+    // First, determine version time boundaries for round assignment
+    // Round N+1 starts when the owner decides on version N (decidedAt), since that's when
+    // new work toward the next version begins. Events after v1.decidedAt belong to round 2.
+    var versionBoundaries = [];
+    var sortedVersions = versions.slice().sort(function(a, b) { return a.number - b.number; });
+    sortedVersions.forEach(function(v, vi) {
+      var roundStart;
+      if (vi === 0) {
+        // Round 1 starts at the beginning of time
+        roundStart = 0;
+      } else {
+        // Round N starts when the previous version was decided (owner reviewed it)
+        var prev = sortedVersions[vi - 1];
+        roundStart = new Date(prev.decidedAt || prev.submittedAt || task.createdAt || 0).getTime();
+      }
+      versionBoundaries.push({ num: v.number, ts: roundStart });
+    });
+
+    // Assign round numbers to non-version events (progress, agent_change)
+    timeline.forEach(function(evt) {
+      if (evt._versionNum) return; // already has a version/round assignment
+      var evtTime = new Date(evt.timestamp || 0).getTime();
+      // Find which version round this event belongs to (the latest round that started before/at this event)
+      var round = 0;
+      for (var vi = 0; vi < versionBoundaries.length; vi++) {
+        if (evtTime >= versionBoundaries[vi].ts) {
+          round = versionBoundaries[vi].num;
+        }
+      }
+      // If no round matched, assign to first version round
+      if (round === 0 && versionBoundaries.length > 0) round = versionBoundaries[0].num;
+      evt._roundNum = round;
+    });
+
     timeline.sort(function(a, b) {
+      // Determine round for each event
+      var aRound = a._versionNum || a._roundNum || 0;
+      var bRound = b._versionNum || b._roundNum || 0;
+      // Different rounds: sort by round number (ensures v1 before v2)
+      if (aRound !== bRound) return aRound - bRound;
+      // Same round: sort by type priority, then timestamp
+      // version (0) -> agent_change (1) -> progress (2) -> version_deliverable (3) -> feedback (4)
+      var order = { version: 0, agent_change: 1, progress: 2, version_deliverable: 3, feedback: 4 };
+      var aOrder = order[a.type] !== undefined ? order[a.type] : 2;
+      var bOrder = order[b.type] !== undefined ? order[b.type] : 2;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      // Same type within same round: sort by timestamp
       var ta = new Date(a.timestamp || 0).getTime();
       var tb = new Date(b.timestamp || 0).getTime();
-      if (ta !== tb) return ta - tb;
-      // Same timestamp: version before feedback, feedback before progress, agent_change first
-      var order = { agent_change: -1, version: 0, feedback: 1, progress: 2 };
-      return (order[a.type] || 0) - (order[b.type] || 0);
+      return ta - tb;
     });
 
     // Render unified timeline
@@ -2166,16 +2366,20 @@
             html += '<div class="session-content"><span class="empty-state" style="padding:8px">Awaiting submission...</span></div>';
           }
           html += '</div>'; // close tl-accent-version
+          html += '</div>'; // close session-version
 
+        } else if (evt.type === 'version_deliverable') {
+          var v = evt.data;
+          var delHtml = '';
           if (v.deliverable) {
-            html += '<div class="tl-accent tl-accent-deliverable"><div class="version-deliverable"><div class="version-deliverable-label">Deliverable</div>' + linkifyText(escHtml(v.deliverable)).replace(/\n/g, '<br>') + '</div></div>';
+            delHtml += '<div class="tl-accent tl-accent-deliverable"><div class="version-deliverable"><div class="version-deliverable-label">Deliverable</div>' + linkifyText(escHtml(v.deliverable)).replace(/\n/g, '<br>') + '</div></div>';
           }
           if (v.result) {
-            html += '<div class="tl-accent tl-accent-result"><div class="version-result"><div class="version-result-label">Result</div>' + linkifyText(escHtml(v.result)).replace(/\n/g, '<br>') + '</div></div>';
+            delHtml += '<div class="tl-accent tl-accent-result"><div class="version-result"><div class="version-result-label">Result</div>' + linkifyText(escHtml(v.result)).replace(/\n/g, '<br>') + '</div></div>';
           }
           if (v.files && v.files.length > 0) {
             var imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
-            html += '<div class="tl-accent tl-accent-files"><div class="version-files"><div class="version-files-label">Deliverable Files</div>' +
+            delHtml += '<div class="tl-accent tl-accent-files"><div class="version-files"><div class="version-files-label">Deliverable Files</div>' +
               v.files.map(function(f) {
                 var ext = f.lastIndexOf('.') >= 0 ? f.slice(f.lastIndexOf('.')).toLowerCase() : '';
                 var rawUrl = '/api/tasks/' + taskId + '/versions/' + v.number + '/files/' + encodeURIComponent(f) + '/raw';
@@ -2192,12 +2396,21 @@
                 } else {
                   linkHtml += '<a href="' + rawUrl + '" target="_blank" class="version-file-link">' + escHtml(f) + '</a>';
                 }
+                linkHtml += '<div class="file-quick-actions">';
+                if (isImage) {
+                  linkHtml += '<button class="btn-quick-add btn-quick-media" onclick="event.stopPropagation();App.openAddToMedia(\'' + escHtml(taskId) + '\',' + v.number + ',\'' + safeName + '\',\'' + rawUrl + '\')">Add to Media</button>';
+                }
+                if (isText || ext === '.md' || ext === '.txt') {
+                  linkHtml += '<button class="btn-quick-add btn-quick-kb" onclick="event.stopPropagation();App.openAddToKb(\'' + escHtml(taskId) + '\',' + v.number + ',\'' + safeName + '\')">Add to KB</button>';
+                }
+                linkHtml += '</div>';
                 linkHtml += '</div>';
                 return linkHtml;
               }).join('') + '</div></div>';
           }
-
-          html += '</div>'; // close session-version
+          if (delHtml) {
+            html += '<div class="session-version-deliverables">' + delHtml + '</div>';
+          }
 
         } else if (evt.type === 'feedback') {
           var v = evt.data;
@@ -2298,19 +2511,16 @@
       html += '<span class="pipeline-working-indicator"><span class="agent-working-dot"></span> Working</span>';
     }
 
-    // Autopilot toggle
-    html += '<button class="autopilot-toggle' + (task.autopilot ? ' active' : '') + '" onclick="App.toggleTaskAutopilot()" title="Toggle autopilot mode">';
-    html += '&#9881; Autopilot ' + (task.autopilot ? 'ON' : 'OFF');
-    html += '</button>';
-
-    // Recurring autopilot info
-    if (task.autopilot && task.interval && task.intervalUnit) {
-      html += '<div class="autopilot-recurring-info" style="display:inline-flex;align-items:center;gap:8px;margin-left:8px;font-size:12px;color:var(--text-muted)">';
-      html += '<span>Every ' + task.interval + (task.intervalUnit === 'minutes' ? 'm' : task.intervalUnit === 'hours' ? 'h' : 'd') + '</span>';
-      if (task.lastRun) html += '<span>Last: ' + new Date(task.lastRun).toLocaleString() + '</span>';
-      if (task.nextRun) html += '<span>Next: ' + new Date(task.nextRun).toLocaleString() + '</span>';
-      if (task.runCount) html += '<span>Runs: ' + task.runCount + '</span>';
-      html += '</div>';
+    // Autopilot toggle with lock logic for timed tasks
+    var isTimed = !!(task.interval || task.scheduledAt);
+    if (isTimed) {
+      html += '<span class="autopilot-toggle locked active" title="Autopilot is locked while a schedule is active">';
+      html += '&#128339; Timed (Autopilot locked)';
+      html += '</span>';
+    } else {
+      html += '<button class="autopilot-toggle' + (task.autopilot ? ' active' : '') + '" onclick="App.toggleTaskAutopilot()" title="Toggle autopilot mode">';
+      html += '&#9881; Autopilot ' + (task.autopilot ? 'ON' : 'OFF');
+      html += '</button>';
     }
 
     html += '<span class="pipeline-gap"></span>';
@@ -2362,6 +2572,48 @@
 
     html += '</div>';
     html += '</div>';
+
+    // Schedule panel (for timed tasks)
+    if (task.interval || task.scheduledAt) {
+      var isRecurring = !!(task.interval && task.intervalUnit);
+      html += '<div class="schedule-section">';
+      html += '<div class="schedule-section-header"><span>Schedule</span><span class="schedule-type-pill">' + (isRecurring ? 'Recurring' : 'One-time') + '</span></div>';
+      if (isRecurring) {
+        html += '<div class="schedule-data-row"><span class="label">Repeats:</span><span class="value">Every ' + task.interval + ' ' + (task.intervalUnit || '') + '</span></div>';
+        if (task.nextRun) {
+          var nr = new Date(task.nextRun);
+          html += '<div class="schedule-data-row"><span class="label">Next run:</span><span class="value">' + timeAgo(task.nextRun) + ' (' + nr.toLocaleString() + ')</span></div>';
+        }
+        if (task.lastRun) {
+          var lr = new Date(task.lastRun);
+          html += '<div class="schedule-data-row"><span class="label">Last run:</span><span class="value">' + timeAgo(task.lastRun) + ' (' + lr.toLocaleString() + ')</span></div>';
+        }
+        if (task.runCount) {
+          html += '<div class="schedule-data-row"><span class="label">Run count:</span><span class="value">' + task.runCount + '</span></div>';
+        }
+        var schedStatus = task.status === 'hold' ? '<span class="schedule-status-paused">Paused</span>' : '<span class="schedule-status-active">Active</span>';
+        html += '<div class="schedule-data-row"><span class="label">Status:</span><span class="value">' + schedStatus + '</span></div>';
+        html += '<div class="schedule-actions">';
+        if (task.status === 'hold') {
+          html += '<button class="btn btn-secondary" onclick="App.resumeSchedule(\'' + task.id + '\')">Resume Schedule</button>';
+        } else {
+          html += '<button class="btn btn-secondary" onclick="App.pauseSchedule(\'' + task.id + '\')">Pause Schedule</button>';
+        }
+        html += '<button class="btn btn-secondary" onclick="App.editAutopilot(\'' + task.id + '\')">Edit Interval</button>';
+        html += '<button class="btn-danger-subtle" onclick="App.removeSchedule(\'' + task.id + '\')">Remove Schedule</button>';
+        html += '</div>';
+      } else {
+        // One-time scheduled
+        var sa = new Date(task.scheduledAt);
+        html += '<div class="schedule-data-row"><span class="label">Fires at:</span><span class="value">' + sa.toLocaleString() + ' (' + timeAgo(task.scheduledAt) + ')</span></div>';
+        html += '<div class="schedule-data-row"><span class="label">Status:</span><span class="value"><span class="schedule-status-waiting">Waiting</span></span></div>';
+        html += '<div class="schedule-actions">';
+        html += '<button class="btn btn-secondary" onclick="App.editScheduledAt(\'' + task.id + '\')">Edit Time</button>';
+        html += '<button class="btn-danger-subtle" onclick="App.removeSchedule(\'' + task.id + '\')">Remove Schedule</button>';
+        html += '</div>';
+      }
+      html += '</div>';
+    }
 
     // Feedback area (hidden by default)
     html += '<div id="task-feedback-area" class="task-feedback-area hidden">';
@@ -3378,6 +3630,7 @@
     renderVaultStatusBar('vault-status-bar-secrets');
     renderVaultStatusBar('vault-status-bar-passwords');
     loadNotifPrefs();
+    renderModelRoutingSettings();
     // Restore last active section
     if (state.settingsSection) {
       switchSettingsSection(state.settingsSection);
@@ -4354,8 +4607,12 @@
 
   async function loadMedia() {
     try {
-      var mediaFiles = await loadMediaRecursive('data/media', '');
+      var results = await Promise.all([loadMediaRecursive('data/media', ''), loadMediaMetadata()]);
+      var mediaFiles = results[0];
+      var metadata = results[1] || {};
       var el = document.getElementById('media-grid');
+      // Filter out _index.json from file list
+      mediaFiles = mediaFiles.filter(function(f) { return f.name !== '_index.json'; });
       if (state.mediaFilter && state.mediaFilter !== 'all') {
         var extMap = { image: IMAGE_EXTS, video: VIDEO_EXTS, document: DOC_EXTS };
         var allowedExts = extMap[state.mediaFilter] || [];
@@ -4377,16 +4634,18 @@
         var truncName = displayName.length > 20 ? displayName.slice(0, 17) + '...' : displayName;
         var subdir = f.name.indexOf('/') >= 0 ? f.name.substring(0, f.name.lastIndexOf('/')) : '';
         var subdirBadge = subdir ? '<span style="font-size:10px;color:var(--text-muted);display:block;overflow:hidden;text-overflow:ellipsis">' + escHtml(subdir) + '</span>' : '';
+        var meta = metadata[f.name] || {};
+        var tagsBadge = (meta.tags && meta.tags.length > 0) ? '<div class="media-thumb-tags">' + meta.tags.map(function(t) { return '<span class="tag-badge tag-badge-sm">' + escHtml(t) + '</span>'; }).join('') + '</div>' : '';
         // Encode path segments individually to support subdirectories
         var encodedPath = f.name.split('/').map(encodeURIComponent).join('/');
         if (isImage) {
           return '<div class="media-thumb" onclick="App.openMediaPreview(\'' + escHtml(f.name.replace(/'/g, "\\'")) + '\',\'' + typeStr + '\')">' +
             '<img src="/api/raw/data/media/' + encodedPath + '" alt="' + escHtml(f.name) + '">' +
-            '<div class="media-thumb-info">' + subdirBadge + '<span class="media-thumb-name" title="' + escHtml(f.name) + '">' + escHtml(truncName) + '</span></div></div>';
+            '<div class="media-thumb-info">' + subdirBadge + '<span class="media-thumb-name" title="' + escHtml(f.name) + '">' + escHtml(truncName) + '</span>' + tagsBadge + '</div></div>';
         }
         return '<div class="media-thumb" onclick="App.openMediaPreview(\'' + escHtml(f.name.replace(/'/g, "\\'")) + '\',\'' + typeStr + '\')">' +
           '<div class="media-thumb-icon">' + mediaTypeIcon(ext) + '</div>' +
-          '<div class="media-thumb-info">' + subdirBadge + '<span class="media-thumb-name" title="' + escHtml(f.name) + '">' + escHtml(truncName) + '</span></div></div>';
+          '<div class="media-thumb-info">' + subdirBadge + '<span class="media-thumb-name" title="' + escHtml(f.name) + '">' + escHtml(truncName) + '</span>' + tagsBadge + '</div></div>';
       }).join('');
     } catch(e) {
       document.getElementById('media-grid').innerHTML = '<div class="empty-state">No media files yet</div>';
@@ -4397,20 +4656,42 @@
     state.currentMediaFile = filename;
     var content = document.getElementById('media-preview-content');
     var encodedPath = filename.split('/').map(encodeURIComponent).join('/');
+    var meta = (mediaMetadataCache || {})[filename] || {};
+    var metaHtml = '<div class="media-meta-panel">' +
+      '<div class="form-group"><label>Tags</label><input type="text" id="media-meta-tags" value="' + escHtml((meta.tags || []).join(', ')) + '" placeholder="tag1, tag2"></div>' +
+      '<div class="form-group"><label>Description</label><input type="text" id="media-meta-desc" value="' + escHtml(meta.description || '') + '" placeholder="Optional description"></div>' +
+      '<button class="btn btn-secondary btn-sm" onclick="App.saveMediaMeta()">Save Metadata</button>' +
+      '</div>';
     if (type === 'image') {
-      content.innerHTML = '<img src="/api/raw/data/media/' + encodedPath + '" alt="' + escHtml(filename) + '" style="max-width:100%;max-height:70vh;display:block;margin:0 auto 12px;border-radius:6px">' +
-        '<p style="text-align:center;color:var(--text-muted);font-size:13px">' + escHtml(filename) + '</p>' +
-        '<button onclick="App.openMediaFolder()" style="display:block;margin:8px auto 0;padding:4px 12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text-muted);cursor:pointer;font-size:12px">Open Location</button>';
+      content.innerHTML = '<img src="/api/raw/data/media/' + encodedPath + '" alt="' + escHtml(filename) + '" style="max-width:100%;max-height:60vh;display:block;margin:0 auto 12px;border-radius:6px">' +
+        '<p style="text-align:center;color:var(--text-muted);font-size:13px">' + escHtml(filename) + '</p>' + metaHtml;
     } else {
       var ext = filename.split('.').pop().toLowerCase();
       var icon = mediaTypeIcon(ext);
       content.innerHTML = '<div style="text-align:center;padding:32px">' +
         '<div style="font-size:64px;margin-bottom:16px">' + icon + '</div>' +
         '<p style="font-size:16px;font-weight:500;margin-bottom:8px">' + escHtml(filename) + '</p>' +
-        '<p style="color:var(--text-muted);font-size:13px">Type: ' + escHtml(ext.toUpperCase()) + '</p>' +
-        '<button onclick="App.openMediaFolder()" style="display:block;margin:12px auto 0;padding:4px 12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text-muted);cursor:pointer;font-size:12px">Open Location</button></div>';
+        '<p style="color:var(--text-muted);font-size:13px">Type: ' + escHtml(ext.toUpperCase()) + '</p></div>' + metaHtml;
     }
     document.getElementById('media-preview-modal').classList.remove('hidden');
+  }
+
+  async function saveMediaMeta() {
+    if (!state.currentMediaFile) return;
+    var tagsStr = document.getElementById('media-meta-tags').value.trim();
+    var tags = tagsStr ? tagsStr.split(',').map(function(t) { return t.trim(); }).filter(Boolean) : [];
+    var description = document.getElementById('media-meta-desc').value.trim();
+    try {
+      await api.put('/api/media/metadata/' + encodeURIComponent(state.currentMediaFile), { tags: tags, description: description });
+      toast('Metadata saved');
+      if (mediaMetadataCache) {
+        if (!mediaMetadataCache[state.currentMediaFile]) mediaMetadataCache[state.currentMediaFile] = {};
+        mediaMetadataCache[state.currentMediaFile].tags = tags;
+        mediaMetadataCache[state.currentMediaFile].description = description;
+      }
+    } catch(e) {
+      toast('Failed to save metadata', 'error');
+    }
   }
 
   function closeMediaPreview() {
@@ -4425,6 +4706,104 @@
     } catch(e) {
       showToast('Could not open folder', 'error');
     }
+  }
+
+  // ── Quick-Add to KB / Media Modals ──────────────────
+  function openAddToKb(taskId, version, encodedFilename) {
+    var filename = decodeURIComponent(encodedFilename);
+    var task = state.currentTask || {};
+    var title = filename.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+    document.getElementById('add-kb-title').value = title;
+    document.getElementById('add-kb-category').value = 'reference';
+    document.getElementById('add-kb-tags').value = (task.tags || []).join(', ');
+    document.getElementById('add-kb-summary').value = '';
+    document.getElementById('add-kb-modal').dataset.taskId = taskId;
+    document.getElementById('add-kb-modal').dataset.version = version;
+    document.getElementById('add-kb-modal').dataset.filename = encodedFilename;
+    document.getElementById('add-kb-modal').classList.remove('hidden');
+  }
+
+  function closeAddToKb() {
+    document.getElementById('add-kb-modal').classList.add('hidden');
+  }
+
+  async function submitAddToKb() {
+    var modal = document.getElementById('add-kb-modal');
+    var taskId = modal.dataset.taskId;
+    var version = modal.dataset.version;
+    var filename = modal.dataset.filename;
+    var title = document.getElementById('add-kb-title').value.trim();
+    var category = document.getElementById('add-kb-category').value;
+    var tagsStr = document.getElementById('add-kb-tags').value.trim();
+    var tags = tagsStr ? tagsStr.split(',').map(function(t) { return t.trim(); }).filter(Boolean) : [];
+    var summary = document.getElementById('add-kb-summary').value.trim();
+    try {
+      await api.post('/api/tasks/' + taskId + '/versions/' + version + '/files/' + filename + '/add-to-kb', {
+        title: title, category: category, tags: tags, summary: summary
+      });
+      toast('Added to Knowledge Base');
+      closeAddToKb();
+    } catch(e) {
+      toast('Failed: ' + (e.body ? e.body.error : e.message), 'error');
+    }
+  }
+
+  async function openAddToMedia(taskId, version, encodedFilename, rawUrl) {
+    var filename = decodeURIComponent(encodedFilename);
+    document.getElementById('add-media-filename').value = filename;
+    document.getElementById('add-media-preview').innerHTML = rawUrl ? '<img src="' + rawUrl + '" style="max-width:200px;max-height:120px;border-radius:6px;border:1px solid var(--border)">' : '';
+    document.getElementById('add-media-modal').dataset.taskId = taskId;
+    document.getElementById('add-media-modal').dataset.version = version;
+    document.getElementById('add-media-modal').dataset.filename = encodedFilename;
+    // Load folder list
+    var folderSelect = document.getElementById('add-media-folder');
+    folderSelect.innerHTML = '<option value="social-images">social-images</option><option value="deliverables">deliverables</option>';
+    try {
+      var data = await api.get('/api/media/folders');
+      var existing = ['social-images', 'deliverables'];
+      (data.folders || []).forEach(function(f) {
+        if (existing.indexOf(f) < 0) {
+          folderSelect.innerHTML += '<option value="' + escHtml(f) + '">' + escHtml(f) + '</option>';
+          existing.push(f);
+        }
+      });
+    } catch(e) {}
+    document.getElementById('add-media-modal').classList.remove('hidden');
+  }
+
+  function closeAddToMedia() {
+    document.getElementById('add-media-modal').classList.add('hidden');
+  }
+
+  async function submitAddToMedia() {
+    var modal = document.getElementById('add-media-modal');
+    var taskId = modal.dataset.taskId;
+    var version = modal.dataset.version;
+    var filename = modal.dataset.filename;
+    var folder = document.getElementById('add-media-folder').value;
+    var newName = document.getElementById('add-media-filename').value.trim();
+    try {
+      await api.post('/api/tasks/' + taskId + '/versions/' + version + '/files/' + filename + '/copy-to-media', {
+        folder: folder, newName: newName || undefined
+      });
+      toast('Added to Media Library');
+      closeAddToMedia();
+    } catch(e) {
+      toast('Failed: ' + (e.body ? e.body.error : e.message), 'error');
+    }
+  }
+
+  // ── Media Library with Metadata ──────────────────────
+  var mediaMetadataCache = null;
+
+  async function loadMediaMetadata() {
+    try {
+      var data = await api.get('/api/media/metadata');
+      mediaMetadataCache = data.files || {};
+    } catch(e) {
+      mediaMetadataCache = {};
+    }
+    return mediaMetadataCache;
   }
 
   // ── Terminal / Command Center ──────────────────────
@@ -6140,8 +6519,30 @@
     document.getElementById('ap-prompt').value = '';
     document.getElementById('ap-interval').value = '1';
     setCustomSelect('ap-unit-select', 'hours', 'Hours');
+    setSchedType('recurring');
+    var schedAtEl = document.getElementById('ap-scheduled-at');
+    if (schedAtEl) schedAtEl.value = '';
     await populateAutopilotAgents();
     document.getElementById('autopilot-form').classList.remove('hidden');
+  }
+
+  function setSchedType(type) {
+    var recurBtn = document.getElementById('sched-type-recurring');
+    var oneBtn = document.getElementById('sched-type-onetime');
+    var intervalFields = document.getElementById('ap-interval-fields');
+    var scheduledFields = document.getElementById('ap-scheduled-fields');
+    if (!recurBtn || !oneBtn) return;
+    if (type === 'onetime') {
+      recurBtn.classList.remove('active');
+      oneBtn.classList.add('active');
+      if (intervalFields) intervalFields.classList.add('hidden');
+      if (scheduledFields) scheduledFields.classList.remove('hidden');
+    } else {
+      recurBtn.classList.add('active');
+      oneBtn.classList.remove('active');
+      if (intervalFields) intervalFields.classList.remove('hidden');
+      if (scheduledFields) scheduledFields.classList.add('hidden');
+    }
   }
 
   function setCustomSelect(selectId, value, label) {
@@ -6225,34 +6626,51 @@
     var name = document.getElementById('ap-name').value.trim();
     var prompt = document.getElementById('ap-prompt').value.trim();
     var agentId = document.getElementById('ap-agent').value;
-    var intervalNum = parseInt(document.getElementById('ap-interval').value) || 1;
-    var unit = document.getElementById('ap-interval-unit').value;
 
     if (!name || !prompt) { toast('Name and prompt are required', 'error'); return; }
 
+    // Determine schedule type
+    var isOnetime = document.getElementById('sched-type-onetime') && document.getElementById('sched-type-onetime').classList.contains('active');
+
     try {
-      if (autopilotEditId) {
-        // Update existing task's interval fields
-        await api.put('/api/tasks/' + autopilotEditId, {
-          title: name,
-          description: prompt,
-          assignedTo: agentId,
-          interval: intervalNum,
-          intervalUnit: unit
-        });
-        toast('Recurring task updated');
+      if (isOnetime) {
+        var schedAt = document.getElementById('ap-scheduled-at').value;
+        if (!schedAt) { toast('Please select a date and time', 'error'); return; }
+        var dt = new Date(schedAt);
+        if (isNaN(dt.getTime())) { toast('Invalid date/time', 'error'); return; }
+
+        if (autopilotEditId) {
+          await api.put('/api/tasks/' + autopilotEditId, {
+            title: name, description: prompt, assignedTo: agentId,
+            scheduledAt: dt.toISOString(), interval: null, intervalUnit: null
+          });
+          toast('Scheduled task updated');
+        } else {
+          await api.post('/api/tasks', {
+            title: name, description: prompt, assignedTo: agentId,
+            status: 'planning', autopilot: true,
+            scheduledAt: dt.toISOString()
+          });
+          toast('Scheduled task created');
+        }
       } else {
-        // Create new task with autopilot + interval
-        await api.post('/api/tasks', {
-          title: name,
-          description: prompt,
-          assignedTo: agentId,
-          status: 'planning',
-          autopilot: true,
-          interval: intervalNum,
-          intervalUnit: unit
-        });
-        toast('Recurring task created');
+        var intervalNum = parseInt(document.getElementById('ap-interval').value) || 1;
+        var unit = document.getElementById('ap-interval-unit').value;
+
+        if (autopilotEditId) {
+          await api.put('/api/tasks/' + autopilotEditId, {
+            title: name, description: prompt, assignedTo: agentId,
+            interval: intervalNum, intervalUnit: unit, scheduledAt: null
+          });
+          toast('Recurring task updated');
+        } else {
+          await api.post('/api/tasks', {
+            title: name, description: prompt, assignedTo: agentId,
+            status: 'planning', autopilot: true,
+            interval: intervalNum, intervalUnit: unit
+          });
+          toast('Recurring task created');
+        }
       }
       cancelAutopilotForm();
       loadAutopilotPage();
@@ -6307,6 +6725,60 @@
     } catch(e) { toast('Failed to cancel task', 'error'); }
   }
 
+  async function pauseSchedule(id) {
+    try {
+      await api.put('/api/tasks/' + id, { status: 'hold' });
+      toast('Schedule paused');
+      if (state.currentTaskId === id) openTask(id);
+      loadAutopilotPage();
+    } catch(e) { toast('Failed to pause schedule', 'error'); }
+  }
+
+  async function resumeSchedule(id) {
+    try {
+      await api.put('/api/tasks/' + id, { status: 'planning' });
+      toast('Schedule resumed');
+      if (state.currentTaskId === id) openTask(id);
+      loadAutopilotPage();
+    } catch(e) { toast('Failed to resume schedule', 'error'); }
+  }
+
+  async function removeSchedule(id) {
+    var ok = await confirmAction({
+      title: 'Remove Schedule',
+      message: 'This will remove the schedule but keep the task as a regular autopilot task.',
+      confirmLabel: 'Remove Schedule'
+    });
+    if (!ok) return;
+    try {
+      await api.put('/api/tasks/' + id, { interval: null, intervalUnit: null, nextRun: null, scheduledAt: null });
+      toast('Schedule removed');
+      if (state.currentTaskId === id) openTask(id);
+      loadAutopilotPage();
+    } catch(e) { toast('Failed to remove schedule', 'error'); }
+  }
+
+  async function editScheduledAt(id) {
+    var current = '';
+    try {
+      var task = await api.get('/api/tasks/' + id);
+      if (task && task.scheduledAt) {
+        var d = new Date(task.scheduledAt);
+        current = d.toISOString().slice(0, 16);
+      }
+    } catch(e) {}
+    var newVal = prompt('Enter new scheduled date/time (YYYY-MM-DDTHH:MM):', current);
+    if (!newVal) return;
+    try {
+      var dt = new Date(newVal);
+      if (isNaN(dt.getTime())) { toast('Invalid date/time', 'error'); return; }
+      await api.put('/api/tasks/' + id, { scheduledAt: dt.toISOString() });
+      toast('Scheduled time updated');
+      if (state.currentTaskId === id) openTask(id);
+      loadAutopilotPage();
+    } catch(e) { toast('Failed to update scheduled time', 'error'); }
+  }
+
   async function loadAutopilotPage() {
     loadAutopilot();
     loadAutopilotTasks();
@@ -6318,18 +6790,40 @@
     if (!container) return;
     try {
       var tasksData = await api.get('/api/tasks');
-      // One-time autopilot tasks: autopilot=true but NO interval
-      var tasks = (tasksData.tasks || []).filter(function(t) {
-        return t.autopilot && !t.interval && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled';
+      var allTasks = tasksData.tasks || [];
+
+      // One-time scheduled tasks: have scheduledAt, no interval, not closed/cancelled/done
+      var scheduled = allTasks.filter(function(t) {
+        return t.scheduledAt && !t.interval && t.status !== 'closed' && t.status !== 'cancelled' && t.status !== 'done';
       });
-      if (tasks.length === 0) {
-        container.innerHTML = '<div class="empty-state">No active one-time autopilot tasks</div>';
-        return;
-      }
+
+      // Autopilot tasks (no schedule): autopilot=true, no interval, no scheduledAt, not closed/done/cancelled
+      var autopilotOnly = allTasks.filter(function(t) {
+        return t.autopilot && !t.interval && !t.scheduledAt && t.status !== 'closed' && t.status !== 'done' && t.status !== 'cancelled';
+      });
+
       var html = '';
-      tasks.forEach(function(t) {
-        html += renderTaskCard(t, 'dashboard', false, 0);
-      });
+
+      // Section 1: One-time scheduled tasks
+      html += '<h3 style="margin-top:0;margin-bottom:8px;font-size:14px;color:var(--text-muted)">One-Time Scheduled Tasks</h3>';
+      if (scheduled.length === 0) {
+        html += '<div class="empty-state" style="padding:12px 0;font-size:13px">No one-time scheduled tasks</div>';
+      } else {
+        scheduled.forEach(function(t) {
+          html += renderTaskCard(t, 'dashboard', false, 0);
+        });
+      }
+
+      // Section 2: Autopilot tasks (no schedule)
+      html += '<h3 style="margin-top:20px;margin-bottom:8px;font-size:14px;color:var(--text-muted)">Autopilot Tasks (No Schedule)</h3>';
+      if (autopilotOnly.length === 0) {
+        html += '<div class="empty-state" style="padding:12px 0;font-size:13px">No active autopilot tasks without a schedule</div>';
+      } else {
+        autopilotOnly.forEach(function(t) {
+          html += renderTaskCard(t, 'dashboard', false, 0);
+        });
+      }
+
       container.innerHTML = html;
     } catch(e) { console.error('Failed to load autopilot tasks:', e); }
   }
@@ -6474,8 +6968,13 @@
         '<h3>Subtasks &amp; Dependencies</h3>' +
         '<p>Tasks can have subtasks assigned to different agents, and tasks can depend on other tasks. When all subtasks are done, the parent auto-advances. Blocked tasks (waiting on dependencies) show a lock icon.</p>' +
         '<p>Use subtasks when a goal requires <strong>multiple agents or phases</strong>. For example, a launch campaign might have a research subtask (Scout), a content subtask (Pen), and a development subtask (Dev). The parent task tracks the overall goal while subtasks track individual contributions.</p>' +
-        '<h3>Autopilot Mode</h3>' +
-        '<p>Individual tasks can be set to autopilot - the agent delivers, the orchestrator auto-accepts, and the task closes without your review. Toggle it on the task detail page.</p>' +
+        '<h3>Task Modes</h3>' +
+        '<p>Tasks operate in one of three modes:</p>' +
+        '<ol>' +
+        '<li><strong>Manual</strong> (no icon) - Standard lifecycle. Agent plans, you review, agent executes, you verify.</li>' +
+        '<li><strong>Autopilot</strong> (&#9881; gear icon) - Agent delivers, orchestrator auto-advances to done without your review. Toggle on the task detail page.</li>' +
+        '<li><strong>Timed</strong> (&#128339; clock icon) - Scheduled tasks, either recurring on an interval or one-time at a specific date/time. Timed tasks are always autopilot (locked). Manage schedules from the Autopilot page or task detail.</li>' +
+        '</ol>' +
         '<button class="help-go-link" onclick="App.navigate(\'dashboard\')">View Tasks &#8594;</button>'
     },
     {
@@ -6762,6 +7261,307 @@
     }, true);
   })();
 
+  // ── Model Routing ─────────────────────────────────────
+  var MODEL_DISPLAY = { opus: 'Opus 4.6', sonnet: 'Sonnet 4.6', haiku: 'Haiku 4.5' };
+
+  async function loadModelRoutingState() {
+    try {
+      state.modelRouting = await api.get('/api/settings/model-routing');
+    } catch(e) {
+      state.modelRouting = { mode: 'default' };
+    }
+  }
+  var TASK_TYPES = ['general', 'research', 'development', 'content', 'review', 'operations'];
+
+  async function renderModelRoutingSettings() {
+    var container = document.getElementById('model-routing-content');
+    if (!container) return;
+    try {
+      var config = await api.get('/api/settings/model-routing');
+      var agentsData = await api.get('/api/agents');
+      var agents = agentsData.agents || [];
+      state.modelRouting = config;
+
+      var html = '';
+      // Mode selector
+      html += '<div class="model-routing-modes">';
+      var modes = [
+        { value: 'default', label: 'Default', desc: 'All agents use your configured Claude model. No optimization applied.' },
+        { value: 'manual', label: 'Manual', desc: 'Choose a model for each agent. Use presets for quick setup.' },
+        { value: 'smart', label: 'Smart', desc: 'Platform auto-selects the optimal model based on task type, complexity, and agent role.' }
+      ];
+      modes.forEach(function(mode) {
+        var isActive = config.mode === mode.value;
+        html += '<label class="model-routing-mode-option' + (isActive ? ' active' : '') + '">';
+        html += '<input type="radio" name="model-routing-mode" value="' + mode.value + '"' + (isActive ? ' checked' : '') + ' onchange="App.saveModelRoutingMode(\'' + mode.value + '\')">';
+        html += '<div><div class="model-routing-mode-label">' + mode.label + '</div>';
+        html += '<div class="model-routing-mode-desc">' + mode.desc + '</div></div>';
+        html += '</label>';
+      });
+      html += '</div>';
+
+      // Manual mode panel
+      if (config.mode === 'manual') {
+        html += '<div class="mr-section-label">Presets</div>';
+        html += '<div class="preset-buttons" id="preset-buttons"></div>';
+        html += '<div class="mr-section-label">Agent Model Assignments</div>';
+        html += '<table class="model-table"><thead><tr><th>Agent</th><th>Role</th><th>Model</th><th></th></tr></thead><tbody>';
+        agents.forEach(function(a) {
+          var model = a.isOrchestrator ? (config.orchestratorModel || '') : ((config.agentModels || {})[a.id] || '');
+          var modelDisplay = model ? MODEL_DISPLAY[model] || model : 'System Default';
+          html += '<tr><td>' + escHtml(a.name) + '</td><td style="color:var(--text-muted)">' + escHtml(a.role || '-') + '</td>';
+          html += '<td class="model-cell">' + modelDisplay + '</td>';
+          if (!a.isOrchestrator) {
+            html += '<td><a class="model-edit-link" href="#" onclick="event.preventDefault();App.navigate(\'agent-detail\');App.loadAgentDetail(\'' + a.id + '\')">Edit</a></td>';
+          } else {
+            html += '<td></td>';
+          }
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+      }
+
+      // Smart mode panel
+      if (config.mode === 'smart') {
+        var sc = config.smartConfig || {};
+        html += '<div class="smart-config-section">';
+
+        // Show routing decisions checkbox
+        html += '<div class="smart-config-row">';
+        html += '<input type="checkbox" id="mr-show-decisions"' + (sc.showRoutingDecision !== false ? ' checked' : '') + ' onchange="App.saveModelRoutingConfig({smartConfig:{showRoutingDecision:this.checked}})">';
+        html += '<label for="mr-show-decisions" style="font-size:13px">Show routing decisions in task logs</label>';
+        html += '</div>';
+
+        // Floor / Ceiling
+        html += '<div class="smart-config-row">';
+        html += '<span class="smart-config-label">Model Floor:</span>';
+        html += '<select onchange="App.saveModelRoutingConfig({smartConfig:{minModel:this.value}})">';
+        ['haiku', 'sonnet', 'opus'].forEach(function(m) {
+          html += '<option value="' + m + '"' + ((sc.minModel || 'haiku') === m ? ' selected' : '') + '>' + MODEL_DISPLAY[m] + '</option>';
+        });
+        html += '</select></div>';
+
+        html += '<div class="smart-config-row">';
+        html += '<span class="smart-config-label">Model Ceiling:</span>';
+        html += '<select onchange="App.saveModelRoutingConfig({smartConfig:{maxModel:this.value}})">';
+        ['haiku', 'sonnet', 'opus'].forEach(function(m) {
+          html += '<option value="' + m + '"' + ((sc.maxModel || 'opus') === m ? ' selected' : '') + '>' + MODEL_DISPLAY[m] + '</option>';
+        });
+        html += '</select></div>';
+
+        // Agent overrides
+        html += '<h4>Agent Overrides</h4>';
+        html += '<table class="override-table">';
+        var ao = sc.agentOverrides || {};
+        Object.keys(ao).forEach(function(agentId) {
+          var agentObj = agents.find(function(a) { return a.id === agentId; });
+          var agentName = agentObj ? agentObj.name : agentId;
+          html += '<tr><td>' + escHtml(agentName) + '</td><td>';
+          html += '<select onchange="App.updateSmartAgentOverride(\'' + agentId + '\',this.value)">';
+          ['haiku', 'sonnet', 'opus'].forEach(function(m) {
+            html += '<option value="' + m + '"' + (ao[agentId] === m ? ' selected' : '') + '>' + MODEL_DISPLAY[m] + '</option>';
+          });
+          html += '</select></td>';
+          html += '<td><button class="override-remove-btn" onclick="App.removeSmartAgentOverride(\'' + agentId + '\')">&times; Remove</button></td></tr>';
+        });
+        html += '</table>';
+        // Add override button
+        var availableAgents = agents.filter(function(a) { return !ao[a.id] && !a.isOrchestrator; });
+        if (availableAgents.length > 0) {
+          html += '<button class="override-add-btn" onclick="App.addSmartAgentOverride()">+ Add agent override</button>';
+        }
+
+        // Task type overrides
+        html += '<h4>Task Type Overrides</h4>';
+        html += '<table class="override-table">';
+        var tto = sc.taskTypeOverrides || {};
+        Object.keys(tto).forEach(function(tt) {
+          html += '<tr><td>' + escHtml(tt) + '</td><td>';
+          html += '<select onchange="App.updateSmartTaskTypeOverride(\'' + tt + '\',this.value)">';
+          ['haiku', 'sonnet', 'opus'].forEach(function(m) {
+            html += '<option value="' + m + '"' + (tto[tt] === m ? ' selected' : '') + '>' + MODEL_DISPLAY[m] + '</option>';
+          });
+          html += '</select></td>';
+          html += '<td><button class="override-remove-btn" onclick="App.removeSmartTaskTypeOverride(\'' + tt + '\')">&times; Remove</button></td></tr>';
+        });
+        html += '</table>';
+        var usedTypes = Object.keys(tto);
+        var availableTypes = TASK_TYPES.filter(function(t) { return usedTypes.indexOf(t) === -1; });
+        if (availableTypes.length > 0) {
+          html += '<button class="override-add-btn" onclick="App.addSmartTaskTypeOverride()">+ Add type override</button>';
+        }
+
+        html += '<br><button class="smart-reset-btn" onclick="App.resetSmartConfig()">Reset to defaults</button>';
+        html += '</div>';
+      }
+
+      container.innerHTML = html;
+
+      // Load presets for manual mode
+      if (config.mode === 'manual') {
+        loadPresetButtons();
+      }
+    } catch(e) {
+      container.innerHTML = '<p style="color:var(--text-muted)">Failed to load model routing settings.</p>';
+      console.error('Model routing load error:', e);
+    }
+  }
+
+  async function loadPresetButtons() {
+    var container = document.getElementById('preset-buttons');
+    if (!container) return;
+    try {
+      var data = await api.get('/api/settings/model-routing/presets');
+      var html = '';
+      (data.presets || []).forEach(function(p) {
+        html += '<button class="preset-btn" onclick="App.applyModelPreset(\'' + p.name + '\')">';
+        html += '<span class="preset-name">' + p.name.charAt(0).toUpperCase() + p.name.slice(1) + '</span>';
+        html += '<span class="preset-savings">' + escHtml(p.savings) + ' savings</span>';
+        html += '</button>';
+      });
+      container.innerHTML = html;
+    } catch(e) { console.error('Failed to load presets:', e); }
+  }
+
+  async function saveModelRoutingMode(mode) {
+    try {
+      await api.put('/api/settings/model-routing', { mode: mode });
+      toast('Model routing mode updated');
+      renderModelRoutingSettings();
+    } catch(e) { toast('Failed to update mode', 'error'); }
+  }
+
+  async function applyModelPreset(name) {
+    try {
+      await api.post('/api/settings/model-routing/presets/' + name, {});
+      toast('Preset "' + name + '" applied');
+      renderModelRoutingSettings();
+    } catch(e) { toast('Failed to apply preset', 'error'); }
+  }
+
+  async function saveModelRoutingConfig(updates) {
+    try {
+      await api.put('/api/settings/model-routing', updates);
+      toast('Settings saved');
+      renderModelRoutingSettings();
+    } catch(e) { toast(e.message || 'Failed to save', 'error'); }
+  }
+
+  async function addSmartAgentOverride() {
+    try {
+      var agentsData = await api.get('/api/agents');
+      var config = await api.get('/api/settings/model-routing');
+      var ao = (config.smartConfig && config.smartConfig.agentOverrides) || {};
+      var available = (agentsData.agents || []).filter(function(a) { return !ao[a.id] && !a.isOrchestrator; });
+      if (available.length === 0) { toast('All agents have overrides'); return; }
+      var agent = available[0];
+      ao[agent.id] = 'sonnet';
+      await api.put('/api/settings/model-routing', { smartConfig: { agentOverrides: ao } });
+      renderModelRoutingSettings();
+    } catch(e) { toast('Failed to add override', 'error'); }
+  }
+
+  async function removeSmartAgentOverride(agentId) {
+    try {
+      var config = await api.get('/api/settings/model-routing');
+      var ao = (config.smartConfig && config.smartConfig.agentOverrides) || {};
+      delete ao[agentId];
+      await api.put('/api/settings/model-routing', { smartConfig: { agentOverrides: ao } });
+      renderModelRoutingSettings();
+    } catch(e) { toast('Failed to remove override', 'error'); }
+  }
+
+  async function updateSmartAgentOverride(agentId, model) {
+    try {
+      var config = await api.get('/api/settings/model-routing');
+      var ao = (config.smartConfig && config.smartConfig.agentOverrides) || {};
+      ao[agentId] = model;
+      await api.put('/api/settings/model-routing', { smartConfig: { agentOverrides: ao } });
+      toast('Override updated');
+    } catch(e) { toast('Failed to update', 'error'); }
+  }
+
+  async function addSmartTaskTypeOverride() {
+    try {
+      var config = await api.get('/api/settings/model-routing');
+      var tto = (config.smartConfig && config.smartConfig.taskTypeOverrides) || {};
+      var usedTypes = Object.keys(tto);
+      var available = TASK_TYPES.filter(function(t) { return usedTypes.indexOf(t) === -1; });
+      if (available.length === 0) { toast('All task types have overrides'); return; }
+      tto[available[0]] = 'sonnet';
+      await api.put('/api/settings/model-routing', { smartConfig: { taskTypeOverrides: tto } });
+      renderModelRoutingSettings();
+    } catch(e) { toast('Failed to add override', 'error'); }
+  }
+
+  async function removeSmartTaskTypeOverride(taskType) {
+    try {
+      var config = await api.get('/api/settings/model-routing');
+      var tto = (config.smartConfig && config.smartConfig.taskTypeOverrides) || {};
+      delete tto[taskType];
+      await api.put('/api/settings/model-routing', { smartConfig: { taskTypeOverrides: tto } });
+      renderModelRoutingSettings();
+    } catch(e) { toast('Failed to remove override', 'error'); }
+  }
+
+  async function updateSmartTaskTypeOverride(taskType, model) {
+    try {
+      var config = await api.get('/api/settings/model-routing');
+      var tto = (config.smartConfig && config.smartConfig.taskTypeOverrides) || {};
+      tto[taskType] = model;
+      await api.put('/api/settings/model-routing', { smartConfig: { taskTypeOverrides: tto } });
+      toast('Override updated');
+    } catch(e) { toast('Failed to update', 'error'); }
+  }
+
+  async function resetSmartConfig() {
+    if (!confirm('Reset Smart routing to defaults?')) return;
+    try {
+      await api.put('/api/settings/model-routing', {
+        smartConfig: {
+          agentOverrides: {},
+          taskTypeOverrides: {},
+          showRoutingDecision: true,
+          minModel: 'haiku',
+          maxModel: 'opus'
+        }
+      });
+      toast('Smart config reset');
+      renderModelRoutingSettings();
+    } catch(e) { toast('Failed to reset', 'error'); }
+  }
+
+  async function saveAgentModel() {
+    var model = document.getElementById('agent-model-select').value || null;
+    try {
+      var update = { agentModels: {} };
+      update.agentModels[state.currentAgentId] = model;
+      await api.put('/api/settings/model-routing', update);
+      toast('Model updated');
+      // Refresh info text
+      var config = await api.get('/api/settings/model-routing');
+      state.modelRouting = config;
+      updateAgentModelInfo(config);
+    } catch(e) { toast('Failed to update model', 'error'); }
+  }
+
+  function updateAgentModelInfo(config) {
+    var infoEl = document.getElementById('agent-model-info');
+    var barEl = document.getElementById('agent-model-bar');
+    if (!infoEl || !barEl) return;
+    var mode = config.mode || 'default';
+    if (mode === 'default') {
+      infoEl.textContent = 'Model routing is set to Default. This setting takes effect in Manual/Smart mode.';
+      barEl.classList.add('dimmed');
+    } else if (mode === 'manual') {
+      infoEl.textContent = 'This model will be used for all tasks assigned to this agent.';
+      barEl.classList.remove('dimmed');
+    } else {
+      infoEl.textContent = 'This setting is registered as a Smart mode override.';
+      barEl.classList.remove('dimmed');
+    }
+  }
+
   window.App = {
     navigate: navigate,
     wizardNext: wizardNext,
@@ -6798,6 +7598,13 @@
     openMediaPreview: openMediaPreview,
     closeMediaPreview: closeMediaPreview,
     openMediaFolder: openMediaFolder,
+    saveMediaMeta: saveMediaMeta,
+    openAddToKb: openAddToKb,
+    closeAddToKb: closeAddToKb,
+    submitAddToKb: submitAddToKb,
+    openAddToMedia: openAddToMedia,
+    closeAddToMedia: closeAddToMedia,
+    submitAddToMedia: submitAddToMedia,
     saveProfile: saveProfile,
     saveRules: saveRules,
     rebuildContext: rebuildContext,
@@ -6878,6 +7685,11 @@
     deleteAutopilot: deleteAutopilot,
     pauseAllAutopilot: pauseAllAutopilot,
     resumeAllAutopilot: resumeAllAutopilot,
+    setSchedType: setSchedType,
+    pauseSchedule: pauseSchedule,
+    resumeSchedule: resumeSchedule,
+    removeSchedule: removeSchedule,
+    editScheduledAt: editScheduledAt,
     selectHelpTopic: selectHelpTopic,
     navigateTask: navigateTask,
     toggleTaskAutopilot: toggleTaskAutopilot,
@@ -6902,6 +7714,19 @@
     clearAllNotifications: clearAllNotifications,
     dismissNotification: dismissNotification,
     saveNotifPrefs: saveNotifPrefs,
+    renderModelRoutingSettings: renderModelRoutingSettings,
+    saveModelRoutingMode: saveModelRoutingMode,
+    applyModelPreset: applyModelPreset,
+    saveModelRoutingConfig: saveModelRoutingConfig,
+    addSmartAgentOverride: addSmartAgentOverride,
+    removeSmartAgentOverride: removeSmartAgentOverride,
+    updateSmartAgentOverride: updateSmartAgentOverride,
+    addSmartTaskTypeOverride: addSmartTaskTypeOverride,
+    removeSmartTaskTypeOverride: removeSmartTaskTypeOverride,
+    updateSmartTaskTypeOverride: updateSmartTaskTypeOverride,
+    resetSmartConfig: resetSmartConfig,
+    saveAgentModel: saveAgentModel,
+    loadAgentDetail: loadAgentDetail,
   };
 
   init();

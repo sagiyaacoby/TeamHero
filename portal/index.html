@@ -291,7 +291,7 @@
         </div>
       </header>
       <div class="panel">
-        <h3>Recurring Autopilot</h3>
+        <h3>Recurring Tasks</h3>
         <div id="autopilot-list"></div>
         <div id="autopilot-form" class="hidden">
           <div class="form-grid" style="margin-top:12px">
@@ -311,21 +311,36 @@
               </div>
               <input type="hidden" id="ap-agent">
             </div>
-            <div class="form-group">
-              <label>Interval</label>
-              <input type="number" id="ap-interval" min="1" value="1">
-            </div>
-            <div class="form-group">
-              <label>Unit</label>
-              <div class="custom-select" id="ap-unit-select" data-target="ap-interval-unit">
-                <div class="custom-select-trigger">Hours</div>
-                <div class="custom-select-dropdown">
-                  <div class="custom-select-option" data-value="minutes">Minutes</div>
-                  <div class="custom-select-option selected" data-value="hours">Hours</div>
-                  <div class="custom-select-option" data-value="days">Days</div>
-                </div>
+            <div class="form-group full-width">
+              <label>Schedule Type</label>
+              <div class="schedule-type-selector">
+                <button type="button" class="sched-type-btn active" id="sched-type-recurring" onclick="App.setSchedType('recurring')">Run on interval</button>
+                <button type="button" class="sched-type-btn" id="sched-type-onetime" onclick="App.setSchedType('onetime')">Run at specific time</button>
               </div>
-              <input type="hidden" id="ap-interval-unit" value="hours">
+            </div>
+            <div id="ap-interval-fields">
+              <div class="form-group" style="display:inline-block;width:45%">
+                <label>Interval</label>
+                <input type="number" id="ap-interval" min="1" value="1">
+              </div>
+              <div class="form-group" style="display:inline-block;width:45%;margin-left:8px">
+                <label>Unit</label>
+                <div class="custom-select" id="ap-unit-select" data-target="ap-interval-unit">
+                  <div class="custom-select-trigger">Hours</div>
+                  <div class="custom-select-dropdown">
+                    <div class="custom-select-option" data-value="minutes">Minutes</div>
+                    <div class="custom-select-option selected" data-value="hours">Hours</div>
+                    <div class="custom-select-option" data-value="days">Days</div>
+                  </div>
+                </div>
+                <input type="hidden" id="ap-interval-unit" value="hours">
+              </div>
+            </div>
+            <div id="ap-scheduled-fields" class="ap-scheduled-fields hidden">
+              <div class="form-group full-width">
+                <label>Scheduled At</label>
+                <input type="datetime-local" id="ap-scheduled-at" style="width:100%;padding:8px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:inherit">
+              </div>
             </div>
           </div>
           <div class="form-actions">
@@ -335,8 +350,7 @@
         </div>
       </div>
       <div class="panel">
-        <h3>One-time Autopilot</h3>
-        <div id="autopilot-tasks" class="task-list"><div class="empty-state">No one-time autopilot tasks</div></div>
+        <div id="autopilot-tasks" class="task-list"><div class="empty-state">No scheduled or autopilot tasks</div></div>
       </div>
     </section>
 
@@ -373,6 +387,16 @@
       <div class="agent-status-bar">
         <span class="badge badge-active" id="agent-detail-status">Active</span>
         <span class="agent-role" id="agent-detail-role">Role</span>
+      </div>
+      <div class="agent-model-bar" id="agent-model-bar" style="display:none">
+        <span class="agent-model-label">Preferred Model:</span>
+        <select id="agent-model-select" onchange="App.saveAgentModel()">
+          <option value="">System Default</option>
+          <option value="opus">Opus 4.6</option>
+          <option value="sonnet">Sonnet 4.6</option>
+          <option value="haiku">Haiku 4.5</option>
+        </select>
+        <span class="agent-model-info" id="agent-model-info"></span>
       </div>
       <div class="agent-tabs">
         <button class="tab-btn active" data-tab="tasks" onclick="App.switchAgentTab('tasks')">Tasks</button>
@@ -467,6 +491,7 @@
         <span class="badge" id="task-detail-priority">Priority</span>
         <span class="badge badge-type" id="task-detail-type" style="display:none">general</span>
         <span id="task-detail-agent"></span>
+        <span id="task-detail-model-info" class="task-model-info" style="display:none"></span>
         <span id="task-detail-date"></span>
         <span id="task-detail-tags"></span>
       </div>
@@ -598,6 +623,9 @@
           <div class="settings-sidebar-item" data-section="privacy" onclick="App.switchSettingsSection('privacy')">
             <span class="settings-icon">&#9737;</span> Privacy
           </div>
+          <div class="settings-sidebar-item" data-section="model-routing" onclick="App.switchSettingsSection('model-routing')">
+            <span class="settings-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg></span> Model Routing
+          </div>
           <div class="settings-sidebar-section">Vault</div>
           <div class="settings-sidebar-item" data-section="api-keys" onclick="App.switchSettingsSection('api-keys')">
             <span class="settings-icon">&#10038;</span> API Keys & Secrets
@@ -695,6 +723,13 @@
                 <p style="margin:0;font-size:13px;line-height:1.7;color:var(--text-muted);">TeamHero runs entirely on your machine. No data is collected or transmitted to us. All agent data, tasks, credentials, and knowledge stay local. AI interactions go directly to your configured AI provider (e.g. Anthropic) under your own account and subscription.</p>
               </div>
             </div>
+          </div>
+
+          <!-- Model Routing -->
+          <div class="settings-section" id="settings-sec-model-routing">
+            <div class="settings-section-title">Model Routing</div>
+            <div class="settings-section-desc">Choose how the platform selects AI models for agents. Optimize for cost, quality, or let the system decide.</div>
+            <div id="model-routing-content"></div>
           </div>
 
           <!-- API Keys & Secrets -->
@@ -1219,6 +1254,61 @@ SOFTWARE.</pre>
       <div class="form-actions">
         <button class="btn btn-secondary" onclick="App.closeAddTask()">Cancel</button>
         <button class="btn btn-primary" onclick="App.submitAddTask()">Create Task</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add to KB Modal -->
+  <div id="add-kb-modal" class="modal-overlay hidden" onclick="if(event.target===this)App.closeAddToKb()">
+    <div class="modal-box" style="max-width:420px">
+      <h3>Add to Knowledge Base</h3>
+      <div class="form-group">
+        <label>Title</label>
+        <input type="text" id="add-kb-title" placeholder="Document title">
+      </div>
+      <div class="form-group">
+        <label>Category</label>
+        <select id="add-kb-category" class="input">
+          <option value="research">Research</option>
+          <option value="analysis">Analysis</option>
+          <option value="reference" selected>Reference</option>
+          <option value="guide">Guide</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Tags (comma-separated)</label>
+        <input type="text" id="add-kb-tags" placeholder="tag1, tag2">
+      </div>
+      <div class="form-group">
+        <label>Summary (optional)</label>
+        <input type="text" id="add-kb-summary" placeholder="Brief summary">
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-secondary" onclick="App.closeAddToKb()">Cancel</button>
+        <button class="btn btn-primary" onclick="App.submitAddToKb()">Add to KB</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add to Media Modal -->
+  <div id="add-media-modal" class="modal-overlay hidden" onclick="if(event.target===this)App.closeAddToMedia()">
+    <div class="modal-box" style="max-width:420px">
+      <h3>Add to Media Library</h3>
+      <div id="add-media-preview" style="text-align:center;margin-bottom:12px"></div>
+      <div class="form-group">
+        <label>Folder</label>
+        <select id="add-media-folder" class="input">
+          <option value="social-images">social-images</option>
+          <option value="deliverables">deliverables</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Filename</label>
+        <input type="text" id="add-media-filename" placeholder="filename.png">
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-secondary" onclick="App.closeAddToMedia()">Cancel</button>
+        <button class="btn btn-primary" onclick="App.submitAddToMedia()">Add to Media</button>
       </div>
     </div>
   </div>

@@ -1605,6 +1605,17 @@ async function handle(pn, m, req, res) {
     if (!ex.progressLog) ex.progressLog = [];
     ex.progressLog.push(entry);
     ex.updatedAt = new Date().toISOString();
+    ex.lastActivity = new Date().toISOString();
+    // Clear interrupted flag on new activity
+    if (ex.interrupted) {
+      ex.interrupted = false;
+      ex.interruptedAt = null;
+      // Update index entry
+      var ixp = path.join(ROOT, 'data/tasks/_index.json');
+      var ix = readJSON(ixp) || { tasks: [] };
+      var ii = ix.tasks.findIndex(function(x) { return x.id === taskId; });
+      if (ii >= 0) { ix.tasks[ii].interrupted = false; writeJSON(ixp, ix); }
+    }
     writeJSON(tp, ex);
     broadcast('tasks');
     return J(res, entry, 201);
@@ -1920,11 +1931,25 @@ async function handle(pn, m, req, res) {
       if (!actionResult.agentHistory) actionResult.agentHistory = [];
       actionResult.agentHistory.push({ agentId: actionResult.assignedTo || null, stage: actionResult.status, at: now });
 
+      // Update lastActivity and clear interrupted on action
+      actionResult.lastActivity = now;
+      actionResult.interrupted = false;
+      actionResult.interruptedAt = null;
+
+      // Clear blocker when task moves to terminal/done status
+      if (actionResult.status === 'done' || actionResult.status === 'closed' || actionResult.status === 'cancelled') {
+        if (actionResult.blocker) {
+          if (!actionResult.progressLog) actionResult.progressLog = [];
+          actionResult.progressLog.push({ message: 'BLOCKER RESOLVED (auto-cleared on ' + actionResult.status + ')', agentId: actionResult.assignedTo || null, timestamp: now });
+          actionResult.blocker = null;
+        }
+      }
+
       writeJSON(tp, actionResult);
       var aip = path.join(ROOT, 'data/tasks/_index.json');
       var aix = readJSON(aip) || { tasks: [] };
       var ai = aix.tasks.findIndex(function(x) { return x.id === id; });
-      if (ai >= 0) aix.tasks[ai] = { id: id, title: actionResult.title, status: actionResult.status, assignedTo: actionResult.assignedTo, priority: actionResult.priority, type: actionResult.type || 'general', autopilot: actionResult.autopilot || false, parentTaskId: actionResult.parentTaskId || null, blocker: actionResult.blocker || null, depsPending: actionResult.depsPending || false };
+      if (ai >= 0) aix.tasks[ai] = { id: id, title: actionResult.title, status: actionResult.status, assignedTo: actionResult.assignedTo, priority: actionResult.priority, type: actionResult.type || 'general', autopilot: actionResult.autopilot || false, parentTaskId: actionResult.parentTaskId || null, blocker: actionResult.blocker || null, depsPending: actionResult.depsPending || false, interrupted: false };
       writeJSON(aip, aix);
 
       // Auto-advance parent task when all subtasks are done/closed (recursive for deep nesting)
@@ -1939,8 +1964,8 @@ async function handle(pn, m, req, res) {
             return sub && (sub.status === 'closed' || sub.status === 'done');
           });
           if (allDone && (parentTask2.status === 'working' || parentTask2.status === 'planning' || parentTask2.status === 'pending_approval')) {
-            // Autopilot parent: auto-advance to done; non-autopilot: pending_approval
-            var newStatus = parentTask2.autopilot ? 'done' : 'pending_approval';
+            // Unassigned parent (container): auto-advance to done; assigned parent: pending_approval
+            var newStatus = (!parentTask2.assignedTo || parentTask2.autopilot) ? 'done' : 'pending_approval';
             parentTask2.status = newStatus;
             parentTask2.updatedAt = now;
             if (!parentTask2.progressLog) parentTask2.progressLog = [];
@@ -2034,6 +2059,22 @@ async function handle(pn, m, req, res) {
     // Default: merge update
     var merged = Object.assign({}, ex, b, { id: id, updatedAt: now });
 
+    // Update lastActivity on status change or version update
+    if (b.status || b.version) {
+      merged.lastActivity = now;
+    }
+
+    // Clear interrupted flag on status change or explicit clear
+    if (b.status && b.status !== ex.status) {
+      merged.interrupted = false;
+      merged.interruptedAt = null;
+    }
+    if (b.interrupted === null || b.interrupted === false) {
+      merged.interrupted = false;
+      merged.interruptedAt = null;
+      merged.lastActivity = now;
+    }
+
     // Enforce: timed tasks are always autopilot
     if (merged.interval && merged.intervalUnit) merged.autopilot = true;
     if (merged.scheduledAt) merged.autopilot = true;
@@ -2073,11 +2114,18 @@ async function handle(pn, m, req, res) {
       }
     }
 
+    // Auto-clear blocker when status changes to done/closed/cancelled via direct PUT
+    if (b.status && (b.status === 'done' || b.status === 'closed' || b.status === 'cancelled') && merged.blocker) {
+      if (!merged.progressLog) merged.progressLog = [];
+      merged.progressLog.push({ message: 'BLOCKER RESOLVED (auto-cleared on ' + b.status + ')', agentId: b.agentId || merged.assignedTo || null, timestamp: now });
+      merged.blocker = null;
+    }
+
     writeJSON(tp, merged);
     var mip = path.join(ROOT, 'data/tasks/_index.json');
     var mix = readJSON(mip) || { tasks: [] };
     var mi = mix.tasks.findIndex(function(x) { return x.id === id; });
-    if (mi >= 0) mix.tasks[mi] = { id: id, title: merged.title, status: merged.status, assignedTo: merged.assignedTo, priority: merged.priority, type: merged.type || 'general', autopilot: merged.autopilot || false, parentTaskId: merged.parentTaskId || null, blocker: merged.blocker || null, interval: merged.interval || null, intervalUnit: merged.intervalUnit || null, scheduledAt: merged.scheduledAt || null, depsPending: merged.depsPending || false };
+    if (mi >= 0) mix.tasks[mi] = { id: id, title: merged.title, status: merged.status, assignedTo: merged.assignedTo, priority: merged.priority, type: merged.type || 'general', autopilot: merged.autopilot || false, parentTaskId: merged.parentTaskId || null, blocker: merged.blocker || null, interval: merged.interval || null, intervalUnit: merged.intervalUnit || null, scheduledAt: merged.scheduledAt || null, depsPending: merged.depsPending || false, interrupted: merged.interrupted || false };
     writeJSON(mip, mix);
 
     // Auto-advance parent task when all subtasks are done/closed (for direct status updates)
@@ -2094,7 +2142,7 @@ async function handle(pn, m, req, res) {
           return sub && (sub.status === 'closed' || sub.status === 'done');
         });
         if (allSubsDone) {
-          var newParentStatus = parentTask3.autopilot ? 'done' : 'pending_approval';
+          var newParentStatus = (!parentTask3.assignedTo || parentTask3.autopilot) ? 'done' : 'pending_approval';
           parentTask3.status = newParentStatus;
           parentTask3.updatedAt = now;
           if (!parentTask3.progressLog) parentTask3.progressLog = [];
@@ -2857,6 +2905,52 @@ async function handle(pn, m, req, res) {
     return J(res, recResult, recResult.error ? 500 : 200);
   }
 
+  // CLAUDE CONNECTION (combined status)
+  if (pn === "/api/claude/connection" && m === "GET") {
+    return new Promise(function(resolve) {
+      var sys = readJSON(path.join(ROOT, 'config/system.json'));
+      var method = sys.claudeConnection || null;
+      var hasApiKey = false;
+      try {
+        if (secretsCache && secretsCache['ANTHROPIC_API_KEY']) hasApiKey = true;
+      } catch(e) {}
+      var cli = { installed: false, version: null, path: null };
+      try {
+        var claudePath = execSync(process.platform === 'win32' ? 'where claude' : 'which claude', { encoding: 'utf8', timeout: 5000 }).trim().split('\n')[0].trim();
+        cli.installed = true;
+        cli.path = claudePath;
+        var proc = spawn("claude", ["--version"], { shell: true, timeout: 10000 });
+        var verOut = "";
+        proc.stdout.on("data", function(ch) { verOut += ch; });
+        proc.stderr.on("data", function(ch) { verOut += ch; });
+        proc.on("close", function() {
+          if (verOut.trim()) cli.version = verOut.trim();
+          J(res, { method: method, cli: cli, hasApiKey: hasApiKey });
+          resolve();
+        });
+        proc.on("error", function() {
+          J(res, { method: method, cli: cli, hasApiKey: hasApiKey });
+          resolve();
+        });
+      } catch(e) {
+        J(res, { method: method, cli: cli, hasApiKey: hasApiKey });
+        resolve();
+      }
+    });
+  }
+
+  // PUT /api/claude/connection - update connection method
+  if (pn === "/api/claude/connection" && m === "PUT") {
+    var b = await parseBody(req);
+    var sys = readJSON(path.join(ROOT, 'config/system.json'));
+    if (b.method === null || b.method === 'cli' || b.method === 'api') {
+      sys.claudeConnection = b.method;
+      writeJSON(path.join(ROOT, 'config/system.json'), sys);
+      return J(res, { ok: true, method: b.method });
+    }
+    return E(res, 'Invalid method. Use "cli", "api", or null.');
+  }
+
   // CLAUDE CLI STATUS
   if (pn === "/api/claude/status" && m === "GET") {
     return new Promise(function(resolve) {
@@ -3416,6 +3510,87 @@ function runScheduler() {
     changed = true;
 
     sendTaskToTerminal(task, taskPath, entry);
+  });
+
+  // Stale planning detection: mark planning tasks with no progress after 60s
+  index.tasks.forEach(function(entry) {
+    if (entry.status !== 'planning') return;
+
+    var taskPath = path.join(ROOT, 'data/tasks', entry.id, 'task.json');
+    var task = readJSON(taskPath);
+    if (!task) return;
+
+    var ageMs = now - new Date(task.updatedAt);
+    var hasProgress = task.progressLog && task.progressLog.length > 0;
+    var shouldBeStale = !hasProgress && ageMs > 60000;
+    var isAlreadyStale = !!task.stalePlanning;
+
+    if (shouldBeStale && !isAlreadyStale) {
+      task.stalePlanning = true;
+      task.updatedAt = now.toISOString();
+      writeJSON(taskPath, task);
+      entry.stalePlanning = true;
+      changed = true;
+    } else if (!shouldBeStale && isAlreadyStale) {
+      // Clear the flag once the task has progress (agent has picked it up)
+      task.stalePlanning = false;
+      task.updatedAt = now.toISOString();
+      writeJSON(taskPath, task);
+      entry.stalePlanning = false;
+      changed = true;
+    }
+  });
+
+  // Interrupted task detection: flag working/planning tasks with no activity for 15 minutes
+  var STALE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+  index.tasks.forEach(function(entry) {
+    if (entry.status !== 'working' && entry.status !== 'planning') return;
+
+    var taskPath = path.join(ROOT, 'data/tasks', entry.id, 'task.json');
+    var task = readJSON(taskPath);
+    if (!task) return;
+
+    // Use lastActivity if available, otherwise fall back to updatedAt
+    var lastActiveTime = task.lastActivity || task.updatedAt;
+    var inactiveMs = now - new Date(lastActiveTime);
+    var shouldBeInterrupted = inactiveMs > STALE_TIMEOUT_MS;
+    var isAlreadyInterrupted = !!task.interrupted;
+
+    if (shouldBeInterrupted && !isAlreadyInterrupted) {
+      task.interrupted = true;
+      task.interruptedAt = now.toISOString();
+      if (!task.progressLog) task.progressLog = [];
+      task.progressLog.push({ message: 'Auto-detected: agent session lost after 15min inactivity', agentId: null, timestamp: now.toISOString() });
+      task.updatedAt = now.toISOString();
+      writeJSON(taskPath, task);
+      entry.interrupted = true;
+      changed = true;
+
+      // Push SSE notification
+      var intAgentName = entry.assignedTo || '';
+      try {
+        var intReg = readJSON(path.join(ROOT, 'agents/_registry.json'));
+        if (intReg && intReg.agents) {
+          var intAg = intReg.agents.find(function(a) { return a.id === entry.assignedTo; });
+          if (intAg) intAgentName = intAg.name;
+        }
+      } catch(e) {}
+      broadcastEvent('task.interrupted', { taskId: entry.id, title: task.title, agentName: intAgentName });
+
+      // Add notification
+      var notifFilePath2 = path.join(ROOT, 'data/notifications.json');
+      var notifs2 = readJSON(notifFilePath2) || [];
+      notifs2.unshift({
+        id: 'notif-' + genId(),
+        type: 'interrupted',
+        taskId: entry.id,
+        title: 'Agent ' + (intAgentName || 'unknown') + ' appears disconnected. Task "' + task.title + '" is stalled.',
+        timestamp: now.toISOString(),
+        read: false
+      });
+      if (notifs2.length > 100) notifs2 = notifs2.slice(0, 100);
+      writeJSON(notifFilePath2, notifs2);
+    }
   });
 
   if (changed) {

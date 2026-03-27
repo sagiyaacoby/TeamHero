@@ -371,6 +371,15 @@
         <span>Ctrl+V paste text</span>
         <span>Ctrl+C copy selected</span>
         <span>Ctrl+G open editor</span>
+        <button class="mic-terminal-btn" id="mic-terminal-btn" onclick="App.toggleMicrophone()" title="Toggle microphone">
+          <svg width="11" height="14" viewBox="0 0 11 14" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">
+            <rect x="3" y="0" width="5" height="8" rx="2.5" fill="currentColor"/>
+            <path d="M1 6.5C1 9.261 3.015 11.5 5.5 11.5C7.985 11.5 10 9.261 10 6.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+            <line x1="5.5" y1="11.5" x2="5.5" y2="13.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+            <line x1="3.5" y1="13.5" x2="7.5" y2="13.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          </svg>
+          Mic
+        </button>
         <button class="focus-terminal-btn" onclick="App.focusTerminal()" title="Focus terminal input">&#9660; Focus</button>
       </div>
     </section>
@@ -932,22 +941,52 @@
           <!-- Claude Account -->
           <div class="settings-section" id="settings-sec-claude-account">
             <div class="settings-section-title">Claude Account</div>
-            <div class="settings-section-desc">Claude CLI powers the Command Center. Check your CLI installation and connection status.</div>
-            <div class="settings-group">
-              <div class="setting-item">
-                <span class="setting-label">CLI Status</span>
-                <span id="claude-installed" class="badge badge-inactive">Checking...</span>
-              </div>
-              <div class="setting-item">
-                <span class="setting-label">Version</span>
-                <span id="claude-version">-</span>
-              </div>
-              <div class="setting-item">
-                <span class="setting-label">Connection</span>
-                <div style="display:flex;gap:8px;align-items:center;">
-                  <button class="btn btn-secondary" onclick="App.checkClaudeStatus()" style="font-size:12px;padding:4px 12px;">Check Status</button>
+            <div class="settings-section-desc">Manage your Claude AI connection. This powers the Command Center.</div>
+
+            <!-- Connection Status -->
+            <div id="claude-conn-status" class="claude-conn-status claude-conn-disconnected">
+              <div class="claude-conn-status-left">
+                <span id="claude-conn-dot" class="claude-conn-dot"></span>
+                <div>
+                  <div id="claude-conn-label" style="font-weight:500">Not Connected</div>
+                  <div id="claude-conn-detail" style="font-size:12px;color:var(--text-muted)">No Claude connection configured</div>
                 </div>
               </div>
+              <button class="btn btn-secondary" onclick="App.refreshClaudeStatus()" style="font-size:12px;padding:4px 12px;">Refresh Status</button>
+            </div>
+
+            <!-- Connection Method Cards -->
+            <div style="font-size:13px;font-weight:600;color:var(--text-muted);margin:20px 0 10px;text-transform:uppercase;letter-spacing:0.5px;">Connection Method</div>
+            <div class="claude-method-cards">
+              <!-- Account (CLI) Card -->
+              <div id="claude-cli-card" class="claude-method-card" onclick="App.switchClaudeMethod('cli')">
+                <div class="claude-method-card-header">
+                  <span class="claude-method-card-title">Account (CLI)</span>
+                </div>
+                <p style="font-size:12px;color:var(--text-muted);margin:8px 0">Uses your Claude Pro or Max subscription. Fixed monthly cost.</p>
+                <div id="claude-cli-path" style="font-size:11px;color:var(--text-dim);margin-bottom:8px"></div>
+                <button class="btn btn-secondary" onclick="event.stopPropagation();App.verifyClaudeCli()" style="font-size:11px;padding:3px 10px;">Verify Connection</button>
+                <div id="claude-cli-verify-status" style="font-size:11px;margin-top:4px"></div>
+              </div>
+
+              <!-- API Token Card -->
+              <div id="claude-api-card" class="claude-method-card" onclick="App.switchClaudeMethod('api')">
+                <div class="claude-method-card-header">
+                  <span class="claude-method-card-title">API Token</span>
+                </div>
+                <p style="font-size:12px;color:var(--text-muted);margin:8px 0">Pay per use via Anthropic API console.</p>
+                <div id="claude-api-key-row" style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
+                  <input type="password" id="claude-api-key-input" class="claude-masked-key" placeholder="sk-ant-..." autocomplete="off" onclick="event.stopPropagation()">
+                  <button class="btn btn-secondary" onclick="event.stopPropagation();App.updateClaudeApiKey()" style="font-size:11px;padding:3px 10px;">Update</button>
+                </div>
+                <a href="https://console.anthropic.com" target="_blank" style="font-size:11px;color:var(--accent)" onclick="event.stopPropagation()">console.anthropic.com</a>
+              </div>
+            </div>
+
+            <!-- Actions -->
+            <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+              <button class="btn claude-disconnect-btn" onclick="App.disconnectClaude()">Disconnect</button>
+              <span style="font-size:12px;color:var(--text-muted);margin-left:8px">Remove current Claude connection</span>
             </div>
           </div>
 
@@ -1389,11 +1428,6 @@ SOFTWARE.</pre>
     <button class="banner-dismiss" onclick="App.dismissUpgradeBanner()">&times;</button>
   </div>
 
-  <!-- Voice Input (fixed position) -->
-  <div id="voice-input-container" class="voice-input-container" style="display:none">
-    <span id="voice-transcript-preview" class="voice-transcript-preview"></span>
-    <button id="voice-input-btn" class="voice-input-btn" onclick="App.toggleVoiceInput()" title="Voice input (Speech-to-Text)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
-  </div>
 
   <!-- Remote Control Modal -->
   <div id="remote-control-modal" class="rc-modal-overlay hidden" onclick="if(event.target===this)App.closeRemoteControl()">

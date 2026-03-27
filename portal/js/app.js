@@ -315,11 +315,12 @@
   var NOTIF_SOUND_DEBOUNCE = 5000;
 
   function addNotification(type, data) {
-    var priorityMap = { 'task.pending_approval': 'high', 'task.blocker': 'high', 'task.done': 'medium', 'task.closed': 'low' };
-    var iconMap = { 'task.pending_approval': '\u2610', 'task.blocker': '\u26A0', 'task.done': '\u2714', 'task.closed': '\u2500' };
+    var priorityMap = { 'task.pending_approval': 'high', 'task.blocker': 'high', 'task.interrupted': 'high', 'task.done': 'medium', 'task.closed': 'low' };
+    var iconMap = { 'task.pending_approval': '\u2610', 'task.blocker': '\u26A0', 'task.done': '\u2714', 'task.closed': '\u2500', 'task.interrupted': '\u26A0' };
     var textMap = {
       'task.pending_approval': (data.agentName || 'Agent') + ' submitted "' + (data.title || 'task') + '" for review',
       'task.blocker': (data.agentName || 'Agent') + ' hit a blocker on "' + (data.title || 'task') + '"',
+      'task.interrupted': 'Agent ' + (data.agentName || 'unknown') + ' appears disconnected. Task "' + (data.title || 'task') + '" is stalled.',
       'task.done': (data.agentName || 'Agent') + ' completed "' + (data.title || 'task') + '"',
       'task.closed': '"' + (data.title || 'Task') + '" has been closed'
     };
@@ -370,8 +371,8 @@
       list.innerHTML = '<div class="notif-empty">No notifications</div>';
       return;
     }
-    var iconMap = { 'task.pending_approval': '\u2610', 'task.blocker': '\u26A0', 'task.done': '\u2714', 'task.closed': '\u2500' };
-    var statusColorMap = { 'task.blocker': 'notif-status-blocker', 'task.done': 'notif-status-done', 'task.pending_approval': 'notif-status-pending', 'task.closed': 'notif-status-closed' };
+    var iconMap = { 'task.pending_approval': '\u2610', 'task.blocker': '\u26A0', 'task.done': '\u2714', 'task.closed': '\u2500', 'task.interrupted': '\u26A0' };
+    var statusColorMap = { 'task.blocker': 'notif-status-blocker', 'task.done': 'notif-status-done', 'task.pending_approval': 'notif-status-pending', 'task.closed': 'notif-status-closed', 'task.interrupted': 'notif-status-interrupted' };
     var html = '';
     for (var i = 0; i < notifications.length; i++) {
       var n = notifications[i];
@@ -666,6 +667,33 @@
       // Update title
       var titleEl = document.getElementById('task-detail-title');
       if (titleEl) titleEl.textContent = task.title || 'Untitled';
+      // Update blocker banner - add or remove based on current blocker state
+      var sessionEl = document.getElementById('task-session');
+      if (sessionEl) {
+        var existingBanner = sessionEl.querySelector('.blocker-banner');
+        if (task.blocker && !existingBanner) {
+          // Blocker was set - insert banner at the top of the session container
+          var bannerHtml = '<div class="blocker-banner">' +
+            '<span class="blocker-banner-icon">&#9888;</span>' +
+            '<span class="blocker-banner-text"><strong>BLOCKER:</strong> ' + linkifyText(escHtml(task.blocker)) + '</span>' +
+            '</div>';
+          sessionEl.insertAdjacentHTML('afterbegin', bannerHtml);
+        } else if (!task.blocker && existingBanner) {
+          // Blocker was cleared - remove the banner
+          existingBanner.remove();
+        } else if (task.blocker && existingBanner) {
+          // Blocker text changed - update it
+          var textEl = existingBanner.querySelector('.blocker-banner-text');
+          if (textEl) textEl.innerHTML = '<strong>BLOCKER:</strong> ' + linkifyText(escHtml(task.blocker));
+        }
+      }
+      // Keep currentTask in sync for consistent subsequent renders
+      if (state.currentTask && state.currentTask.id === taskId) {
+        state.currentTask.blocker = task.blocker;
+        state.currentTask.status = task.status;
+        state.currentTask.priority = task.priority;
+        state.currentTask.title = task.title;
+      }
     } catch(e) {
       // Soft refresh failed - not critical, full refresh will happen when user finishes editing
     }
@@ -760,17 +788,19 @@
     var agentTaskMap = {};
     (state.tasks || []).forEach(function(t) {
       if (!t.assignedTo) return;
-      if (!workingStatuses[t.status] && t.status !== 'pending_approval' && !(t.blocker)) return;
+      if (!workingStatuses[t.status] && t.status !== 'pending_approval' && !(t.blocker && t.status !== 'done' && t.status !== 'closed' && t.status !== 'cancelled')) return;
       if (!agentTaskMap[t.assignedTo]) agentTaskMap[t.assignedTo] = [];
       agentTaskMap[t.assignedTo].push(t);
     });
-    // Determine dot state per agent: blocked > pending > active > no dot
+    // Determine dot state per agent: blocked > interrupted > pending > active > no dot
     Object.keys(agentTaskMap).forEach(function(agentId) {
       var tasks = agentTaskMap[agentId];
-      var anyBlocked = tasks.some(function(t) { return !!t.blocker && t.status !== 'cancelled' && t.status !== 'closed'; });
+      var anyBlocked = tasks.some(function(t) { return !!t.blocker && t.status !== 'cancelled' && t.status !== 'closed' && t.status !== 'done'; });
+      var anyInterrupted = tasks.some(function(t) { return !!t.interrupted && (t.status === 'working' || t.status === 'planning'); });
       var anyPending = tasks.some(function(t) { return t.status === 'pending_approval'; });
       var anyActive = tasks.some(function(t) { return !!workingStatuses[t.status]; });
       if (anyBlocked) agentDotState[agentId] = 'blocked';
+      else if (anyInterrupted) agentDotState[agentId] = 'interrupted';
       else if (anyPending) agentDotState[agentId] = 'pending';
       else if (anyActive) agentDotState[agentId] = 'active';
     });
@@ -784,8 +814,8 @@
     orchAgents.forEach(function(a) {
       var isActive = state.currentView === 'agent-detail' && state.currentAgentId === a.id;
       var ds = agentDotState[a.id];
-      var dotClass = ds === 'blocked' ? 'agent-dot agent-dot-blocked' : ds === 'pending' ? 'agent-dot agent-dot-pending' : ds === 'active' ? 'agent-dot agent-dot-working' : 'agent-dot agent-dot-idle';
-      var dotTitle = ds === 'blocked' ? 'Has blocked task' : ds === 'pending' ? 'Awaiting approval' : ds === 'active' ? 'Working on task' : '';
+      var dotClass = ds === 'blocked' ? 'agent-dot agent-dot-blocked' : ds === 'interrupted' ? 'agent-dot agent-dot-interrupted' : ds === 'pending' ? 'agent-dot agent-dot-pending' : ds === 'active' ? 'agent-dot agent-dot-working' : 'agent-dot agent-dot-idle';
+      var dotTitle = ds === 'blocked' ? 'Has blocked task' : ds === 'interrupted' ? 'Agent disconnected' : ds === 'pending' ? 'Awaiting approval' : ds === 'active' ? 'Working on task' : '';
       var nameHtml = escHtml(a.name);
       if (a.role || a.mission) {
         nameHtml = '<span data-tooltip="' + escHtml((a.role || '') + (a.role && a.mission ? '\n' : '') + (a.mission || '')) + '">' + escHtml(a.name) + '</span>';
@@ -804,8 +834,8 @@
     subAgents.forEach(function(a) {
       var isActive = state.currentView === 'agent-detail' && state.currentAgentId === a.id;
       var ds = agentDotState[a.id];
-      var dotClass = ds === 'blocked' ? 'agent-dot agent-dot-blocked' : ds === 'pending' ? 'agent-dot agent-dot-pending' : ds === 'active' ? 'agent-dot agent-dot-working' : 'agent-dot agent-dot-idle';
-      var dotTitle = ds === 'blocked' ? 'Has blocked task' : ds === 'pending' ? 'Awaiting approval' : ds === 'active' ? 'Working on task' : '';
+      var dotClass = ds === 'blocked' ? 'agent-dot agent-dot-blocked' : ds === 'interrupted' ? 'agent-dot agent-dot-interrupted' : ds === 'pending' ? 'agent-dot agent-dot-pending' : ds === 'active' ? 'agent-dot agent-dot-working' : 'agent-dot agent-dot-idle';
+      var dotTitle = ds === 'blocked' ? 'Has blocked task' : ds === 'interrupted' ? 'Agent disconnected' : ds === 'pending' ? 'Awaiting approval' : ds === 'active' ? 'Working on task' : '';
       var nameHtml = escHtml(a.name);
       if (a.role || a.mission) {
         nameHtml = '<span data-tooltip="' + escHtml((a.role || '') + (a.role && a.mission ? '\n' : '') + (a.mission || '')) + '">' + escHtml(a.name) + '</span>';
@@ -1633,8 +1663,14 @@
     var blockedBadge = blocked ? '<span class="badge badge-blocked">blocked</span>' : '';
     var hasBlocker = !!t.blocker;
     var blockerBadge = hasBlocker ? '<span class="blocker-badge-small">BLOCKER</span>' : '';
+    var isStalePlanning = t.status === 'planning' && t.stalePlanning;
+    var stalePlanningBadge = isStalePlanning ? '<span class="stale-planning-badge" title="No agent active - task stuck in planning">&#9888; no agent</span>' : '';
+    var isInterrupted = !!t.interrupted && (t.status === 'working' || t.status === 'planning');
+    var interruptedBadge = isInterrupted ? '<span class="interrupted-badge" title="Agent session lost - task stalled">&#9888;</span>' : '';
     var subtaskClass = isSubtask ? ' subtask-item' : '';
     var blockerClass = hasBlocker ? ' task-has-blocker' : '';
+    var interruptedClass = isInterrupted ? ' task-interrupted' : '';
+    var stalePlanningClass = isStalePlanning ? ' task-stale-planning' : '';
     var depthStyle = isSubtask && depth ? ' style="padding-left:' + (16 + depth * 16) + 'px;margin-left:' + (depth * 12) + 'px"' : '';
     var statusLabel = STATUS_LABELS[t.status] || (t.status || 'planning').replace(/_/g, ' ');
 
@@ -1653,12 +1689,12 @@
     }
     var timeAgoHtml = t.createdAt ? '<span class="task-time-ago">' + timeAgo(t.createdAt) + '</span>' : '';
 
-    return '<div class="task-item' + subtaskClass + blockerClass + '"' + depthStyle + ' onclick="App.openTask(' + q + t.id + q + ')">' +
+    return '<div class="task-item' + subtaskClass + blockerClass + interruptedClass + stalePlanningClass + '"' + depthStyle + ' onclick="App.openTask(' + q + t.id + q + ')">' +
       '<span class="task-title">' + outputIcon + autopilotIcon + escHtml(t.title) + scheduleInfo + tagPills + '</span>' +
       '<span class="task-meta">' +
         '<span class="badge ' + priorityClass + '">' + escHtml(t.priority || 'medium') + '</span>' +
-        '<span class="badge ' + statusClass + '">' + escHtml(statusLabel) + workingDot + '</span>' +
-        blockedBadge + blockerBadge +
+        '<span class="badge ' + statusClass + '">' + escHtml(statusLabel) + workingDot + interruptedBadge + '</span>' +
+        blockedBadge + blockerBadge + stalePlanningBadge +
         (agentName ? '<span>' + escHtml(agentName) + '</span>' : '') +
         dueDateHtml + timeAgoHtml +
       '</span></div>';
@@ -2242,7 +2278,9 @@
       if (!versions) versions = [];
     } catch(e) { versions = []; }
 
-    if (versions.length === 0 && task.status === 'planning' && (!task.progressLog || task.progressLog.length === 0)) {
+    if (versions.length === 0 && task.status === 'working') {
+      html += '<div class="session-planning-banner"><span class="agent-working-dot"></span> Agent is working on a plan. Progress updates will appear below.</div>';
+    } else if (versions.length === 0 && task.status === 'planning' && (!task.progressLog || task.progressLog.length === 0)) {
       html += '<div class="session-awaiting">Awaiting agent submission...</div>';
     }
 
@@ -2354,8 +2392,8 @@
           html += '<div class="session-version-id">';
           html += '<span class="session-dot' + (isApproved ? ' dot-approved' : isImproved ? ' dot-improved' : '') + '"></span>';
           html += 'v' + v.number;
-          if (v.submittedAt) html += ' - ' + new Date(v.submittedAt).toLocaleDateString();
-          else if (v.decidedAt) html += ' - ' + new Date(v.decidedAt).toLocaleDateString();
+          if (v.submittedAt) html += ' - ' + new Date(v.submittedAt).toLocaleString();
+          else if (v.decidedAt) html += ' - ' + new Date(v.decidedAt).toLocaleString();
           html += '</div>';
           html += '<span class="session-agent-name">Agent: ' + escHtml(agentName) + '</span>';
           html += '</div>';
@@ -2423,7 +2461,7 @@
             var decisionLabels = { accepted: 'Accepted', approved: 'Execute', improve: 'Improve', done: 'Closed', closed: 'Closed', hold: 'Hold', cancelled: 'Cancelled' };
             html += ' <span class="badge badge-' + (v.decision) + '">' + (decisionLabels[v.decision] || v.decision) + '</span>';
           }
-          if (v.decidedAt) html += '<span class="session-feedback-date">' + new Date(v.decidedAt).toLocaleDateString() + '</span>';
+          if (v.decidedAt) html += '<span class="session-feedback-date">' + new Date(v.decidedAt).toLocaleString() + '</span>';
           html += '</div>';
           if (v.comments) {
             html += '<div class="session-feedback-text">' + linkifyText(escHtml(v.comments)).replace(/\n/g, '<br>') + '</div>';
@@ -2446,7 +2484,7 @@
           for (var ai = 0; ai < agents.length; ai++) {
             if (agents[ai].id === entry.agentId) { agentLabel = agents[ai].name; break; }
           }
-          var timeStr = entry.timestamp ? new Date(entry.timestamp).toLocaleDateString() : '';
+          var timeStr = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : '';
 
           var progressAccent = isActiveBlocker ? 'tl-accent-blocker' : isResolvedBlocker ? 'tl-accent-blocker-resolved' : 'tl-accent-progress';
           html += '<div class="' + entryClass + '">';
@@ -2466,7 +2504,7 @@
           }
           var stageLabels = { planning: 'Planning', pending_approval: 'Pending', working: 'Working', done: 'Done', closed: 'Closed', hold: 'Hold', cancelled: 'Cancelled' };
           var ahStage = stageLabels[ah.stage] || ah.stage || '';
-          var ahTime = ah.at ? new Date(ah.at).toLocaleDateString() : '';
+          var ahTime = ah.at ? new Date(ah.at).toLocaleString() : '';
           html += '<div class="timeline-agent-change">';
           html += '<div class="tl-accent tl-accent-agent-change">';
           html += '<span class="agent-change-icon">&#8594;</span> ';
@@ -2480,17 +2518,18 @@
     }
 
     // ── Bottom section: status pipeline + feedback ──
-    html += buildStatusPipeline(task);
+    html += buildStatusPipeline(task, versions);
 
     container.innerHTML = html;
   }
 
-  function buildStatusPipeline(task) {
+  function buildStatusPipeline(task, versions) {
     var current = task.status || 'planning';
+    var hasPlan = versions && versions.length > 0 && versions.some(function(v) { return v.content && v.content.trim(); });
 
     var steps = [
       { key: 'pending_approval', label: 'Pending',   icon: '&#9679;'  },
-      { key: 'working',          label: 'Accept',     icon: '&#10003;', action: 'accept' },
+      { key: 'working',          label: 'Accept',     icon: '&#10003;', action: 'accept', guardIfNoPlan: true },
       { key: 'done',             label: 'Done',      icon: '&#10004;', action: 'done'  },
       { key: 'closed',           label: 'Closed',    icon: '&#9632;', action: 'close'  }
     ];
@@ -2535,7 +2574,16 @@
       else if (isPast) cls += ' status-step-past';
 
       if (s.action) {
-        html += '<button class="' + cls + '" onclick="App.changeTaskStatus(\'' + s.action + '\')" title="Set to ' + s.label + '">';
+        var onclick, title;
+        if (s.guardIfNoPlan && !hasPlan) {
+          onclick = 'App.acceptWithoutPlanGuard()';
+          title = 'Accept - no plan submitted yet';
+          cls += ' status-step-no-plan';
+        } else {
+          onclick = 'App.changeTaskStatus(\'' + s.action + '\')';
+          title = 'Set to ' + s.label;
+        }
+        html += '<button class="' + cls + '" onclick="' + onclick + '" title="' + title + '">';
         html += '<span class="status-step-icon">' + s.icon + '</span>';
         html += '<span class="status-step-label">' + s.label + '</span>';
         html += '</button>';
@@ -2858,6 +2906,24 @@
     }
   }
 
+
+  async function acceptWithoutPlanGuard() {
+    var ok = await confirmAction({
+      title: 'No plan submitted yet',
+      message: 'The agent has not submitted a plan yet. You can switch to autopilot mode to skip the review step, or wait for the agent to submit a plan.',
+      confirmLabel: 'Switch to Autopilot & Accept',
+      variant: 'warning'
+    });
+    if (!ok) return;
+    var id = state.currentTaskId;
+    if (!id) return;
+    try {
+      await api.put('/api/tasks/' + id, { autopilot: true });
+      await changeTaskStatus('accept');
+    } catch(e) {
+      toast('Failed: ' + e.message, 'error');
+    }
+  }
 
   async function reviewTask(action) {
     var id = state.currentTaskId;
@@ -4551,30 +4617,126 @@
     if (overlay) overlay.classList.add('hidden');
   }
 
-  // ── Claude Account Status ─────────────────────────
+  // ── Claude Account Management ─────────────────────
   async function checkClaudeStatus() {
-    var installedEl = document.getElementById('claude-installed');
-    var versionEl = document.getElementById('claude-version');
-    if (!installedEl || !versionEl) return;
+    // Legacy compat - now delegates to loadClaudeAccount
+    loadClaudeAccount();
+  }
 
-    installedEl.textContent = 'Checking...';
-    installedEl.className = 'badge badge-inactive';
-    versionEl.textContent = '-';
+  async function loadClaudeAccount() {
+    var statusBox = document.getElementById('claude-conn-status');
+    var dotEl = document.getElementById('claude-conn-dot');
+    var labelEl = document.getElementById('claude-conn-label');
+    var detailEl = document.getElementById('claude-conn-detail');
+    var cliCard = document.getElementById('claude-cli-card');
+    var apiCard = document.getElementById('claude-api-card');
+    var cliPathEl = document.getElementById('claude-cli-path');
+    if (!statusBox) return;
 
     try {
-      var result = await api.get('/api/claude/status');
-      if (result.installed) {
-        installedEl.textContent = 'Installed';
-        installedEl.className = 'badge badge-active';
-        versionEl.textContent = result.version || 'Unknown';
+      var conn = await api.get('/api/claude/connection');
+      var method = conn.method;
+      var connected = false;
+
+      // Update CLI card details
+      if (conn.cli && conn.cli.installed) {
+        if (cliPathEl) cliPathEl.textContent = 'CLI: ' + (conn.cli.path || 'detected') + (conn.cli.version ? ' - ' + conn.cli.version : '');
       } else {
-        installedEl.textContent = 'Not Installed';
-        installedEl.className = 'badge badge-inactive';
-        versionEl.textContent = '-';
+        if (cliPathEl) cliPathEl.textContent = 'CLI not detected';
+      }
+
+      // Determine connection state
+      if (method === 'cli' && conn.cli && conn.cli.installed) {
+        connected = true;
+        labelEl.textContent = 'Connected via Account (CLI)';
+        detailEl.textContent = 'Claude CLI ' + (conn.cli.version || '');
+      } else if (method === 'api' && conn.hasApiKey) {
+        connected = true;
+        labelEl.textContent = 'Connected via API Token';
+        detailEl.textContent = 'API key configured';
+      } else if (method === 'cli') {
+        labelEl.textContent = 'CLI Selected but Not Detected';
+        detailEl.textContent = 'Install Claude CLI to complete connection';
+      } else if (method === 'api') {
+        labelEl.textContent = 'API Selected but No Key';
+        detailEl.textContent = 'Add an API key to complete connection';
+      } else {
+        labelEl.textContent = 'Not Connected';
+        detailEl.textContent = 'No Claude connection configured';
+      }
+
+      // Update status styling
+      statusBox.className = 'claude-conn-status ' + (connected ? 'claude-conn-connected' : 'claude-conn-disconnected');
+
+      // Highlight active method card
+      if (cliCard) { cliCard.classList.toggle('active', method === 'cli'); }
+      if (apiCard) { apiCard.classList.toggle('active', method === 'api'); }
+
+      // TeamHero standalone: no plan gating - both methods always available
+    } catch(e) {
+      labelEl.textContent = 'Error';
+      detailEl.textContent = 'Failed to check connection status';
+    }
+  }
+
+  async function refreshClaudeStatus() {
+    loadClaudeAccount();
+  }
+
+  async function switchClaudeMethod(method) {
+    try {
+      await api.put('/api/claude/connection', { method: method });
+      loadClaudeAccount();
+    } catch(e) {
+      console.error('Failed to switch Claude method:', e);
+    }
+  }
+
+  async function verifyClaudeCli() {
+    var statusEl = document.getElementById('claude-cli-verify-status');
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--text-muted)">Detecting Claude CLI...</span>';
+    try {
+      var result = await api.post('/api/setup/claude-check');
+      if (result.found) {
+        if (statusEl) statusEl.innerHTML = '<span style="color:var(--green)">CLI found at ' + result.path + '</span>';
+        // Auto-switch to CLI method
+        await api.put('/api/claude/connection', { method: 'cli' });
+        loadClaudeAccount();
+      } else {
+        if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Claude CLI not found. Install it first.</span>';
       }
     } catch(e) {
-      installedEl.textContent = 'Error';
-      installedEl.className = 'badge badge-inactive';
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Detection failed</span>';
+    }
+  }
+
+  async function updateClaudeApiKey() {
+    var input = document.getElementById('claude-api-key-input');
+    if (!input || !input.value.trim()) return;
+    var key = input.value.trim();
+    if (key.indexOf('sk-ant-') !== 0) {
+      toast('Invalid key format. Should start with sk-ant-', 'error');
+      return;
+    }
+    try {
+      await api.post('/api/secrets', { name: 'ANTHROPIC_API_KEY', value: key });
+      await api.put('/api/claude/connection', { method: 'api' });
+      input.value = '';
+      toast('API key saved', 'success');
+      loadClaudeAccount();
+    } catch(e) {
+      toast('Failed to save API key', 'error');
+    }
+  }
+
+  async function disconnectClaude() {
+    if (!confirm('Disconnect Claude? This will clear the connection method.')) return;
+    try {
+      await api.put('/api/claude/connection', { method: null });
+      loadClaudeAccount();
+      toast('Claude disconnected', 'success');
+    } catch(e) {
+      toast('Failed to disconnect', 'error');
     }
   }
 
@@ -5892,24 +6054,26 @@
     renderFilteredTasks(context);
   }
 
-  // ── Voice Input ────────────────────────────────────
-  var voiceRecognition = null;
-  var voiceIsRecording = false;
+  // ── Speech-to-CLI (left mic button) ────────────────
+  var micRecognition = null;
+  var micIsRecording = false;
 
-  function toggleVoiceInput() {
-    var btn = document.getElementById('voice-input-btn');
-    var preview = document.getElementById('voice-transcript-preview');
+  function toggleMicrophoneSpeech() {
+    var btn = document.getElementById('mic-terminal-btn');
     if (!btn) return;
 
-    if (voiceIsRecording) {
+    if (micIsRecording) {
       // Stop recording
-      if (voiceRecognition) voiceRecognition.stop();
+      if (micRecognition) micRecognition.stop();
       return;
     }
 
     // Start recording
     var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+    if (!SpeechRecognition) {
+      toast('Speech recognition not supported in this browser', 'error');
+      return;
+    }
 
     var recognition = new SpeechRecognition();
     recognition.continuous = true;
@@ -5917,13 +6081,13 @@
     recognition.lang = navigator.language || 'en-US';
 
     var finalTranscript = '';
+    var svgHtml = btn.querySelector('svg').outerHTML;
 
     recognition.onstart = function() {
-      voiceIsRecording = true;
+      micIsRecording = true;
       finalTranscript = '';
       btn.classList.add('recording');
-      btn.title = 'Stop recording';
-      if (preview) { preview.textContent = ''; preview.classList.add('active'); }
+      btn.title = 'Click to stop recording';
     };
 
     recognition.onresult = function(event) {
@@ -5935,18 +6099,20 @@
           interim += event.results[i][0].transcript;
         }
       }
-      if (preview) {
-        preview.textContent = finalTranscript + interim;
-        preview.classList.add('active');
+      // Update button text to show live transcript preview
+      var previewText = (finalTranscript + interim).trim();
+      if (previewText) {
+        var short = previewText.length > 30 ? '...' + previewText.slice(-30) : previewText;
+        btn.innerHTML = svgHtml + ' ' + short;
       }
     };
 
     recognition.onend = function() {
-      voiceIsRecording = false;
+      micIsRecording = false;
       btn.classList.remove('recording');
-      btn.title = 'Voice input (Speech-to-Text)';
-      if (preview) { preview.textContent = ''; preview.classList.remove('active'); }
-      voiceRecognition = null;
+      btn.title = 'Toggle microphone';
+      btn.innerHTML = svgHtml + ' Mic';
+      micRecognition = null;
 
       // Send final transcript to terminal
       var text = finalTranscript.trim();
@@ -5956,17 +6122,17 @@
     };
 
     recognition.onerror = function(event) {
-      voiceIsRecording = false;
+      micIsRecording = false;
       btn.classList.remove('recording');
-      btn.title = 'Voice input (Speech-to-Text)';
-      if (preview) { preview.textContent = ''; preview.classList.remove('active'); }
-      voiceRecognition = null;
+      btn.title = 'Toggle microphone';
+      btn.innerHTML = svgHtml + ' Mic';
+      micRecognition = null;
       if (event.error !== 'aborted' && event.error !== 'no-speech') {
         toast('Voice input error: ' + event.error, 'error');
       }
     };
 
-    voiceRecognition = recognition;
+    micRecognition = recognition;
     recognition.start();
   }
 
@@ -6025,11 +6191,11 @@
     connectWebSocket();
     loadNotificationsFromServer();
 
-    // Voice input: show container only if Web Speech API is supported
+    // Hide mic button if Web Speech API is not supported
     var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    var voiceContainer = document.getElementById('voice-input-container');
-    if (SpeechRecognition && voiceContainer) {
-      voiceContainer.style.display = 'block';
+    var micBtn = document.getElementById('mic-terminal-btn');
+    if (!SpeechRecognition && micBtn) {
+      micBtn.style.display = 'none';
     }
 
     // Prevent hints-bar buttons from stealing terminal focus
@@ -7647,6 +7813,12 @@
     retryMigrations: retryMigrations,
     rollbackUpgrade: rollbackUpgrade,
     checkClaudeStatus: checkClaudeStatus,
+    loadClaudeAccount: loadClaudeAccount,
+    refreshClaudeStatus: refreshClaudeStatus,
+    switchClaudeMethod: switchClaudeMethod,
+    verifyClaudeCli: verifyClaudeCli,
+    updateClaudeApiKey: updateClaudeApiKey,
+    disconnectClaude: disconnectClaude,
     switchSettingsSection: switchSettingsSection,
     toggleSkill: toggleSkill,
     saveSkillSettings: saveSkillSettings,
@@ -7663,10 +7835,11 @@
     submitPreviewFeedback: submitPreviewFeedback,
     attachPreviewImage: attachPreviewImage,
     changeTaskStatus: changeTaskStatus,
+    acceptWithoutPlanGuard: acceptWithoutPlanGuard,
     toggleFeedback: toggleFeedback,
     pasteImage: pasteImage,
     focusTerminal: function() { if (terminal) { terminal.scrollToBottom(); terminal.focus(); } },
-    toggleVoiceInput: toggleVoiceInput,
+    toggleMicrophone: toggleMicrophoneSpeech,
     attachTaskImage: attachTaskImage,
     promoteToKnowledge: promoteToKnowledge,
     filterKnowledge: filterKnowledge,

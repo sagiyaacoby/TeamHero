@@ -175,6 +175,10 @@ body {
   background: var(--red, #e74c3c);
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
+.agent-dot.agent-dot-interrupted {
+  background: #e8a838;
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
@@ -555,9 +559,12 @@ body {
 }
 
 /* ── Command Center (Terminal) ───────────────────── */
+#main-content:has(.view-chat-fullscreen.active) {
+  padding-bottom: 0;
+}
 .view-chat-fullscreen {
   display: none; flex-direction: column;
-  height: calc(100vh - 64px);
+  height: calc(100vh - 40px - 36px);
   max-width: none !important;
 }
 .view-chat-fullscreen.active { display: flex; }
@@ -794,6 +801,16 @@ body {
   padding: 32px; text-align: center;
   color: var(--text-dim); font-size: 14px;
 }
+.session-planning-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; margin-bottom: 12px;
+  background: color-mix(in srgb, var(--green) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--green) 30%, transparent);
+  border-radius: 6px; font-size: 13px; color: var(--text-dim);
+}
+.session-planning-banner .agent-working-dot {
+  margin-left: 0; flex-shrink: 0;
+}
 
 /* ── Session Version Cards ─────────────────────── */
 .session-version {
@@ -904,6 +921,7 @@ body {
 .status-step-active[onclick*="'cancelled'"] { color: var(--red); border-color: var(--red); background: rgba(224,96,96,0.08); }
 
 .status-step-disabled { opacity: 0.3; cursor: default; pointer-events: none; }
+.status-step-no-plan { opacity: 0.6; border-style: dashed; }
 
 /* ── Task Prev/Next Navigation ────────────────── */
 .task-nav-buttons {
@@ -1278,6 +1296,12 @@ body {
   content: ''; position: absolute; left: 0; top: 0; bottom: 0;
   width: 2px; background: rgba(255,255,255,0.08);
 }
+/* Deliverable entries must match padding of other timeline entries so
+   the colored accent bar appears at 28px (right of the grey track),
+   not at left:0 where it would overlap the grey track line. */
+.session-version-deliverables {
+  padding-left: 28px; margin-left: 0;
+}
 
 /* Timeline accent bars (colored left border on content blocks) */
 .tl-accent {
@@ -1546,6 +1570,16 @@ body {
 .flow-node.has-blocker { box-shadow: 0 0 12px 2px rgba(224,96,96,0.5); border-color: var(--red); }
 .hierarchy-item.has-blocker { border-left: 3px solid var(--red); box-shadow: 0 0 12px 2px rgba(224,96,96,0.4); }
 
+/* ── Stale Planning Warning ─────────────────────── */
+.task-item.task-stale-planning { border-left: 3px solid var(--yellow); }
+.task-item.task-stale-planning:hover { box-shadow: 0 0 14px 3px rgba(212,169,74,0.45); }
+.stale-planning-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; background: rgba(212,169,74,0.15); color: var(--yellow); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; border: 1px solid rgba(212,169,74,0.4); }
+
+/* ── Interrupted Task Warning ─────────────────────── */
+.task-item.task-interrupted { border-left: 3px solid #e8a838; }
+.task-item.task-interrupted:hover { box-shadow: 0 0 14px 3px rgba(232,168,56,0.4); }
+.interrupted-badge { color: #e8a838; font-size: 11px; margin-left: 4px; vertical-align: middle; }
+.notif-item.notif-status-interrupted { border-left-color: #e8a838; }
 
 /* ── Knowledge Base ────────────────────────────── */
 .knowledge-grid { display: flex; flex-direction: column; gap: 0; }
@@ -1756,7 +1790,7 @@ body {
   background: var(--bg-surface);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
-  height: 28px; opacity: 0.4;
+  height: 28px; opacity: 0.75;
   transition: opacity 0.15s;
 }
 .terminal-hints-bar:hover { opacity: 1; }
@@ -1765,41 +1799,35 @@ body {
   font-family: 'SFMono-Regular', Consolas, monospace;
   white-space: nowrap;
 }
+.mic-terminal-btn {
+  margin-left: auto; background: transparent; border: 1px solid rgba(255,255,255,0.3);
+  color: #aaaaaa; padding: 2px 10px; height: 22px; border-radius: var(--radius-sm);
+  cursor: pointer; font-size: 11px; font-weight: 500; font-family: inherit;
+  display: flex; align-items: center; gap: 4px;
+  transition: all 0.15s; white-space: nowrap; position: relative;
+}
+.mic-terminal-btn:hover { border-color: var(--green); color: var(--green); background: rgba(184,230,184,0.06); }
+.mic-terminal-btn.recording {
+  border-color: #e05555; color: #e05555; background: rgba(224,85,85,0.08);
+}
+.mic-terminal-btn.recording::after {
+  content: ''; position: absolute; top: 3px; right: 5px;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: #e05555; box-shadow: 0 0 4px #e05555;
+  animation: mic-pulse 1s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
 .focus-terminal-btn {
-  margin-left: auto; background: transparent; border: 1px solid var(--border);
-  color: var(--text-muted); padding: 2px 10px; height: 22px; border-radius: var(--radius-sm);
+  background: transparent; border: 1px solid rgba(255,255,255,0.3);
+  color: #aaaaaa; padding: 2px 10px; height: 22px; border-radius: var(--radius-sm);
   cursor: pointer; font-size: 11px; font-weight: 500; font-family: inherit;
   display: flex; align-items: center; gap: 4px;
   transition: all 0.15s; white-space: nowrap;
 }
 .focus-terminal-btn:hover { border-color: var(--green); color: var(--green); background: rgba(184,230,184,0.06); }
-/* Voice input — fixed position, button must NEVER move */
-.voice-input-container {
-  position: fixed; bottom: 24px; right: 24px; z-index: 1000;
-  width: 40px; height: 40px; /* exact button size, no flex/grid */
-}
-.voice-input-btn {
-  position: absolute; bottom: 0; right: 0; /* pinned within container */
-  background: var(--bg-card); border: 1px solid var(--border);
-  color: var(--text-muted); width: 40px; height: 40px; border-radius: 50%;
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-}
-.voice-input-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-surface); }
-.voice-input-btn.recording { border-color: #e53e3e; color: #e53e3e; animation: voice-pulse 1.2s ease-in-out infinite; }
-.voice-input-btn.recording:hover { border-color: #c53030; color: #c53030; }
-@keyframes voice-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(229,62,62,0.4); }
-  50% { box-shadow: 0 0 0 8px rgba(229,62,62,0); }
-}
-.voice-transcript-preview {
-  display: none; position: absolute; bottom: 48px; right: 0; /* above button, out of flow */
-  font-size: 12px; color: var(--text); background: var(--bg-card);
-  border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 12px;
-  max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  font-style: italic; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-}
-.voice-transcript-preview.active { display: block; }
 .feedback-image-preview {
   max-height: 60px; max-width: 100px; border-radius: var(--radius-sm);
   border: 1px solid var(--border); object-fit: contain; margin-top: 6px;
@@ -2654,3 +2682,52 @@ body {
 .task-model-info { font-size: 12px; color: var(--text-muted); }
 .task-model-label { font-weight: 500; }
 .task-model-reason { font-style: italic; font-size: 11px; }
+
+/* ── Claude Account Settings ─────────────────────── */
+.claude-conn-status {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-radius: var(--radius); margin: 12px 0;
+  border: 1px solid var(--border); background: var(--bg-surface);
+}
+.claude-conn-status-left { display: flex; align-items: center; gap: 10px; }
+.claude-conn-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: var(--red);
+}
+.claude-conn-status.claude-conn-connected .claude-conn-dot { background: var(--green); }
+.claude-conn-status.claude-conn-connected { border-color: rgba(184, 230, 184, 0.2); }
+.claude-conn-status.claude-conn-disconnected { border-color: rgba(224, 96, 96, 0.15); }
+
+.claude-method-cards { display: flex; gap: 12px; }
+.claude-method-card {
+  flex: 1; padding: 16px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--bg-card);
+  cursor: pointer; transition: border-color 0.15s, opacity 0.15s;
+}
+.claude-method-card:hover { border-color: var(--accent); }
+.claude-method-card.active { border-color: var(--gold); }
+.claude-method-card.active .claude-method-card-title::after {
+  content: 'ACTIVE'; font-size: 9px; font-weight: 700; margin-left: 8px;
+  padding: 1px 5px; border-radius: 3px;
+  background: rgba(200, 176, 96, 0.2); color: var(--gold);
+}
+.claude-method-card.locked {
+  opacity: 0.5; pointer-events: none; position: relative;
+}
+.claude-method-card-header { display: flex; align-items: center; justify-content: space-between; }
+.claude-method-card-title { font-size: 14px; font-weight: 600; }
+.claude-enterprise-badge {
+  font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 3px;
+  background: rgba(176, 160, 208, 0.2); color: var(--purple);
+  text-transform: uppercase; letter-spacing: 0.3px;
+}
+.claude-masked-key {
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 4px 8px; color: var(--text); font-family: monospace; font-size: 12px;
+  flex: 1; min-width: 0;
+}
+.claude-disconnect-btn {
+  background: none; border: 1px solid rgba(224, 96, 96, 0.3); border-radius: var(--radius-sm);
+  color: var(--red); padding: 4px 14px; font-size: 12px; cursor: pointer;
+}
+.claude-disconnect-btn:hover { background: rgba(224, 96, 96, 0.1); border-color: var(--red); }

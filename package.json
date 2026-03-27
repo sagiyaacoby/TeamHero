@@ -1,6 +1,6 @@
 {
   "name": "teamhero",
-  "version": "2.11.0",
+  "version": "2.12.0",
   "description": "Multi-agent orchestration platform powered by Claude CLI",
   "main": "server.js",
   "scripts": {

@@ -248,6 +248,46 @@ function copyFileToMedia(srcPath, destSubfolder, filename, meta) {
   return relPath;
 }
 
+function resolveDeliverableContent(vData, vDir, vFiles) {
+  // 1. If deliverable is a file path that exists, read that file
+  if (vData.deliverable && typeof vData.deliverable === 'string') {
+    var dPath = vData.deliverable;
+    // Handle relative paths (data/tasks/...) or absolute
+    var absPath = path.isAbsolute(dPath) ? dPath : path.join(ROOT, dPath);
+    if (fs.existsSync(absPath)) {
+      var ext = path.extname(absPath).toLowerCase();
+      if (TEXT_EXTS_SERVER.indexOf(ext) >= 0) {
+        var fileContent = readText(absPath);
+        if (fileContent && fileContent.length > 0) return fileContent;
+      }
+    }
+  }
+  // 2. Look for .md/.txt files in the version folder (excluding plan.md, version.json)
+  if (vFiles && vFiles.length > 0) {
+    var textFiles = vFiles.filter(function(f) {
+      var ext = path.extname(f).toLowerCase();
+      return TEXT_EXTS_SERVER.indexOf(ext) >= 0;
+    });
+    if (textFiles.length > 0) {
+      // Read the first (or largest) text file
+      var best = null; var bestSize = 0;
+      textFiles.forEach(function(f) {
+        var fp = path.join(vDir, f);
+        try {
+          var st = fs.statSync(fp);
+          if (st.size > bestSize) { best = fp; bestSize = st.size; }
+        } catch(e) {}
+      });
+      if (best) {
+        var fileContent = readText(best);
+        if (fileContent && fileContent.length > 0) return fileContent;
+      }
+    }
+  }
+  // 3. Fall back to version content summary
+  return vData.content || '';
+}
+
 function autoPromoteToKb(taskId, task) {
   if (task.skipAutoPromote) return;
   if (task.knowledgeDocId || task.promotedToKb) return;
@@ -279,7 +319,7 @@ function autoPromoteToKb(taskId, task) {
 
   if (shouldPromoteKb) {
     try {
-      var content = vData.content || vData.deliverable || task.description || '';
+      var content = resolveDeliverableContent(vData, vDir, vFiles);
       if (!content) return;
 
       var docId = genId();
@@ -287,7 +327,7 @@ function autoPromoteToKb(taskId, task) {
       var doc = {
         id: docId, title: task.title, content: content,
         category: kbCategory,
-        tags: kbTags, summary: task.description || '',
+        tags: kbTags, summary: vData.content || '',
         sourceTaskId: taskId, authorAgentId: task.assignedTo || null,
         project: task.project || null,
         createdAt: now, updatedAt: now
@@ -1649,15 +1689,18 @@ async function handle(pn, m, req, res) {
         }
       });
     } catch(e) {}
-    var vData = readJSON(path.join(taskDir, 'v' + latestV, 'version.json')) || {};
-    var content = vData.content || vData.deliverable || task.description || '';
+    var vDir = path.join(taskDir, 'v' + latestV);
+    var vData = readJSON(path.join(vDir, 'version.json')) || {};
+    var vFiles = getVersionFiles(taskId, latestV);
+    var content = resolveDeliverableContent(vData, vDir, vFiles);
+    if (!content) content = vData.content || '';
 
     var docId = genId();
     var now = new Date().toISOString();
     var doc = {
       id: docId, title: task.title, content: content,
       category: task.type === 'research' ? 'research' : 'reference',
-      tags: task.tags || [], summary: task.description || '',
+      tags: task.tags || [], summary: vData.content || '',
       sourceTaskId: taskId, authorAgentId: task.assignedTo || null,
       project: task.project || null,
       createdAt: now, updatedAt: now
@@ -2280,7 +2323,9 @@ async function handle(pn, m, req, res) {
   // KNOWLEDGE BASE
   if (pn === '/api/knowledge' && m === 'GET') {
     var kip = path.join(ROOT, 'data/knowledge/_index.json');
-    return J(res, readJSON(kip) || { documents: [] });
+    var kix = readJSON(kip) || { documents: [] };
+    if (!kix.folders) kix.folders = [];
+    return J(res, kix);
   }
   if (pn === '/api/knowledge' && m === 'POST') {
     const b = await parseBody(req);
@@ -2305,6 +2350,34 @@ async function handle(pn, m, req, res) {
     writeJSON(kip, kix);
     broadcast('knowledge');
     return J(res, doc, 201);
+  }
+
+  // KNOWLEDGE FOLDERS
+  if (pn === '/api/knowledge/folders' && m === 'POST') {
+    const b = await parseBody(req);
+    var folderName = (b.name || '').trim();
+    if (!folderName) return E(res, 'Folder name required', 400);
+    var kip = path.join(ROOT, 'data/knowledge/_index.json');
+    var kix = readJSON(kip) || { documents: [] };
+    if (!kix.folders) kix.folders = [];
+    if (kix.folders.indexOf(folderName) < 0) {
+      kix.folders.push(folderName);
+      kix.folders.sort();
+      writeJSON(kip, kix);
+      broadcast('knowledge');
+    }
+    return J(res, { ok: true, folder: folderName }, 201);
+  }
+  var kfm = pn.match(/^\/api\/knowledge\/folders\/(.+)$/);
+  if (kfm && m === 'DELETE') {
+    var folderName = decodeURIComponent(kfm[1]);
+    var kip = path.join(ROOT, 'data/knowledge/_index.json');
+    var kix = readJSON(kip) || { documents: [] };
+    if (!kix.folders) kix.folders = [];
+    kix.folders = kix.folders.filter(function(f) { return f !== folderName; });
+    writeJSON(kip, kix);
+    broadcast('knowledge');
+    return J(res, { ok: true });
   }
 
   var km = pn.match(/^\/api\/knowledge\/([^\/]+)$/);
@@ -3217,6 +3290,108 @@ async function handle(pn, m, req, res) {
     return J(res, { generated: new Date().toISOString(), team: team, agents: agents });
   }
 
+  // ── Bug Report: Diagnostics ──────────────────────────────
+  if (pn === '/api/diagnostics' && m === 'GET') {
+    var os = require('os');
+    var pkg = readJSON(path.join(ROOT, 'package.json')) || {};
+    var reg = readJSON(path.join(ROOT, 'agents/_registry.json')) || { agents: [] };
+    var taskIndex = readJSON(path.join(ROOT, 'data/tasks/_index.json')) || { tasks: [] };
+    var activeTasks = (taskIndex.tasks || []).filter(function(t) {
+      return t.status !== 'closed' && t.status !== 'cancelled';
+    }).length;
+    return J(res, {
+      appVersion: pkg.version || 'unknown',
+      platform: os.platform(),
+      osRelease: os.release(),
+      arch: os.arch(),
+      nodeVersion: process.version,
+      memoryUsage: process.memoryUsage(),
+      uptime: Math.round(process.uptime()),
+      agentCount: (reg.agents || []).length,
+      activeTaskCount: activeTasks,
+      totalTaskCount: (taskIndex.tasks || []).length
+    });
+  }
+
+  // ── Bug Report: Submit ─────────────────────────────────
+  if (pn === '/api/bug-report' && m === 'POST') {
+    var b = await parseBody(req);
+    if (!b.title || !b.title.trim()) return E(res, 'Title is required');
+    if (!b.description || b.description.trim().length < 20) return E(res, 'Description must be at least 20 characters');
+
+    // Rate limiting: 5 reports per IP per day (in-memory)
+    if (!handle._bugReportRates) handle._bugReportRates = {};
+    var clientIp = req.connection.remoteAddress || req.socket.remoteAddress || 'unknown';
+    var today = new Date().toISOString().slice(0, 10);
+    var rateKey = clientIp + ':' + today;
+    if (!handle._bugReportRates[rateKey]) handle._bugReportRates[rateKey] = 0;
+    handle._bugReportRates[rateKey]++;
+    if (handle._bugReportRates[rateKey] > 5) return E(res, 'Rate limit exceeded. Maximum 5 reports per day.', 429);
+
+    // Build GitHub Issue body
+    var category = b.category || 'bug';
+    var severity = b.severity || 'minor';
+    var categoryLabel = { bug: 'Bug Report', feature: 'Feature Request', question: 'Question' }[category] || 'Bug Report';
+    var severityEmoji = { critical: '🔴', major: '🟠', minor: '🟡', cosmetic: '⚪' }[severity] || '🟡';
+
+    var issueBody = '## ' + categoryLabel + '\n\n';
+    issueBody += b.description.trim() + '\n\n';
+    if (b.steps) {
+      issueBody += '## Steps to Reproduce\n\n' + b.steps.trim() + '\n\n';
+    }
+    issueBody += '## Severity\n\n' + severityEmoji + ' **' + severity.charAt(0).toUpperCase() + severity.slice(1) + '**\n\n';
+
+    if (b.includeDiagnostics !== false && b.diagnostics) {
+      issueBody += '## Diagnostics\n\n';
+      issueBody += '| Field | Value |\n|-------|-------|\n';
+      var diag = b.diagnostics;
+      if (diag.appVersion) issueBody += '| App Version | ' + diag.appVersion + ' |\n';
+      if (diag.platform) issueBody += '| Platform | ' + diag.platform + ' ' + (diag.osRelease || '') + ' (' + (diag.arch || '') + ') |\n';
+      if (diag.nodeVersion) issueBody += '| Node.js | ' + diag.nodeVersion + ' |\n';
+      if (diag.agentCount !== undefined) issueBody += '| Agents | ' + diag.agentCount + ' |\n';
+      if (diag.activeTaskCount !== undefined) issueBody += '| Active Tasks | ' + diag.activeTaskCount + ' |\n';
+      if (diag.uptime !== undefined) issueBody += '| Uptime | ' + Math.round(diag.uptime / 60) + ' min |\n';
+      issueBody += '\n';
+    }
+
+    issueBody += '---\n*Submitted via in-app bug reporter*';
+
+    // Build labels
+    var labels = ['user-reported'];
+    if (category === 'bug') labels.push('bug');
+    else if (category === 'feature') labels.push('enhancement');
+    else if (category === 'question') labels.push('question');
+    labels.push('severity-' + severity);
+
+    // Create GitHub Issue via gh CLI
+    try {
+      var ghArgs = [
+        'issue', 'create',
+        '--repo', 'sagiyaacoby/TeamHero',
+        '--title', b.title.trim(),
+        '--body', issueBody,
+        '--label', labels.join(',')
+      ];
+      var ghResult = execSync('gh ' + ghArgs.map(function(a) { return '"' + a.replace(/"/g, '\\"') + '"'; }).join(' '), {
+        encoding: 'utf8',
+        timeout: 15000,
+        env: Object.assign({}, process.env)
+      }).trim();
+
+      // gh issue create returns the URL like https://github.com/repo/issues/123
+      var issueUrl = ghResult;
+      var issueNumber = issueUrl.match(/\/issues\/(\d+)/);
+      return J(res, {
+        success: true,
+        issueUrl: issueUrl,
+        issueNumber: issueNumber ? parseInt(issueNumber[1]) : null
+      });
+    } catch(ghErr) {
+      console.error('[bug-report] gh CLI error:', ghErr.message);
+      return E(res, 'Failed to create GitHub issue. Make sure gh CLI is authenticated.', 500);
+    }
+  }
+
   // Serve TERMS.md from project root
   if (pn === '/TERMS.md') {
     var termsPath = path.join(ROOT, 'TERMS.md');
@@ -3489,7 +3664,9 @@ function runScheduler() {
     if (new Date(task.scheduledAt) > now) return;
 
     // Skip if still running (overlap protection) or on hold
-    if (task.status === 'working' || task.status === 'hold' || task.status === 'planning' || task.status === 'pending_approval') return;
+    // Allow pending_approval + scheduledAt through (deferred accept)
+    if (task.status === 'working' || task.status === 'hold' || task.status === 'planning') return;
+    if (task.status === 'pending_approval' && !task.scheduledAt) return;
 
     // Fire the one-time scheduled task
     task.status = 'working';

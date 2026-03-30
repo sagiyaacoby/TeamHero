@@ -95,6 +95,8 @@ Violation: If an agent is launched without a tracked task, the sidebar will not 
 - When a task enters `planning`, the orchestrator MUST launch an agent immediately to write the plan.
 - A task in `planning` with no active agent is a VIOLATION. Every `planning` task must have an agent actively working on it.
 - No task should ever sit in `planning` without an agent producing the plan document.
+- The orchestrator MUST NEVER create a task in `planning` without immediately launching an agent to work on it.
+- If a crash, rate limit, or session death leaves a `planning` task orphaned (no active agent), the orchestrator MUST detect this during Round Table Phase 0 and relaunch the agent immediately. Orphaned planning tasks are treated identically to stalled working tasks.
 
 Steps:
 1. Set `working`. Log "Planning: {what I will do}"
@@ -229,6 +231,129 @@ Every done/closed task MUST have visible outcomes. Update version.json with:
 - **Never post without an image** - every social post needs a visual
 - Images stored in `data/media/social-images/`
 
+## Agent Conflict Prevention (HARD RULE)
+
+Two agents must NEVER work on the same file, folder, or service route at the same time.
+If they do, output is undefined and one agent's work will overwrite the other's.
+
+### Rule 1: Declare File Scope When Creating Tasks
+
+Every task that touches specific files MUST declare them in the task description using this format:
+
+```
+SCOPE: files/folders/routes this task will touch
+- file: path/to/file.html
+- file: path/to/file.js
+- folder: path/to/component/
+- route: /api/some-endpoint
+```
+
+Add this block at the TOP of the task description, before any other content.
+
+**This is mandatory for all development, operations, and content tasks.**
+Research-only tasks (no file writes) are exempt.
+
+Examples of what counts as scope:
+- A specific file: `kapow-win-test/setup.html`
+- A folder (any file within it): `portal/css/`
+- A service/route: `/api/tasks`
+- A config file: `config/team-rules.md`
+
+### Rule 2: Orchestrator Conflict Check (MANDATORY before every agent launch)
+
+Before launching ANY agent via the Agent tool, the orchestrator MUST run this check:
+
+1. Call `GET /api/tasks` and filter for tasks with `status: planning` or `status: working`
+2. Extract file scope from each active task's description (look for the `SCOPE:` block)
+3. Compare the new task's declared scope against all active task scopes
+4. If ANY file, folder, or route overlaps: DO NOT launch in parallel
+
+**If a conflict is detected:**
+- Use `dependsOn` to chain the new task after the conflicting one
+- Or put the new task on `hold` until the conflicting task is done
+- Log a progress note explaining the dependency: "Holding - overlaps with task {id} on {file}"
+
+**The orchestrator must never say "I'll run them in parallel and hope for the best."**
+
+### Rule 3: Conflict Categories
+
+These all count as conflicts:
+- **Same file**: Both tasks list the same file path
+- **Same folder**: One task lists a folder, the other lists any file within that folder
+- **Same route**: Both tasks touch the same API route or service endpoint
+- **Parent/child files**: One task touches `setup.html`, the other touches `setup.js` in the same component - treat as potential conflict, check with the agent first
+
+These do NOT count as conflicts:
+- Different projects (e.g., TeamHero portal vs. Kapow Win)
+- Pure research tasks (no file writes)
+- Tasks touching entirely different parts of the codebase
+
+### Rule 4: Agent Scope Discipline
+
+Agents must NOT silently expand scope beyond what is declared. If an agent discovers during execution that it needs to touch an undeclared file:
+1. Log a progress note: "Scope expansion: need to also touch {file} - reason: {why}"
+2. Continue (do not stop work for this)
+3. Update the task description's SCOPE block to include the new file
+
+This keeps the conflict map accurate for the orchestrator.
+
+### Example: Correct Behavior
+
+**Scenario**: Task A is working on `kapow-win-test/setup.html`. The orchestrator wants to launch Task B which also needs `setup.html`.
+
+CORRECT:
+```
+# Create Task B with dependsOn Task A
+POST /api/tasks
+{
+  "title": "Improve setup page layout",
+  "description": "SCOPE:\n- file: kapow-win-test/setup.html\n\nImprove the layout...",
+  "dependsOn": ["taskA-id"]
+}
+```
+
+WRONG:
+```
+# Launch Task B agent immediately alongside Task A
+# Both agents write to setup.html
+# Task A's changes get overwritten or create conflicts
+```
+
+### Example: Incorrect - No Scope Declaration
+
+WRONG (missing scope):
+```
+POST /api/tasks
+{
+  "title": "Reorder setup page sections",
+  "description": "Move the download section to the top and reorganize the content flow."
+}
+```
+
+CORRECT (with scope):
+```
+POST /api/tasks
+{
+  "title": "Reorder setup page sections",
+  "description": "SCOPE:\n- file: kapow-win-test/setup.html\n\nMove the download section to the top and reorganize the content flow."
+}
+```
+
+### Conflict Check Procedure (Orchestrator Checklist)
+
+Run this EVERY time before launching an agent:
+
+```
+1. GET /api/tasks - filter status: planning, working
+2. For each active task, read description - find SCOPE: block
+3. List all files/folders/routes currently "in use"
+4. Compare new task's scope against the in-use list
+5. Overlap found? -> chain with dependsOn or hold
+6. No overlap? -> safe to launch in parallel
+```
+
+This check takes under 30 seconds and prevents hours of conflict debugging.
+
 ## Token Efficiency
 - Use the cheapest tool that gets the job done
 - Playwright: avoid unnecessary snapshots (5000+ tokens each). Trust actions, use targeted checks.
@@ -239,11 +364,12 @@ Every done/closed task MUST have visible outcomes. Update version.json with:
 Round tables are **execution-first**. Act before reporting.
 
 ### Phase 0: Recover Stalled Tasks (MANDATORY - DO THIS FIRST)
-1. Query `GET /api/tasks` and filter for `status: working`
+1. Query `GET /api/tasks` and filter for `status: working` AND `status: planning`
 2. For each working task, check if the assigned agent is actively running
-3. If no agent is running for a working task, relaunch the assigned agent immediately to resume execution
-4. This catches all interruptions: rate limits, crashes, session deaths, timeouts
-5. Do NOT skip this phase - stalled tasks are invisible failures that block progress
+3. For each planning task, check if an agent is actively producing the plan - `planning` is NOT a queue or idle state, so an orphaned planning task is just as broken as a stalled working task
+4. If no agent is running for a working or planning task, relaunch the assigned agent immediately to resume execution
+5. This catches all interruptions: rate limits, crashes, session deaths, timeouts
+6. Do NOT skip this phase - stalled tasks (both working AND planning) are invisible failures that block progress
 
 ### Phase 1: Execute
 1. Launch agents on working tasks (EXECUTE, set done when complete)
@@ -274,3 +400,15 @@ Every agent has `short-memory.md` (working state, max ~2000 chars) and `long-mem
 - Templates and update rules: see `config/memory-templates.md`
 - Short memory entries >14 days old are stale - review during round tables
 - Never store full task content, raw API data, or debug info in memory
+
+
+## UI Design Rule: Monochrome System Icons Only (HARD RULE)
+
+All UI elements (sidebar icons, buttons, badges, toggles) MUST use monochrome/system design. No colorful emojis, no colored icon sets, no elements that visually break from the dark theme.
+
+- Sidebar icons: monochrome SVG or system font icons only
+- Buttons and toggles: match the dark theme color palette
+- No colored backgrounds that stand out from the system design
+- When in doubt, look at existing sidebar items and match their style
+
+This applies to both TeamHero portal and Kapow UI.

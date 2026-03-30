@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Agent Team Portal</title>
   <link rel="stylesheet" href="css/style.css">
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+  <script src="js/vendor/marked.min.js"></script>
+  <link rel="stylesheet" href="css/vendor/xterm.min.css">
+  <script src="js/vendor/xterm.min.js"></script>
+  <script src="js/vendor/addon-fit.min.js"></script>
+  <script src="js/vendor/addon-web-links.min.js"></script>
+  <script src="js/vendor/qrcode.min.js"></script>
 </head>
 <body>
 
@@ -219,6 +219,7 @@
     <div class="nav-sticky-top">
       <a href="#" data-view="chat" class="nav-link nav-chat active"><span class="icon">&#9654;</span> Command Center</a>
       <a href="#" data-view="dashboard" class="nav-link"><span class="icon">&#9632;</span> Dashboard</a>
+      <a href="#" data-view="planner" class="nav-link"><span class="icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="11" rx="1.5"/><line x1="2" y1="6.5" x2="14" y2="6.5"/><line x1="5.5" y1="1.5" x2="5.5" y2="4.5"/><line x1="10.5" y1="1.5" x2="10.5" y2="4.5"/></svg></span> Planner<span class="nav-badge hidden" id="nav-planner-badge">0</span></a>
       <a href="#" data-view="autopilot" class="nav-link"><span class="icon">&#9881;</span> Autopilot<span class="nav-badge hidden" id="nav-autopilot-badge">0</span></a>
     </div>
     <ul class="nav-list" id="nav-list">
@@ -271,30 +272,44 @@
           <button class="view-mode-btn" data-view="flow" onclick="App.setViewMode('flow','dashboard')">Flow</button>
         </span>
         <span class="sort-toggle" id="dashboard-sort-toggle">
-          <button class="sort-btn active" data-sort="new" onclick="App.toggleSort('new','dashboard')">New</button>
+          <button class="sort-btn active" data-sort="updated" onclick="App.toggleSort('updated','dashboard')">Updated</button>
           <button class="sort-btn" data-sort="priority" onclick="App.toggleSort('priority','dashboard')">Priority</button>
         </span></h3>
         <div id="dashboard-agent-filter" class="agent-filter-bar"></div>
         <div id="dashboard-tag-filter" class="tag-filter-bar"></div>
+        <div id="dashboard-text-filter" class="text-filter-bar">
+          <input type="text" class="text-filter-input" placeholder="Search tasks..." oninput="App.setTextFilter(this.value,'dashboard')">
+          <select class="time-filter-select" onchange="App.setTimeFilter(this.value,'dashboard')">
+            <option value="all">All Time</option>
+            <option value="today">Today</option>
+            <option value="week">This Week</option>
+            <option value="month">This Month</option>
+          </select>
+        </div>
         <div id="dashboard-tasks" class="task-list"><div class="empty-state">No tasks yet</div></div>
       </div>
       <div class="panel round-table-panel"><h3><span class="rt-icon"></span>Last Round Table</h3><div id="last-round-table" class="round-table-summary"><div class="empty-state">No round tables yet</div></div></div>
     </section>
 
-    <!-- Autopilot -->
-    <section id="view-autopilot" class="view">
+    <!-- Planner -->
+    <section id="view-planner" class="view">
       <header class="view-header">
-        <h2>Autopilot</h2>
+        <h2>Planner</h2>
         <div class="header-actions">
-          <button class="btn btn-secondary" id="ap-pause-all-btn" onclick="App.pauseAllAutopilot()">Pause All</button>
-          <button class="btn btn-primary" onclick="App.openAutopilotForm()">+ New Recurring Task</button>
+          <button class="btn btn-primary" onclick="App.openAutopilotForm()">+ Add Timed Task</button>
         </div>
       </header>
       <div class="panel">
         <h3>Recurring Tasks</h3>
-        <div id="autopilot-list"></div>
-        <div id="autopilot-form" class="hidden">
-          <div class="form-grid" style="margin-top:12px">
+        <div id="planner-recurring-list"></div>
+      </div>
+      <div class="panel">
+        <h3>Future Tasks</h3>
+        <div id="planner-future-list"></div>
+      </div>
+      <div id="autopilot-form" class="hidden" style="margin:0 16px 16px">
+        <div class="panel">
+          <div class="form-grid" style="margin-top:0">
             <div class="form-group full-width">
               <label>Task Name</label>
               <input type="text" id="ap-name" placeholder="e.g. Daily standup check">
@@ -348,6 +363,20 @@
             <button class="btn btn-primary" onclick="App.saveAutopilot()">Create</button>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- Autopilot -->
+    <section id="view-autopilot" class="view">
+      <header class="view-header">
+        <h2>Autopilot</h2>
+        <div class="header-actions">
+          <button class="btn btn-secondary" id="ap-pause-all-btn" onclick="App.pauseAllAutopilot()">Pause All</button>
+        </div>
+      </header>
+      <div class="panel">
+        <h3>Recurring Tasks</h3>
+        <div id="autopilot-list"></div>
       </div>
       <div class="panel">
         <div id="autopilot-tasks" class="task-list"><div class="empty-state">No scheduled or autopilot tasks</div></div>
@@ -423,7 +452,7 @@
               <button class="view-mode-btn" data-view="flow" onclick="App.setViewMode('flow','agent')">Flow</button>
             </span>
             <span class="sort-toggle" id="agent-sort-toggle">
-              <button class="sort-btn active" data-sort="new" onclick="App.toggleSort('new','agent')">New</button>
+              <button class="sort-btn active" data-sort="updated" onclick="App.toggleSort('updated','agent')">Updated</button>
               <button class="sort-btn" data-sort="priority" onclick="App.toggleSort('priority','agent')">Priority</button>
             </span>
             <button class="btn btn-secondary" onclick="App.openAddTask(App.state.currentAgentId)" style="font-size:12px;padding:4px 12px;white-space:nowrap">+ Add Task</button>
@@ -431,6 +460,15 @@
         </div>
         <div id="agent-agent-filter" class="agent-filter-bar"></div>
         <div id="agent-tag-filter" class="tag-filter-bar"></div>
+        <div id="agent-text-filter" class="text-filter-bar">
+          <input type="text" class="text-filter-input" placeholder="Search tasks..." oninput="App.setTextFilter(this.value,'agent')">
+          <select class="time-filter-select" onchange="App.setTimeFilter(this.value,'agent')">
+            <option value="all">All Time</option>
+            <option value="today">Today</option>
+            <option value="week">This Week</option>
+            <option value="month">This Month</option>
+          </select>
+        </div>
         <div id="agent-tasks-list" class="task-list"></div>
       </div>
       <div id="agent-tab-stats" class="agent-tab">
@@ -658,6 +696,10 @@
           </div>
           <div class="settings-sidebar-item" data-section="server-control" onclick="App.switchSettingsSection('server-control')">
             <span class="settings-icon">&#9655;</span> Server Control
+          </div>
+          <div class="settings-sidebar-section">Help</div>
+          <div class="settings-sidebar-item" data-section="help-support" onclick="App.switchSettingsSection('help-support')">
+            <span class="settings-icon">&#9888;&#xFE0E;</span> Help &amp; Support
           </div>
           <div class="settings-sidebar-footer">
             <span id="settings-team-name">-</span> <span id="settings-version">v1.0.0</span> - <span id="settings-agent-count">0</span> agents
@@ -1006,6 +1048,22 @@
             </div>
           </div>
 
+          <!-- Help & Support -->
+          <div class="settings-section" id="settings-sec-help-support">
+            <div class="settings-section-title">Help &amp; Support</div>
+            <div class="settings-section-desc">Report bugs, request features, or ask questions. Reports are submitted as GitHub Issues on the TeamHero repository.</div>
+            <div class="settings-group">
+              <div class="setting-item">
+                <span class="setting-label">Found a bug or have a suggestion? Let us know.</span>
+                <button class="btn btn-primary" onclick="App.showBugReportModal()">Report a Bug</button>
+              </div>
+              <div class="setting-item">
+                <span class="setting-label">Version</span>
+                <span id="settings-help-version" style="color:var(--text-secondary);font-size:13px;">-</span>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
     </section>
@@ -1013,14 +1071,22 @@
     <!-- Knowledge Base -->
     <section id="view-knowledge" class="view">
       <header class="view-header"><h2>Knowledge Base</h2></header>
-      <div class="filter-bar" id="knowledge-filter-bar">
-        <button class="filter-btn active" data-filter="all" onclick="App.filterKnowledge('all')">All</button>
-        <button class="filter-btn" data-filter="research" onclick="App.filterKnowledge('research')">Research</button>
-        <button class="filter-btn" data-filter="analysis" onclick="App.filterKnowledge('analysis')">Analysis</button>
-        <button class="filter-btn" data-filter="reference" onclick="App.filterKnowledge('reference')">Reference</button>
-        <button class="filter-btn" data-filter="guide" onclick="App.filterKnowledge('guide')">Guides</button>
+      <div class="knowledge-layout">
+        <div class="knowledge-sidebar" id="knowledge-sidebar">
+          <div class="kb-sidebar-header">Folders <button class="kb-add-folder-btn" onclick="App.createKbFolder()" title="New Folder">+</button></div>
+          <div class="kb-folder-list" id="kb-folder-list"></div>
+        </div>
+        <div class="knowledge-main">
+          <div class="filter-bar" id="knowledge-filter-bar">
+            <button class="filter-btn active" data-filter="all" onclick="App.filterKnowledge('all')">All</button>
+            <button class="filter-btn" data-filter="research" onclick="App.filterKnowledge('research')">Research</button>
+            <button class="filter-btn" data-filter="analysis" onclick="App.filterKnowledge('analysis')">Analysis</button>
+            <button class="filter-btn" data-filter="reference" onclick="App.filterKnowledge('reference')">Reference</button>
+            <button class="filter-btn" data-filter="guide" onclick="App.filterKnowledge('guide')">Guides</button>
+          </div>
+          <div id="knowledge-grid" class="knowledge-grid"><div class="empty-state">No knowledge documents yet</div></div>
+        </div>
       </div>
-      <div id="knowledge-grid" class="knowledge-grid"><div class="empty-state">No knowledge documents yet</div></div>
     </section>
 
     <!-- Knowledge Detail -->
@@ -1029,13 +1095,14 @@
         <button class="btn btn-secondary" onclick="App.navigate('knowledge')">&#8592; Back</button>
         <h2 id="knowledge-detail-title">Document</h2>
         <div class="header-actions">
+          <button class="btn btn-secondary" onclick="App.moveKbDoc()">Move to Folder</button>
           <button class="btn btn-cancel" onclick="App.deleteKnowledgeDoc()">Delete</button>
         </div>
       </header>
       <div class="knowledge-detail-meta" id="knowledge-detail-meta"></div>
       <div class="panel" id="knowledge-summary-panel" style="display:none">
         <h3>Summary</h3>
-        <p id="knowledge-detail-summary" class="content-text"></p>
+        <div id="knowledge-detail-summary" class="content-text"></div>
       </div>
       <div class="panel">
         <h3>Content</h3>
@@ -1460,6 +1527,83 @@ SOFTWARE.</pre>
         <div class="rc-actions">
           <button id="rc-start-btn" class="btn btn-primary" onclick="App.startRemoteControl()">Start Remote Control</button>
           <button id="rc-stop-btn" class="btn btn-cancel hidden" onclick="App.stopRemoteControl()">Stop Remote Control</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bug Report Modal -->
+  <div id="bug-report-modal" class="modal-overlay hidden" onclick="if(event.target===this)App.closeBugReportModal()">
+    <div class="bug-report-modal-content">
+      <div class="bug-report-header">
+        <h3>Report a Bug</h3>
+        <button class="modal-close" onclick="App.closeBugReportModal()">&times;</button>
+      </div>
+      <div id="bug-report-form-container">
+        <div class="bug-report-field">
+          <label>Category</label>
+          <select id="bug-report-category">
+            <option value="bug">Bug Report</option>
+            <option value="feature">Feature Request</option>
+            <option value="question">Question</option>
+          </select>
+        </div>
+        <div class="bug-report-field">
+          <label>Title <span class="required">*</span></label>
+          <input type="text" id="bug-report-title" placeholder="Short summary of the issue" maxlength="200">
+        </div>
+        <div class="bug-report-field">
+          <label>Description <span class="required">*</span></label>
+          <textarea id="bug-report-description" placeholder="Describe what happened and what you expected to happen. Be as specific as possible." rows="4"></textarea>
+        </div>
+        <div class="bug-report-field">
+          <label>Steps to Reproduce <span class="optional">(optional)</span></label>
+          <textarea id="bug-report-steps" placeholder="1. Go to...&#10;2. Click...&#10;3. See error..." rows="3"></textarea>
+        </div>
+        <div class="bug-report-field">
+          <label>Severity</label>
+          <div class="bug-report-severity">
+            <label class="severity-option"><input type="radio" name="bug-severity" value="critical"><span>Critical - App crashes or data loss</span></label>
+            <label class="severity-option"><input type="radio" name="bug-severity" value="major"><span>Major - Feature broken, no workaround</span></label>
+            <label class="severity-option"><input type="radio" name="bug-severity" value="minor" checked><span>Minor - Feature broken, workaround exists</span></label>
+            <label class="severity-option"><input type="radio" name="bug-severity" value="cosmetic"><span>Cosmetic - Visual issue only</span></label>
+          </div>
+        </div>
+        <div class="bug-report-diag-box" id="bug-report-diag-box">
+          <div class="diag-header">
+            <span class="diag-summary" id="bug-report-diag-summary">Loading diagnostics...</span>
+            <button class="diag-toggle" onclick="App.toggleBugDiagnostics()">Show details</button>
+          </div>
+          <pre class="diag-details hidden" id="bug-report-diag-details"></pre>
+        </div>
+        <div class="bug-report-field">
+          <label class="bug-report-checkbox"><input type="checkbox" id="bug-report-include-diag" checked> Include diagnostic information</label>
+        </div>
+        <div class="bug-report-field">
+          <label class="bug-report-checkbox"><input type="checkbox" id="bug-report-include-screenshot" onchange="App.toggleScreenshotArea()"> Include screenshot (paste or drag &amp; drop)</label>
+        </div>
+        <div class="bug-report-screenshot hidden" id="bug-report-screenshot-area">
+          <div class="screenshot-dropzone" id="bug-report-dropzone" onclick="document.getElementById('bug-report-file-input').click()">
+            <span>Drag &amp; drop or click to add screenshot</span>
+            <input type="file" id="bug-report-file-input" accept="image/*" style="display:none" onchange="App.handleScreenshotFile(this)">
+          </div>
+          <div class="screenshot-preview hidden" id="bug-report-preview">
+            <img id="bug-report-preview-img" alt="Screenshot preview">
+            <button class="screenshot-remove" onclick="App.removeScreenshot()">Remove</button>
+          </div>
+        </div>
+        <div class="bug-report-actions">
+          <button class="btn btn-secondary" onclick="App.closeBugReportModal()">Cancel</button>
+          <button class="btn btn-primary" id="bug-report-submit" onclick="App.submitBugReport()">Submit Report</button>
+        </div>
+      </div>
+      <div id="bug-report-success" class="hidden">
+        <div class="bug-report-success-icon">&#10003;</div>
+        <h4>Thank you for your report!</h4>
+        <p id="bug-report-success-msg"></p>
+        <div class="bug-report-success-actions">
+          <a id="bug-report-issue-link" href="#" target="_blank" class="btn btn-secondary hidden">View on GitHub</a>
+          <button class="btn btn-primary" onclick="App.closeBugReportModal()">Close</button>
         </div>
       </div>
     </div>

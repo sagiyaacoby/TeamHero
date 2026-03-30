@@ -22,10 +22,14 @@
     agentViewMode: 'hierarchy',
     hierarchyExpanded: {},
     flowExpanded: {},
-    dashboardSort: JSON.parse(localStorage.getItem('dashboardSort') || '{"new":true,"priority":false}'),
-    agentSort: JSON.parse(localStorage.getItem('agentSort') || '{"new":true,"priority":false}'),
+    dashboardSort: (function() { var s = JSON.parse(localStorage.getItem('dashboardSort') || '{"updated":true,"priority":false}'); if ('new' in s) { s.updated = s['new']; delete s['new']; localStorage.setItem('dashboardSort', JSON.stringify(s)); } return s; })(),
+    agentSort: (function() { var s = JSON.parse(localStorage.getItem('agentSort') || '{"updated":true,"priority":false}'); if ('new' in s) { s.updated = s['new']; delete s['new']; localStorage.setItem('agentSort', JSON.stringify(s)); } return s; })(),
     dashboardAgentFilter: null,
     agentAgentFilter: null,
+    dashboardTextFilter: '',
+    agentTextFilter: '',
+    dashboardTimeFilter: 'all',
+    agentTimeFilter: 'all',
     tagsVisible: localStorage.getItem('tagsVisible') !== 'false',
     tagFilterExpanded: false,
     globalAutopilot: false,
@@ -212,6 +216,7 @@
       if (viewId === 'skills') loadSkills();
       if (viewId === 'knowledge') loadKnowledge();
       if (viewId === 'help') loadHelp(0);
+      if (viewId === 'planner') loadPlannerPage();
       if (viewId === 'autopilot') loadAutopilotPage();
       if (viewId === 'terms') loadTerms();
     }
@@ -739,6 +744,9 @@
       if (v === 'knowledge') loadKnowledge();
       if (v === 'knowledge-detail' && state._currentKnowledgeId) openKnowledgeDoc(state._currentKnowledgeId);
     }
+    if (scope === 'all' || scope === 'planner' || scope === 'tasks') {
+      if (v === 'planner') loadPlannerPage();
+    }
     if (scope === 'all' || scope === 'autopilot' || scope === 'tasks') {
       if (v === 'autopilot') loadAutopilotPage();
     }
@@ -915,6 +923,7 @@
     }
 
     updateAutopilotBadge();
+    updatePlannerBadge();
   }
 
   // ── Dashboard ──────────────────────────────────────
@@ -1066,8 +1075,11 @@
 
     var pendingA = 0, workingA = 0, doneA = 0, holdA = 0, cancelledA = 0, closedA = 0;
     tasks.forEach(function(t) {
-      if (t.status === 'planning' || t.status === 'pending_approval') pendingA++;
-      else if (t.status === 'working') workingA++;
+      // Pending counts ALL tasks (including subtasks) - owner must see everything needing review
+      if (t.status === 'planning' || t.status === 'pending_approval') { pendingA++; return; }
+      // Other stats count top-level only (matches filter logic which shows root tasks with subtasks inline)
+      if (t.parentTaskId) return;
+      if (t.status === 'working') workingA++;
       else if (t.status === 'done') doneA++;
       else if (t.status === 'hold') holdA++;
       else if (t.status === 'cancelled') cancelledA++;
@@ -1148,6 +1160,42 @@
       });
     }
 
+    // Apply text filter (subtask-aware: parent shows if a subtask title matches)
+    var textFilter = context === 'dashboard' ? state.dashboardTextFilter : state.agentTextFilter;
+    if (textFilter) {
+      var tf = textFilter.toLowerCase();
+      var allTasksForText = context === 'dashboard' ? state.cachedDashboardTasks : state.cachedAgentTasks;
+      filtered = filtered.filter(function(t) {
+        if ((t.title || '').toLowerCase().indexOf(tf) !== -1) return true;
+        if ((t.description || '').toLowerCase().indexOf(tf) !== -1) return true;
+        var subs = allTasksForText.filter(function(s) { return s.parentTaskId === t.id; });
+        return subs.some(function(sub) {
+          return (sub.title || '').toLowerCase().indexOf(tf) !== -1;
+        });
+      });
+    }
+
+    // Apply time filter
+    var timeFilter = context === 'dashboard' ? state.dashboardTimeFilter : state.agentTimeFilter;
+    if (timeFilter && timeFilter !== 'all') {
+      var now = new Date();
+      var boundary;
+      if (timeFilter === 'today') {
+        boundary = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      } else if (timeFilter === 'week') {
+        boundary = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      } else if (timeFilter === 'month') {
+        boundary = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      }
+      if (boundary) {
+        var boundaryISO = boundary.toISOString();
+        filtered = filtered.filter(function(t) {
+          var ts = t.updatedAt || t.createdAt || '';
+          return ts >= boundaryISO;
+        });
+      }
+    }
+
     var sortState = context === 'dashboard' ? state.dashboardSort : state.agentSort;
     filtered.sort(function(a, b) {
       // Priority sort (if active): higher priority first
@@ -1156,10 +1204,10 @@
         var pb = PRIORITY_ORDER[b.priority] !== undefined ? PRIORITY_ORDER[b.priority] : 2;
         if (pa !== pb) return pa - pb;
       }
-      // New sort (if active): newest first by createdAt
-      if (sortState['new']) {
-        var da = a.createdAt || '';
-        var db = b.createdAt || '';
+      // Updated sort (if active): most recently updated first
+      if (sortState['updated']) {
+        var da = a.updatedAt || a.createdAt || '';
+        var db = b.updatedAt || b.createdAt || '';
         if (da !== db) return db.localeCompare(da);
       }
       return 0;
@@ -1582,6 +1630,8 @@
     html += '<span class="badge badge-' + (task.priority || 'medium') + '">' + escHtml(task.priority || 'medium') + '</span>';
     html += '<span class="badge badge-' + (task.status || 'planning') + '">' + escHtml(statusLabel) + '</span>';
     if (agentName) html += '<span style="font-size:11px;color:var(--text-muted)">' + escHtml(agentName) + '</span>';
+    var hierTs = task.updatedAt || task.createdAt;
+    if (hierTs) html += '<span class="task-time-ago" title="' + new Date(hierTs).toLocaleString() + '">' + timeAgo(hierTs) + '</span>';
     html += '</div></div>';
 
     if (hasChildren) {
@@ -1687,7 +1737,8 @@
       var isOverdue = dueDate < now && t.status !== 'closed' && t.status !== 'done';
       dueDateHtml = '<span class="task-due' + (isOverdue ? ' task-due-overdue' : '') + '" title="Due: ' + dueDate.toLocaleDateString() + '">' + dueDate.toLocaleDateString() + '</span>';
     }
-    var timeAgoHtml = t.createdAt ? '<span class="task-time-ago">' + timeAgo(t.createdAt) + '</span>' : '';
+    var timeAgoTs = t.updatedAt || t.createdAt;
+    var timeAgoHtml = timeAgoTs ? '<span class="task-time-ago" title="' + new Date(timeAgoTs).toLocaleString() + '">' + timeAgo(timeAgoTs) + '</span>' : '';
 
     return '<div class="task-item' + subtaskClass + blockerClass + interruptedClass + stalePlanningClass + '"' + depthStyle + ' onclick="App.openTask(' + q + t.id + q + ')">' +
       '<span class="task-title">' + outputIcon + autopilotIcon + escHtml(t.title) + scheduleInfo + tagPills + '</span>' +
@@ -1702,7 +1753,7 @@
 
   function toggleSort(dimension, context) {
     var sortState = context === 'dashboard' ? state.dashboardSort : state.agentSort;
-    var other = dimension === 'new' ? 'priority' : 'new';
+    var other = dimension === 'updated' ? 'priority' : 'updated';
     if (sortState[dimension] && !sortState[other]) return;
     sortState[dimension] = !sortState[dimension];
     localStorage.setItem(context + 'Sort', JSON.stringify(sortState));
@@ -1718,6 +1769,28 @@
     toggle.querySelectorAll('.sort-btn').forEach(function(btn) {
       btn.classList.toggle('active', !!sortState[btn.dataset.sort]);
     });
+  }
+
+  var _textFilterTimer = null;
+  function setTextFilter(value, context) {
+    if (context === 'dashboard') {
+      state.dashboardTextFilter = value;
+    } else {
+      state.agentTextFilter = value;
+    }
+    if (_textFilterTimer) clearTimeout(_textFilterTimer);
+    _textFilterTimer = setTimeout(function() {
+      renderFilteredTasks(context);
+    }, 300);
+  }
+
+  function setTimeFilter(value, context) {
+    if (context === 'dashboard') {
+      state.dashboardTimeFilter = value;
+    } else {
+      state.agentTimeFilter = value;
+    }
+    renderFilteredTasks(context);
   }
 
   async function filterTasks(filter, context) {
@@ -2535,6 +2608,7 @@
     ];
     var sideStates = [
       { key: 'improve',   label: 'Improve', icon: '&#9999;', needsFeedback: true },
+      { key: 'schedule',  label: 'Schedule', icon: 'svg-clock', isSchedule: true },
       { key: 'hold',      label: 'Hold',    icon: '&#9208;' },
       { key: 'cancelled', label: 'Cancel',  icon: '&#10007;' }
     ];
@@ -2553,8 +2627,12 @@
     // Autopilot toggle with lock logic for timed tasks
     var isTimed = !!(task.interval || task.scheduledAt);
     if (isTimed) {
+      var isDeferred = task.scheduledAt && !task.interval && (current === 'pending_approval' || current === 'hold');
+      var timedLabel = isDeferred
+        ? '&#128339; Scheduled - auto-executes at ' + new Date(task.scheduledAt).toLocaleString()
+        : '&#128339; Timed (Autopilot locked)';
       html += '<span class="autopilot-toggle locked active" title="Autopilot is locked while a schedule is active">';
-      html += '&#128339; Timed (Autopilot locked)';
+      html += timedLabel;
       html += '</span>';
     } else {
       html += '<button class="autopilot-toggle' + (task.autopilot ? ' active' : '') + '" onclick="App.toggleTaskAutopilot()" title="Toggle autopilot mode">';
@@ -2596,10 +2674,27 @@
       if (i < steps.length - 1) html += '<span class="status-step-arrow' + (isPast ? ' status-step-arrow-past' : '') + '">&#8250;</span>';
     }
 
-    // Side states (improve, hold, cancel)
+    // Side states (improve, schedule, hold, cancel)
     for (var j = 0; j < sideStates.length; j++) {
       var ss = sideStates[j];
       var isActiveSide = ss.key === current;
+
+      // Schedule button: only in pending_approval and hold, hidden for recurring/timed tasks
+      if (ss.isSchedule) {
+        var isRecurring = !!(task.interval && task.intervalUnit);
+        var showSchedule = (current === 'pending_approval' || current === 'hold') && !isRecurring;
+        if (!showSchedule) continue;
+        var hasSchedule = !!task.scheduledAt;
+        var schedCls = 'status-step status-step-side' + (hasSchedule ? ' status-step-scheduled' : '');
+        var schedTitle = hasSchedule ? 'Scheduled - click to change' : 'Schedule for later';
+        var clockSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
+        html += '<button class="' + schedCls + '" onclick="App.openSchedulePopover(event)" title="' + schedTitle + '">';
+        html += '<span class="status-step-icon">' + clockSvg + '</span>';
+        html += '<span class="status-step-label">' + ss.label + '</span>';
+        html += '</button>';
+        continue;
+      }
+
       if (ss.needsFeedback) {
         html += '<button class="status-step status-step-side' + (isActiveSide ? ' status-step-active' : '') + '" onclick="App.toggleFeedback()" title="Send feedback for revision">';
       } else {
@@ -2714,6 +2809,132 @@
       if (steps[i].key === status) return i;
     }
     return -1;
+  }
+
+  // ── Schedule Popover (deferred accept) ──────────────
+  function openSchedulePopover(evt) {
+    // Remove any existing popover
+    var existing = document.querySelector('.schedule-popover');
+    if (existing) { existing.remove(); return; }
+
+    var btn = evt.currentTarget;
+    var rect = btn.getBoundingClientRect();
+    var id = state.currentTaskId;
+    if (!id) return;
+
+    var task = (state.tasks || []).find(function(t) { return t.id === id; });
+    var existingSchedule = task && task.scheduledAt ? new Date(task.scheduledAt) : null;
+
+    // Build popover HTML
+    var pop = document.createElement('div');
+    pop.className = 'schedule-popover';
+
+    // Datetime input
+    var now = new Date();
+    var minDt = now.toISOString().slice(0, 16);
+    var currentVal = existingSchedule ? new Date(existingSchedule.getTime() - existingSchedule.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '';
+
+    var h = '<div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px">Schedule for later</div>';
+    h += '<input type="datetime-local" id="schedule-datetime" min="' + minDt + '" value="' + currentVal + '">';
+
+    // Quick presets
+    h += '<div class="schedule-popover-presets">';
+    h += '<button class="schedule-preset-btn" onclick="App.schedulePreset(\'1h\')">In 1 hour</button>';
+    h += '<button class="schedule-preset-btn" onclick="App.schedulePreset(\'tomorrow9\')">Tomorrow 9 AM</button>';
+    h += '<button class="schedule-preset-btn" onclick="App.schedulePreset(\'monday9\')">Next Monday 9 AM</button>';
+    h += '</div>';
+
+    // Action buttons
+    h += '<div class="schedule-popover-actions">';
+    h += '<button class="schedule-confirm-btn" onclick="App.confirmSchedule()">Confirm</button>';
+    if (existingSchedule) {
+      h += '<button class="schedule-clear-btn" onclick="App.clearSchedule()">Clear</button>';
+    }
+    h += '</div>';
+
+    pop.innerHTML = h;
+
+    // Position below the button
+    document.body.appendChild(pop);
+    var popRect = pop.getBoundingClientRect();
+    var top = rect.bottom + 4;
+    var left = rect.left;
+    // Keep within viewport
+    if (left + popRect.width > window.innerWidth) left = window.innerWidth - popRect.width - 8;
+    if (top + popRect.height > window.innerHeight) top = rect.top - popRect.height - 4;
+    pop.style.position = 'fixed';
+    pop.style.top = top + 'px';
+    pop.style.left = left + 'px';
+
+    // Click outside to close
+    setTimeout(function() {
+      document.addEventListener('click', closeSchedulePopoverOutside);
+    }, 0);
+  }
+
+  function closeSchedulePopoverOutside(evt) {
+    var pop = document.querySelector('.schedule-popover');
+    if (pop && !pop.contains(evt.target) && !evt.target.closest('.status-step-scheduled, .status-step-side[onclick*="openSchedulePopover"]')) {
+      pop.remove();
+      document.removeEventListener('click', closeSchedulePopoverOutside);
+    }
+  }
+
+  function schedulePreset(preset) {
+    var input = document.getElementById('schedule-datetime');
+    if (!input) return;
+    var d = new Date();
+    if (preset === '1h') {
+      d.setHours(d.getHours() + 1);
+    } else if (preset === 'tomorrow9') {
+      d.setDate(d.getDate() + 1);
+      d.setHours(9, 0, 0, 0);
+    } else if (preset === 'monday9') {
+      var day = d.getDay();
+      var daysUntilMon = day === 0 ? 1 : (8 - day);
+      d.setDate(d.getDate() + daysUntilMon);
+      d.setHours(9, 0, 0, 0);
+    }
+    // Format for datetime-local input (local time)
+    var iso = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    input.value = iso;
+  }
+
+  async function confirmSchedule() {
+    var input = document.getElementById('schedule-datetime');
+    if (!input || !input.value) { toast('Pick a date and time', 'warning'); return; }
+
+    var dt = new Date(input.value);
+    if (dt <= new Date()) { toast('Cannot schedule in the past', 'error'); return; }
+
+    var id = state.currentTaskId;
+    if (!id) return;
+
+    try {
+      await api.put('/api/tasks/' + id, { scheduledAt: dt.toISOString() });
+      toast('Scheduled for ' + dt.toLocaleString());
+      var pop = document.querySelector('.schedule-popover');
+      if (pop) pop.remove();
+      document.removeEventListener('click', closeSchedulePopoverOutside);
+      await openTask(id);
+    } catch(e) {
+      toast('Failed: ' + e.message, 'error');
+    }
+  }
+
+  async function clearSchedule() {
+    var id = state.currentTaskId;
+    if (!id) return;
+    try {
+      await api.put('/api/tasks/' + id, { scheduledAt: null });
+      toast('Schedule cleared');
+      var pop = document.querySelector('.schedule-popover');
+      if (pop) pop.remove();
+      document.removeEventListener('click', closeSchedulePopoverOutside);
+      await openTask(id);
+    } catch(e) {
+      toast('Failed: ' + e.message, 'error');
+    }
   }
 
   function toggleFeedback() {
@@ -3251,14 +3472,31 @@
 
   // ── Knowledge Base ──────────────────────────────
   var knowledgeFilter = 'all';
+  var knowledgeFolderFilter = null; // null = all, string = specific folder, '__uncategorized__' = no folder
+  var _kbAllDocs = []; // cached for folder operations
 
   async function loadKnowledge() {
     try {
       var data = await api.get('/api/knowledge');
       var docs = data.documents || [];
+      _kbAllDocs = docs;
 
-      // Apply filter
-      var filtered = knowledgeFilter === 'all' ? docs : docs.filter(function(d) { return d.category === knowledgeFilter; });
+      // Build folder sidebar (include stored empty folders)
+      var storedFolders = data.folders || [];
+      renderKbFolderSidebar(docs, storedFolders);
+
+      // Apply folder filter
+      var filtered = docs;
+      if (knowledgeFolderFilter === '__uncategorized__') {
+        filtered = filtered.filter(function(d) { return !d.folder; });
+      } else if (knowledgeFolderFilter) {
+        filtered = filtered.filter(function(d) { return d.folder === knowledgeFolderFilter; });
+      }
+
+      // Apply category filter
+      if (knowledgeFilter !== 'all') {
+        filtered = filtered.filter(function(d) { return d.category === knowledgeFilter; });
+      }
 
       var grid = document.getElementById('knowledge-grid');
       if (filtered.length === 0) {
@@ -3273,13 +3511,13 @@
           var found = state.agents.find(function(a) { return a.id === doc.authorAgentId; });
           if (found) agentName = found.name;
         }
-        // Check staleness (>30 days)
         var isStale = doc.updatedAt && (Date.now() - new Date(doc.updatedAt).getTime() > 30 * 24 * 60 * 60 * 1000);
         var staleHtml = isStale ? ' <span class="badge badge-stale">stale</span>' : '';
 
         var tagsHtml = (doc.tags || []).map(function(t) { return '<span class="tag-badge">' + escHtml(t) + '</span>'; }).join('');
+        var folderHtml = doc.folder ? '<div class="knowledge-card-folder">' + escHtml(doc.folder) + '</div>' : '';
 
-        return '<div class="knowledge-card" onclick="App.openKnowledgeDoc(\'' + doc.id + '\')">' +
+        return '<div class="knowledge-card" draggable="true" data-kb-id="' + doc.id + '" onclick="App.openKnowledgeDoc(\'' + doc.id + '\')" ondragstart="App.kbDragStart(event)" ondragend="App.kbDragEnd(event)">' +
           '<div class="knowledge-card-info">' +
             '<div class="knowledge-card-title">' + escHtml(doc.title) + staleHtml + '</div>' +
             '<div class="knowledge-card-meta">' +
@@ -3287,12 +3525,187 @@
               (agentName ? '<span>' + escHtml(agentName) + '</span>' : '') +
               '<span>' + (doc.createdAt ? new Date(doc.createdAt).toLocaleDateString() : '') + '</span>' +
             '</div>' +
+            folderHtml +
             (tagsHtml ? '<div class="knowledge-card-tags" style="margin-top:4px">' + tagsHtml + '</div>' : '') +
           '</div>' +
         '</div>';
       }).join('');
     } catch(e) {
       console.error('Failed to load knowledge:', e);
+    }
+  }
+
+  function renderKbFolderSidebar(docs, storedFolders) {
+    var folderCounts = {};
+    var uncatCount = 0;
+    // Include stored empty folders with count 0
+    (storedFolders || []).forEach(function(f) {
+      if (!folderCounts[f]) folderCounts[f] = 0;
+    });
+    docs.forEach(function(d) {
+      if (d.folder) {
+        folderCounts[d.folder] = (folderCounts[d.folder] || 0) + 1;
+      } else {
+        uncatCount++;
+      }
+    });
+    var folderNames = Object.keys(folderCounts).sort();
+
+    var listEl = document.getElementById('kb-folder-list');
+    if (!listEl) return;
+
+    var html = '<div class="kb-folder-item' + (knowledgeFolderFilter === null ? ' active' : '') + '" onclick="App.filterKbFolder(null)" data-kb-folder="__all__" ondragover="App.kbFolderDragOver(event)" ondrop="App.kbFolderDrop(event, null)" ondragleave="App.kbFolderDragLeave(event)">' +
+      '<span>All Documents</span><span class="kb-folder-count">' + docs.length + '</span></div>';
+
+    folderNames.forEach(function(name) {
+      var isActive = knowledgeFolderFilter === name;
+      var escapedName = escHtml(name).replace(/'/g, "\\'");
+      html += '<div class="kb-folder-item' + (isActive ? ' active' : '') + '" onclick="App.filterKbFolder(\'' + escapedName + '\')" data-kb-folder="' + escHtml(name) + '" ondragover="App.kbFolderDragOver(event)" ondrop="App.kbFolderDrop(event, \'' + escapedName + '\')" ondragleave="App.kbFolderDragLeave(event)">' +
+        '<span>' + escHtml(name) + '</span>' +
+        '<span style="display:flex;align-items:center;gap:2px">' +
+          '<span class="kb-folder-count">' + folderCounts[name] + '</span>' +
+          '<button class="kb-folder-delete" onclick="event.stopPropagation();App.deleteKbFolder(\'' + escapedName + '\')" title="Delete folder">&times;</button>' +
+        '</span></div>';
+    });
+
+    html += '<div class="kb-folder-item' + (knowledgeFolderFilter === '__uncategorized__' ? ' active' : '') + '" onclick="App.filterKbFolder(\'__uncategorized__\')" data-kb-folder="__uncategorized__" ondragover="App.kbFolderDragOver(event)" ondrop="App.kbFolderDrop(event, null)" ondragleave="App.kbFolderDragLeave(event)">' +
+      '<span>Uncategorized</span><span class="kb-folder-count">' + uncatCount + '</span></div>';
+
+    listEl.innerHTML = html;
+  }
+
+  function filterKbFolder(folder) {
+    knowledgeFolderFilter = folder;
+    loadKnowledge();
+  }
+
+  async function createKbFolder() {
+    var name = prompt('Enter folder name:');
+    if (!name || !name.trim()) return;
+    try {
+      await api.post('/api/knowledge/folders', { name: name.trim() });
+      knowledgeFolderFilter = name.trim();
+      loadKnowledge();
+      toast('Folder "' + name.trim() + '" created - drag documents here to organize');
+    } catch(e) {
+      toast('Failed to create folder', 'error');
+    }
+  }
+
+  async function deleteKbFolder(folderName) {
+    var docsInFolder = _kbAllDocs.filter(function(d) { return d.folder === folderName; });
+    var confirmed = await confirmAction({
+      title: 'Delete folder',
+      message: 'Delete folder "' + folderName + '"?' + (docsInFolder.length ? ' It contains ' + docsInFolder.length + ' document' + (docsInFolder.length > 1 ? 's' : '') + '.' : ''),
+      confirmLabel: 'Delete',
+    });
+    if (!confirmed) return;
+
+    if (docsInFolder.length > 0) {
+      var deleteDocsConfirmed = await confirmAction({
+        title: 'Delete documents?',
+        message: 'Also delete all ' + docsInFolder.length + ' document' + (docsInFolder.length > 1 ? 's' : '') + ' in this folder? Click "Delete documents" to permanently remove them, or Cancel to move them to Uncategorized instead.',
+        confirmLabel: 'Delete documents',
+      });
+      if (deleteDocsConfirmed) {
+        // Delete all docs in folder
+        for (var i = 0; i < docsInFolder.length; i++) {
+          try { await api.del('/api/knowledge/' + docsInFolder[i].id); } catch(e) { /* continue */ }
+        }
+        toast('Folder and ' + docsInFolder.length + ' document' + (docsInFolder.length > 1 ? 's' : '') + ' deleted');
+      } else {
+        // Move all docs to uncategorized
+        for (var i = 0; i < docsInFolder.length; i++) {
+          try { await api.put('/api/knowledge/' + docsInFolder[i].id, { folder: null }); } catch(e) { /* continue */ }
+        }
+        toast('Documents moved to Uncategorized, folder deleted');
+      }
+    } else {
+      toast('Folder "' + folderName + '" deleted');
+    }
+
+    // Remove folder from server
+    try { await api.del('/api/knowledge/folders/' + encodeURIComponent(folderName)); } catch(e) { /* continue */ }
+
+    // Reset filter if we were viewing the deleted folder
+    if (knowledgeFolderFilter === folderName) {
+      knowledgeFolderFilter = null;
+    }
+    loadKnowledge();
+  }
+
+  async function moveKbDocToFolder(docId, folder) {
+    try {
+      await api.put('/api/knowledge/' + docId, { folder: folder || null });
+      toast(folder ? 'Moved to ' + folder : 'Moved to Uncategorized');
+      loadKnowledge();
+    } catch(e) {
+      toast('Failed to move document', 'error');
+    }
+  }
+
+  // Move from detail view
+  async function moveKbDoc() {
+    if (!state._currentKnowledgeId) return;
+    // Build list of existing folders
+    var folders = [];
+    _kbAllDocs.forEach(function(d) {
+      if (d.folder && folders.indexOf(d.folder) < 0) folders.push(d.folder);
+    });
+    folders.sort();
+
+    var options = ['Uncategorized (remove from folder)'].concat(folders).concat(['-- New Folder --']);
+    var choice = prompt('Move to folder:\n' + options.map(function(o, i) { return (i) + ': ' + o; }).join('\n') + '\n\nEnter number or folder name:');
+    if (choice === null) return;
+
+    var target = null;
+    var idx = parseInt(choice);
+    if (!isNaN(idx) && idx >= 0 && idx < options.length) {
+      if (idx === 0) target = null;
+      else if (idx === options.length - 1) {
+        target = prompt('New folder name:');
+        if (!target || !target.trim()) return;
+        target = target.trim();
+      } else {
+        target = folders[idx - 1];
+      }
+    } else {
+      target = choice.trim() || null;
+    }
+
+    await moveKbDocToFolder(state._currentKnowledgeId, target);
+    // Refresh detail view
+    openKnowledgeDoc(state._currentKnowledgeId);
+  }
+
+  // Drag and drop handlers
+  var _kbDragDocId = null;
+  function kbDragStart(e) {
+    _kbDragDocId = e.currentTarget.dataset.kbId;
+    e.currentTarget.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', _kbDragDocId);
+  }
+  function kbDragEnd(e) {
+    e.currentTarget.classList.remove('dragging');
+    _kbDragDocId = null;
+    // Remove all drag-over highlights
+    document.querySelectorAll('.kb-folder-item.drag-over').forEach(function(el) { el.classList.remove('drag-over'); });
+  }
+  function kbFolderDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    e.currentTarget.classList.add('drag-over');
+  }
+  function kbFolderDragLeave(e) {
+    e.currentTarget.classList.remove('drag-over');
+  }
+  function kbFolderDrop(e, folder) {
+    e.preventDefault();
+    e.currentTarget.classList.remove('drag-over');
+    var docId = e.dataTransfer.getData('text/plain') || _kbDragDocId;
+    if (docId) {
+      moveKbDocToFolder(docId, folder);
     }
   }
 
@@ -3323,6 +3736,7 @@
       }
       var isStale = meta.updatedAt && (Date.now() - new Date(meta.updatedAt).getTime() > 30 * 24 * 60 * 60 * 1000);
       var metaHtml = '<span class="badge ' + catClass + '">' + escHtml(meta.category || 'reference') + '</span>';
+      if (meta.folder) metaHtml += '<span style="color:var(--text-dim)">Folder: ' + escHtml(meta.folder) + '</span>';
       if (agentName) metaHtml += '<span>By: ' + escHtml(agentName) + '</span>';
       metaHtml += '<span>' + (meta.createdAt ? new Date(meta.createdAt).toLocaleDateString() : '') + '</span>';
       if (meta.tags && meta.tags.length) metaHtml += meta.tags.map(function(t) { return '<span class="tag-badge">' + escHtml(t) + '</span>'; }).join('');
@@ -3334,7 +3748,7 @@
       var summaryPanel = document.getElementById('knowledge-summary-panel');
       if (meta.summary) {
         summaryPanel.style.display = '';
-        document.getElementById('knowledge-detail-summary').textContent = meta.summary;
+        try { document.getElementById('knowledge-detail-summary').innerHTML = renderMarkdown(meta.summary); } catch(e) { document.getElementById('knowledge-detail-summary').textContent = meta.summary; }
       } else {
         summaryPanel.style.display = 'none';
       }
@@ -3683,6 +4097,8 @@
       document.getElementById('settings-team-name').textContent = sys.teamName || '-';
       document.getElementById('settings-version').textContent = 'v' + (sys.version || '1.0.0');
       document.getElementById('settings-agent-count').textContent = (agents.agents || []).length;
+      var helpVer = document.getElementById('settings-help-version');
+      if (helpVer) helpVer.textContent = 'v' + (sys.version || '1.0.0');
     } catch(e) { console.error('Failed to load settings:', e); }
     checkClaudeStatus();
     loadPermissionMode();
@@ -6840,6 +7256,7 @@
       }
       cancelAutopilotForm();
       loadAutopilotPage();
+      loadPlannerPage();
     } catch(e) { toast('Failed to save: ' + (e.message || 'Unknown error'), 'error'); }
   }
 
@@ -6860,6 +7277,8 @@
 
   async function editAutopilot(id) {
     try {
+      // Navigate to planner where the form lives
+      if (state.currentView !== 'planner') navigate('planner');
       var task = await api.get('/api/tasks/' + id);
       if (!task) return;
       autopilotEditId = id;
@@ -6869,10 +7288,20 @@
       // Set agent custom select
       var agentOpt = document.querySelector('#ap-agent-options .custom-select-option[data-value="' + task.assignedTo + '"]');
       if (agentOpt) setCustomSelect('ap-agent-select', task.assignedTo, agentOpt.textContent);
-      // Set interval fields
-      document.getElementById('ap-interval').value = task.interval || 1;
-      var unitLabel = task.intervalUnit === 'minutes' ? 'Minutes' : task.intervalUnit === 'hours' ? 'Hours' : task.intervalUnit === 'days' ? 'Days' : 'Hours';
-      setCustomSelect('ap-unit-select', task.intervalUnit || 'hours', unitLabel);
+      // Set schedule type and interval fields
+      if (task.scheduledAt && !task.interval) {
+        setSchedType('onetime');
+        var schedAtEl = document.getElementById('ap-scheduled-at');
+        if (schedAtEl) {
+          var dt = new Date(task.scheduledAt);
+          schedAtEl.value = dt.toISOString().slice(0, 16);
+        }
+      } else {
+        setSchedType('recurring');
+        document.getElementById('ap-interval').value = task.interval || 1;
+        var unitLabel = task.intervalUnit === 'minutes' ? 'Minutes' : task.intervalUnit === 'hours' ? 'Hours' : task.intervalUnit === 'days' ? 'Days' : 'Hours';
+        setCustomSelect('ap-unit-select', task.intervalUnit || 'hours', unitLabel);
+      }
       document.getElementById('autopilot-form').classList.remove('hidden');
     } catch(e) { toast('Failed to load task', 'error'); }
   }
@@ -6943,6 +7372,148 @@
       if (state.currentTaskId === id) openTask(id);
       loadAutopilotPage();
     } catch(e) { toast('Failed to update scheduled time', 'error'); }
+  }
+
+  // ── Planner ─────────────────────────────────────────
+
+  async function loadPlannerPage() {
+    loadPlannerRecurring();
+    loadPlannerFuture();
+    updatePlannerBadge();
+  }
+
+  async function loadPlannerRecurring() {
+    var container = document.getElementById('planner-recurring-list');
+    if (!container) return;
+    try {
+      var tasksData = await api.get('/api/tasks');
+      var agentsData = await api.get('/api/agents');
+      var agentMap = {};
+      (agentsData.agents || []).forEach(function(a) { agentMap[a.id] = a.name; });
+      agentMap['orchestrator'] = agentMap['orchestrator'] || 'Orchestrator';
+
+      var recurring = (tasksData.tasks || []).filter(function(t) {
+        return t.interval && t.intervalUnit && t.status !== 'cancelled';
+      });
+
+      if (recurring.length === 0) {
+        container.innerHTML = '<div class="empty-state" style="padding:16px 0;font-size:13px">No recurring tasks</div>';
+        return;
+      }
+
+      var html = '<table class="autopilot-table"><thead><tr><th>Name</th><th>Agent</th><th>Interval</th><th>Next Run</th><th>Status</th></tr></thead><tbody>';
+      for (var i = 0; i < recurring.length; i++) {
+        var task;
+        try { task = await api.get('/api/tasks/' + recurring[i].id); } catch(e) { continue; }
+        var agentName = agentMap[task.assignedTo] || task.assignedTo || '-';
+        var interval = formatIntervalFields(task.interval, task.intervalUnit);
+        var nextRun = task.nextRun ? new Date(task.nextRun).toLocaleString() : '-';
+        var isPaused = task.status === 'hold';
+        var statusLabel = isPaused ? '<span style="color:var(--warning)">Paused</span>' : '<span style="color:var(--success)">' + escHtml(task.status) + '</span>';
+        html += '<tr' + (isPaused ? ' class="ap-disabled"' : '') + ' style="cursor:pointer" onclick="App.openTask(\'' + task.id + '\')">' +
+          '<td style="color:var(--text-primary)">' + escHtml(task.title) + '</td>' +
+          '<td>' + escHtml(agentName) + '</td>' +
+          '<td>' + interval + '</td>' +
+          '<td>' + nextRun + '</td>' +
+          '<td>' + statusLabel + (task.runCount ? ' (#' + task.runCount + ')' : '') + '</td>' +
+          '</tr>';
+      }
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    } catch(e) {
+      container.innerHTML = '<div class="empty-state" style="padding:16px 0;font-size:13px">No recurring tasks</div>';
+    }
+  }
+
+  async function loadPlannerFuture() {
+    var container = document.getElementById('planner-future-list');
+    if (!container) return;
+    try {
+      var tasksData = await api.get('/api/tasks');
+      var agentsData = await api.get('/api/agents');
+      var agentMap = {};
+      (agentsData.agents || []).forEach(function(a) { agentMap[a.id] = a.name; });
+      agentMap['orchestrator'] = agentMap['orchestrator'] || 'Orchestrator';
+
+      var now = new Date();
+      var futureTasks = (tasksData.tasks || []).filter(function(t) {
+        if (t.status === 'closed' || t.status === 'cancelled') return false;
+        if (t.interval) return false; // recurring tasks shown in the other section
+        if (t.scheduledAt) return true;
+        if (t.dueDate && new Date(t.dueDate) > now) return true;
+        return false;
+      });
+
+      if (futureTasks.length === 0) {
+        container.innerHTML = '<div class="empty-state" style="padding:16px 0;font-size:13px">No future tasks scheduled</div>';
+        return;
+      }
+
+      // Group by month
+      var groups = {};
+      futureTasks.forEach(function(t) {
+        var dateStr = t.scheduledAt || t.dueDate;
+        var d = new Date(dateStr);
+        var key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+        var label = d.toLocaleString('default', { month: 'long', year: 'numeric' });
+        if (!groups[key]) groups[key] = { label: label, tasks: [] };
+        groups[key].tasks.push(t);
+      });
+
+      // Sort month keys
+      var sortedKeys = Object.keys(groups).sort();
+      var html = '';
+      sortedKeys.forEach(function(key) {
+        var g = groups[key];
+        html += '<div class="planner-month-group">';
+        html += '<div class="planner-month-header">' + escHtml(g.label) + ' <span class="planner-month-count">(' + g.tasks.length + ')</span></div>';
+        g.tasks.sort(function(a, b) {
+          var da = new Date(a.scheduledAt || a.dueDate);
+          var db = new Date(b.scheduledAt || b.dueDate);
+          return da - db;
+        });
+        g.tasks.forEach(function(t) {
+          var agentName = agentMap[t.assignedTo] || t.assignedTo || '-';
+          var dateStr = t.scheduledAt || t.dueDate;
+          var dateDisplay = new Date(dateStr).toLocaleDateString('default', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+          var statusClass = t.status === 'hold' ? 'warning' : t.status === 'working' ? 'success' : '';
+          html += '<div class="planner-task-item" onclick="App.openTask(\'' + t.id + '\')">';
+          html += '<div class="planner-task-title">' + escHtml(t.title) + '</div>';
+          html += '<div class="planner-task-meta">';
+          html += '<span>' + escHtml(agentName) + '</span>';
+          html += '<span>' + dateDisplay + '</span>';
+          if (statusClass) {
+            html += '<span style="color:var(--' + statusClass + ')">' + escHtml(t.status) + '</span>';
+          } else {
+            html += '<span>' + escHtml(t.status) + '</span>';
+          }
+          html += '</div></div>';
+        });
+        html += '</div>';
+      });
+      container.innerHTML = html;
+    } catch(e) {
+      container.innerHTML = '<div class="empty-state" style="padding:16px 0;font-size:13px">No future tasks scheduled</div>';
+    }
+  }
+
+  async function updatePlannerBadge() {
+    try {
+      var tasksData = state.tasks && state.tasks.length > 0 ? { tasks: state.tasks } : await api.get('/api/tasks');
+      var now = new Date();
+      var count = (tasksData.tasks || []).filter(function(t) {
+        if (t.status === 'closed' || t.status === 'cancelled') return false;
+        if (t.interval && t.intervalUnit) return true;
+        if (t.scheduledAt) return true;
+        if (t.dueDate && new Date(t.dueDate) > now) return true;
+        return false;
+      }).length;
+      var badge = document.getElementById('nav-planner-badge');
+      if (badge) {
+        badge.textContent = count;
+        badge.classList.toggle('hidden', count === 0);
+      }
+    } catch(e) {}
   }
 
   async function loadAutopilotPage() {
@@ -7198,6 +7769,19 @@
         '<button class="help-go-link" onclick="App.navigate(\'add-agent\')">Add New Agent &#8594;</button>'
     },
     {
+      title: 'Planner',
+      icon: '&#128197;',
+      content: '<h2>Planner</h2>' +
+        '<p>The Planner is your <strong>scheduling hub</strong> for all timed tasks - both recurring and one-time scheduled.</p>' +
+        '<h3>Recurring Tasks</h3>' +
+        '<p>Tasks that run on an interval (every X minutes, hours, or days). View their schedule, next run time, and status at a glance.</p>' +
+        '<h3>Future Tasks</h3>' +
+        '<p>Tasks with a scheduled date or future due date, grouped by month. Quickly see what is coming up and when.</p>' +
+        '<h3>Creating Timed Tasks</h3>' +
+        '<p>Use the <strong>+ Add Timed Task</strong> button to create a new recurring or one-time scheduled task. Choose an agent, set the schedule, and it will appear in both the Planner and Autopilot pages.</p>' +
+        '<button class="help-go-link" onclick="App.navigate(\'planner\')">Go to Planner &#8594;</button>'
+    },
+    {
       title: 'Autopilot',
       icon: '&#9881;',
       content: '<h2>Autopilot</h2>' +
@@ -7207,6 +7791,7 @@
         '<p><strong>2. Scheduled autopilot</strong> - Create recurring schedules that fire automatically on an interval. Assign a prompt to an agent, set how often it runs (minutes, hours, days), and let it go. Good for daily standups, periodic research, content generation, or system checks.</p>' +
         '<h3>Safety</h3>' +
         '<p>Autopilot tasks still appear in the dashboard with a gear icon so you can monitor them. Use <strong>Pause All</strong> to instantly stop all schedules if needed. You can toggle autopilot off on any task at any time to re-enable human review.</p>' +
+        '<p>To create new timed tasks, use the <strong>Planner</strong> page.</p>' +
         '<button class="help-go-link" onclick="App.navigate(\'autopilot\')">Go to Autopilot &#8594;</button>'
     },
     {
@@ -7728,6 +8313,177 @@
     }
   }
 
+  // ── Bug Report ──────────────────────────────────────────
+  var _bugDiagnostics = null;
+  var _bugScreenshotData = null;
+  var _bugSubmitCooldown = false;
+
+  function showBugReportModal() {
+    var modal = document.getElementById('bug-report-modal');
+    modal.classList.remove('hidden');
+    document.getElementById('bug-report-form-container').classList.remove('hidden');
+    document.getElementById('bug-report-success').classList.add('hidden');
+    document.getElementById('bug-report-title').value = '';
+    document.getElementById('bug-report-description').value = '';
+    document.getElementById('bug-report-steps').value = '';
+    document.getElementById('bug-report-category').value = 'bug';
+    document.querySelector('input[name="bug-severity"][value="minor"]').checked = true;
+    document.getElementById('bug-report-include-diag').checked = true;
+    document.getElementById('bug-report-include-screenshot').checked = false;
+    document.getElementById('bug-report-screenshot-area').classList.add('hidden');
+    document.getElementById('bug-report-preview').classList.add('hidden');
+    document.getElementById('bug-report-dropzone').classList.remove('hidden');
+    _bugScreenshotData = null;
+    var submitBtn = document.getElementById('bug-report-submit');
+    submitBtn.disabled = _bugSubmitCooldown;
+    submitBtn.textContent = _bugSubmitCooldown ? 'Please wait...' : 'Submit Report';
+
+    // Fetch diagnostics
+    _bugDiagnostics = null;
+    document.getElementById('bug-report-diag-summary').textContent = 'Loading diagnostics...';
+    document.getElementById('bug-report-diag-details').textContent = '';
+    document.getElementById('bug-report-diag-details').classList.add('hidden');
+
+    api.get('/api/diagnostics').then(function(diag) {
+      _bugDiagnostics = diag;
+      var summary = (diag.appVersion ? 'TeamHero v' + diag.appVersion : 'TeamHero') +
+        ' | ' + (diag.platform === 'win32' ? 'Windows' : diag.platform) + ' ' + (diag.osRelease || '') +
+        ' | Node ' + (diag.nodeVersion || '');
+      document.getElementById('bug-report-diag-summary').textContent = summary;
+      var details = JSON.stringify(diag, null, 2);
+      document.getElementById('bug-report-diag-details').textContent = details;
+    }).catch(function() {
+      document.getElementById('bug-report-diag-summary').textContent = 'Could not load diagnostics';
+    });
+
+    // Setup drag-and-drop
+    var dropzone = document.getElementById('bug-report-dropzone');
+    dropzone.ondragover = function(e) { e.preventDefault(); dropzone.classList.add('drag-over'); };
+    dropzone.ondragleave = function() { dropzone.classList.remove('drag-over'); };
+    dropzone.ondrop = function(e) {
+      e.preventDefault();
+      dropzone.classList.remove('drag-over');
+      if (e.dataTransfer.files.length > 0) handleScreenshotFileObj(e.dataTransfer.files[0]);
+    };
+
+    // Setup paste
+    modal.onpaste = function(e) {
+      var items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+          handleScreenshotFileObj(items[i].getAsFile());
+          document.getElementById('bug-report-include-screenshot').checked = true;
+          document.getElementById('bug-report-screenshot-area').classList.remove('hidden');
+          break;
+        }
+      }
+    };
+  }
+
+  function closeBugReportModal() {
+    document.getElementById('bug-report-modal').classList.add('hidden');
+    _bugScreenshotData = null;
+  }
+
+  function toggleBugDiagnostics() {
+    var details = document.getElementById('bug-report-diag-details');
+    var btn = details.previousElementSibling.querySelector('.diag-toggle') ||
+              details.parentElement.querySelector('.diag-toggle');
+    if (details.classList.contains('hidden')) {
+      details.classList.remove('hidden');
+      if (btn) btn.textContent = 'Hide details';
+    } else {
+      details.classList.add('hidden');
+      if (btn) btn.textContent = 'Show details';
+    }
+  }
+
+  function toggleScreenshotArea() {
+    var checked = document.getElementById('bug-report-include-screenshot').checked;
+    var area = document.getElementById('bug-report-screenshot-area');
+    if (checked) area.classList.remove('hidden');
+    else area.classList.add('hidden');
+  }
+
+  function handleScreenshotFile(input) {
+    if (input.files && input.files[0]) handleScreenshotFileObj(input.files[0]);
+  }
+
+  function handleScreenshotFileObj(file) {
+    if (!file || !file.type.startsWith('image/')) return;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      _bugScreenshotData = e.target.result;
+      document.getElementById('bug-report-preview-img').src = _bugScreenshotData;
+      document.getElementById('bug-report-preview').classList.remove('hidden');
+      document.getElementById('bug-report-dropzone').classList.add('hidden');
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function removeScreenshot() {
+    _bugScreenshotData = null;
+    document.getElementById('bug-report-preview').classList.add('hidden');
+    document.getElementById('bug-report-dropzone').classList.remove('hidden');
+    document.getElementById('bug-report-file-input').value = '';
+  }
+
+  async function submitBugReport() {
+    var title = document.getElementById('bug-report-title').value.trim();
+    var description = document.getElementById('bug-report-description').value.trim();
+    var steps = document.getElementById('bug-report-steps').value.trim();
+    var category = document.getElementById('bug-report-category').value;
+    var severityEl = document.querySelector('input[name="bug-severity"]:checked');
+    var severity = severityEl ? severityEl.value : 'minor';
+    var includeDiag = document.getElementById('bug-report-include-diag').checked;
+
+    if (!title) { toast('Title is required'); return; }
+    if (description.length < 20) { toast('Description must be at least 20 characters'); return; }
+
+    var submitBtn = document.getElementById('bug-report-submit');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Submitting...';
+
+    try {
+      var payload = {
+        title: title,
+        description: description,
+        steps: steps || null,
+        category: category,
+        severity: severity,
+        includeDiagnostics: includeDiag,
+        diagnostics: includeDiag ? _bugDiagnostics : null
+      };
+
+      var result = await api.post('/api/bug-report', payload);
+
+      // Show success
+      document.getElementById('bug-report-form-container').classList.add('hidden');
+      document.getElementById('bug-report-success').classList.remove('hidden');
+
+      if (result.issueUrl) {
+        document.getElementById('bug-report-success-msg').textContent =
+          'Your bug report has been submitted as a GitHub Issue.' +
+          (result.issueNumber ? ' Issue #' + result.issueNumber + ': "' + title + '"' : '');
+        var link = document.getElementById('bug-report-issue-link');
+        link.href = result.issueUrl;
+        link.classList.remove('hidden');
+      } else {
+        document.getElementById('bug-report-success-msg').textContent = 'Your report has been submitted. Thank you!';
+      }
+
+      // 30-second cooldown
+      _bugSubmitCooldown = true;
+      setTimeout(function() { _bugSubmitCooldown = false; }, 30000);
+
+    } catch (err) {
+      toast(err.message || 'Failed to submit report');
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Submit Report';
+    }
+  }
+
   window.App = {
     navigate: navigate,
     wizardNext: wizardNext,
@@ -7837,19 +8593,34 @@
     changeTaskStatus: changeTaskStatus,
     acceptWithoutPlanGuard: acceptWithoutPlanGuard,
     toggleFeedback: toggleFeedback,
+    openSchedulePopover: openSchedulePopover,
+    schedulePreset: schedulePreset,
+    confirmSchedule: confirmSchedule,
+    clearSchedule: clearSchedule,
     pasteImage: pasteImage,
     focusTerminal: function() { if (terminal) { terminal.scrollToBottom(); terminal.focus(); } },
     toggleMicrophone: toggleMicrophoneSpeech,
     attachTaskImage: attachTaskImage,
     promoteToKnowledge: promoteToKnowledge,
     filterKnowledge: filterKnowledge,
+    filterKbFolder: filterKbFolder,
     openKnowledgeDoc: openKnowledgeDoc,
     deleteKnowledgeDoc: deleteKnowledgeDoc,
+    createKbFolder: createKbFolder,
+    deleteKbFolder: deleteKbFolder,
+    moveKbDoc: moveKbDoc,
+    moveKbDocToFolder: moveKbDocToFolder,
+    kbDragStart: kbDragStart,
+    kbDragEnd: kbDragEnd,
+    kbFolderDragOver: kbFolderDragOver,
+    kbFolderDragLeave: kbFolderDragLeave,
+    kbFolderDrop: kbFolderDrop,
     cleanupTemp: cleanupTemp,
     loadTempStatus: loadTempStatus,
     createBackup: createBackup,
     restoreBackup: restoreBackup,
     deleteBackup: deleteBackup,
+    loadPlannerPage: loadPlannerPage,
     openAutopilotForm: openAutopilotForm,
     cancelAutopilotForm: cancelAutopilotForm,
     saveAutopilot: saveAutopilot,
@@ -7879,6 +8650,8 @@
     clearAgentFilter: clearAgentFilter,
     selectDep: selectDep,
     toggleSort: toggleSort,
+    setTextFilter: setTextFilter,
+    setTimeFilter: setTimeFilter,
     toggleGlobalAutopilot: toggleGlobalAutopilot,
     cancelAutopilotConfirm: cancelAutopilotConfirm,
     confirmGlobalAutopilot: confirmGlobalAutopilot,
@@ -7900,6 +8673,13 @@
     resetSmartConfig: resetSmartConfig,
     saveAgentModel: saveAgentModel,
     loadAgentDetail: loadAgentDetail,
+    showBugReportModal: showBugReportModal,
+    closeBugReportModal: closeBugReportModal,
+    toggleBugDiagnostics: toggleBugDiagnostics,
+    toggleScreenshotArea: toggleScreenshotArea,
+    handleScreenshotFile: handleScreenshotFile,
+    removeScreenshot: removeScreenshot,
+    submitBugReport: submitBugReport,
   };
 
   init();

@@ -2,6 +2,31 @@
 
 All notable changes to TeamHero are documented here.
 
+## v3.1.0
+
+### Features
+- Schedule button in task detail - defer task execution to a specific date/time
+- Planner + Timed Tasks - restructured autopilot into clearer task modes
+- Knowledge Base folders - organize docs into folders, create and delete folders
+- Knowledge Base full report rendering - reads actual .md deliverable files
+- Dashboard task list UX - sort by last updated, timestamps, text filter
+- Bug report system with diagnostics endpoint and GitHub issue submission
+- Notifications system - persistent notifications store
+
+### Fixes
+- Scheduler now correctly auto-fires pending_approval tasks with scheduledAt
+- Planner sidebar icon is now monochrome SVG (consistent with design rules)
+- Dashboard filter UI alignment fix
+- Offline mode - bundled vendor libraries (xterm, marked, qrcode) for CDN-free operation
+- KB auto-promote now reads full deliverable file content instead of just summary
+
+### System
+- Agent conflict prevention rules (scope declaration, orchestrator conflict checks)
+- Planning = active agent enforcement (orphaned planning task recovery)
+
+### Infrastructure
+- Bundled vendor libraries (xterm.min.js/css, marked, qrcode, fit/web-links addons) for offline mode
+
 ## v3.0.0
 
 - TeamHero 3.0 release - major platform overhaul

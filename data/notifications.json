@@ -1,0 +1,32 @@
+[
+  {
+    "id": "n-1774887232952-e1kr",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "Shipper submitted \"Release TeamHero v3.1.0 - Schedule Button + System Rules\" for review",
+    "detail": "",
+    "taskId": "mnddyy9683paft",
+    "timestamp": "2026-03-30T16:13:52.952Z",
+    "read": false
+  },
+  {
+    "id": "n-1774887208160-fu7j",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "K-Dev2 submitted \"Rebuild Kapow with all updates + test\" for review",
+    "detail": "",
+    "taskId": "mnddz0mq1k6p9p",
+    "timestamp": "2026-03-30T16:13:28.160Z",
+    "read": false
+  },
+  {
+    "id": "n-1774886878275-yw4q",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"Kapow UX: Auto-open default team, skip team manager screen\"",
+    "detail": "",
+    "taskId": "mncuqxaqcyghe3",
+    "timestamp": "2026-03-30T16:07:58.275Z",
+    "read": false
+  }
+]

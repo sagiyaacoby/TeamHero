@@ -4,17 +4,17 @@
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933)](https://nodejs.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-**Structured AI agent orchestration - manage agents like a real team.**
+**Manage AI agent teams with real project management discipline.**
 
 ---
 
-## The Story
+## Why This Exists
 
-I have been building software products for over 20 years. When I started using AI agents for my latest project, I ran into the same problem every developer hits - agents are powerful individually, but managing a team of them is chaos. No plans, no accountability, no structure.
+We have decades of tools for managing people - project boards, task trackers, review workflows. But when it comes to AI agents, there is nothing like that. You spin up agents and hope for the best. No plans, no accountability, no structure. I hit this wall while working on my own projects and could not find anything that treated agent management the way we treat people management.
 
-So I built TeamHero to run my own agents the way I run real teams: with clear roles, plans before execution, tracked deliverables, and reviews. It worked. Really well.
+So I built it. The result became [Kapow](https://gokapow.com) - a managed AI agent platform for businesses. The feedback was immediate. People got it. The idea that agents should work in a structured team with real project management discipline - not just run loose - resonated with developers and business owners alike.
 
-I decided to give the core of my platform to the community. This is not a demo or a teaser - it is the full orchestration system, open source under MIT. My contribution to a community that has given me so much.
+That response made something clear: the need for structured agent orchestration goes way beyond one product. As an entrepreneur, I decided the best thing I could do was release the core architecture as open source to share the unique methodology of running agents at scale. TeamHero is that release - the full orchestration platform under MIT license, no restrictions, nothing held back. My contribution to the open source community.
 
 ---
 
@@ -30,9 +30,19 @@ I decided to give the core of my platform to the community. This is not a demo o
 
 ---
 
+## What Makes It Different
+
+Most agent frameworks focus on creating agents. TeamHero focuses on managing them. The difference matters when you have multiple agents working on the same project - you need plans before execution, tracked deliverables, conflict prevention, and a single source of truth for what is happening across your team.
+
+TeamHero brings real project management to AI agents. Every task goes through plan, review, execute, and deliver. Every agent has persistent memory. Every file touched is declared upfront so agents do not overwrite each other. It is the discipline that makes agents actually useful at scale - not throwing more of them at the problem.
+
+---
+
 ## Who This Is For
 
-Developers who work with Claude Code and want structure around their agents. If you believe in plans before execution, tracked deliverables, and accountability over "let it run and hope" - this is for you.
+Developers who work with Claude Code and want structure around their agents. If you believe in plans before execution, tracked deliverables, and a disciplined approach over "let it run and hope" - this is for you.
+
+This is a builder platform. You set up your agents, define their roles, and manage your team through the orchestrator. It requires comfort with CLI and Node.js.
 
 ---
 
@@ -67,7 +77,7 @@ launch.bat
 bash launch.sh
 ```
 
-The dashboard opens at `http://localhost:3777`. That is it.
+The dashboard opens at `http://localhost:3777`. From there, open the Command Center and start building your team.
 
 ---
 

@@ -1,30 +1,28 @@
 # Contributing to TeamHero
 
-Thanks for your interest in contributing to TeamHero! This guide will help you get started.
+Thanks for your interest in contributing to TeamHero! This guide covers everything you need to get started.
 
-## Getting Started
+## Running Locally
 
-1. Fork the repository
-2. Clone your fork:
+1. Fork and clone:
    ```bash
    git clone https://github.com/YOUR-USERNAME/TeamHero.git
    cd TeamHero
    npm install
    ```
-3. Create a branch for your work:
+
+2. Start the server:
    ```bash
-   git checkout -b my-feature
+   # Windows
+   launch.bat
+
+   # Mac/Linux
+   bash launch.sh
    ```
-4. Make your changes
-5. Test locally by running `launch.bat` (Windows) or `bash launch.sh` (Mac/Linux)
-6. Commit and push to your fork
-7. Open a Pull Request against the `main` branch
 
-## What Can I Work On?
+3. The dashboard opens at `http://localhost:3796`. The server uses Node's built-in `http` module with no external framework - just `npm install` and go.
 
-- Check [open issues](https://github.com/sagiyaacoby/TeamHero/issues) for bugs and feature requests
-- Issues labeled `good first issue` are great starting points
-- If you have an idea not covered by an existing issue, open one first to discuss
+4. The API runs on the same port. Try `curl http://localhost:3796/api/health` to verify everything is working.
 
 ## Project Structure
 
@@ -43,13 +41,39 @@ TeamHero/
 └── launch.sh         # Mac/Linux launcher
 ```
 
-## Guidelines
+## What Contributions Are Welcome
 
-- **Keep it simple.** TeamHero uses vanilla JS with zero frontend frameworks. No build step. Keep it that way.
-- **No breaking changes** to the API without discussion first.
-- **Test locally** before submitting a PR. Make sure the dashboard loads and basic operations work.
-- **One PR per feature/fix.** Don't bundle unrelated changes.
-- **Write clear commit messages.** Describe what changed and why.
+- **Bug fixes** - found something broken? Fix it and send a PR
+- **Documentation** - better examples, clearer explanations, typo fixes
+- **Agent templates** - new agent personalities and roles for different team types
+- **Issue triage** - reproducing bugs, adding details to reports
+- **Feature ideas** - open an issue to discuss before building
+- **Translations** - help make TeamHero accessible in more languages
+- **Tests** - we'd love more test coverage
+
+## Pull Request Process
+
+1. Create a branch from `main` for your work
+2. Make your changes - keep PRs focused on one thing
+3. Test locally: make sure the dashboard loads and basic operations work
+4. Commit with clear messages describing what changed and why
+5. Open a PR against the `main` branch
+
+### What to expect after submitting
+
+- We aim to review PRs within **48-72 hours**
+- We'll provide constructive feedback if changes are needed
+- Once approved, we'll merge and include it in the next release
+
+## DCO (Developer Certificate of Origin)
+
+We use the DCO instead of a CLA. This means you certify that you wrote the code (or have the right to submit it) by adding a sign-off to your commits:
+
+```bash
+git commit -s -m "Fix task status transition bug"
+```
+
+This adds a `Signed-off-by` line to your commit. That's it - no legal forms to sign.
 
 ## Code Style
 
@@ -57,6 +81,7 @@ TeamHero/
 - Server is a single `server.js` file using Node's built-in `http` module.
 - Portal uses plain HTML, CSS, and JS. No build tools.
 - Prefer readability over cleverness.
+- Keep it simple - zero frontend frameworks is intentional.
 
 ## Reporting Bugs
 
@@ -72,6 +97,10 @@ Open an issue describing:
 - The problem you're trying to solve
 - Your proposed solution
 - Any alternatives you considered
+
+## Security Issues
+
+Please report security vulnerabilities privately - see [SECURITY.md](SECURITY.md) for details.
 
 ## License
 

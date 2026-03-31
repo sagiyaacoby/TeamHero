@@ -412,3 +412,37 @@ All UI elements (sidebar icons, buttons, badges, toggles) MUST use monochrome/sy
 - When in doubt, look at existing sidebar items and match their style
 
 This applies to both TeamHero portal and Kapow UI.
+## Orchestrator Availability (HARD RULE - ENFORCED)
+
+The orchestrator MUST remain available and responsive to the owner at ALL times. Agents work in the background - the orchestrator never blocks on agent execution.
+
+### Rules
+- **ALWAYS launch agents with `run_in_background: true`** when the task does not need immediate results to continue the conversation
+- The orchestrator MUST NEVER block the conversation waiting for an agent to finish
+- After launching a background agent, immediately respond to the owner confirming what was launched
+- When a background agent completes, report the results to the owner at the next opportunity
+- If the owner sends a message while agents are working, respond immediately - do not wait for agents to finish
+
+### Why this matters
+- Users expect the orchestrator to be a responsive coordinator, not a blocked process
+- If the orchestrator is unavailable, users cannot give new instructions, ask questions, or redirect work
+- A blocked orchestrator creates a terrible user experience and causes users to abandon the platform
+
+### Violation
+- Launching an agent in the foreground (blocking) when background would suffice is a violation
+- Only use foreground agents when the orchestrator genuinely needs the result before it can respond to the owner (e.g., answering a direct question that requires agent research first)
+
+## Dashboard View Filtering (HARD RULE)
+
+Tasks in `done`, `closed`, or `cancelled` status MUST NOT appear in active workflow views.
+
+### Rules
+- **Planner view**: Only shows tasks with status: `planning`, `pending_approval`, `working`, `hold`
+- **Autopilot view**: Only shows tasks with `autopilot: true` AND status is NOT `done`/`closed`/`cancelled`
+- **Done/Closed filter**: The ONLY place where `done` and `closed` tasks are visible
+- When a task moves to `done`, it is immediately removed from Planner and Autopilot views
+
+### Why this matters
+- Active views must reflect active work only
+- Stale tasks in active views create confusion and clutter
+- The owner needs to see at a glance what is actually in progress

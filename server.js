@@ -3603,6 +3603,30 @@ function sendTaskToTerminal(task, taskPath, entry) {
     });
     writeJSON(taskPath, task);
     if (entry) entry.blocker = task.blocker;
+
+    // Notify dashboard about terminal send failure
+    var failAgentName = entry ? (entry.assignedTo || '') : '';
+    try {
+      var failReg = readJSON(path.join(ROOT, 'agents/_registry.json'));
+      if (failReg && failReg.agents) {
+        var failAg = failReg.agents.find(function(a) { return a.id === (entry && entry.assignedTo); });
+        if (failAg) failAgentName = failAg.name;
+      }
+    } catch(e) {}
+    broadcastEvent('task.scheduled_fired', { taskId: task.id, title: task.title, agentName: failAgentName, failed: true });
+
+    var failNotifPath = path.join(ROOT, 'data/notifications.json');
+    var failNotifs = readJSON(failNotifPath) || [];
+    failNotifs.unshift({
+      id: 'notif-' + genId(),
+      type: 'scheduled_fired',
+      taskId: task.id,
+      title: 'Scheduled task "' + task.title + '" fired but no terminal session available',
+      timestamp: now.toISOString(),
+      read: false
+    });
+    if (failNotifs.length > 100) failNotifs = failNotifs.slice(0, 100);
+    writeJSON(failNotifPath, failNotifs);
   }
 }
 
@@ -3649,6 +3673,30 @@ function runScheduler() {
     changed = true;
 
     sendTaskToTerminal(task, taskPath, entry);
+
+    // Notify dashboard about recurring task firing
+    var recAgentName = entry.assignedTo || '';
+    try {
+      var recReg = readJSON(path.join(ROOT, 'agents/_registry.json'));
+      if (recReg && recReg.agents) {
+        var recAg = recReg.agents.find(function(a) { return a.id === entry.assignedTo; });
+        if (recAg) recAgentName = recAg.name;
+      }
+    } catch(e) {}
+    broadcastEvent('task.scheduled_fired', { taskId: entry.id, title: task.title, agentName: recAgentName });
+
+    var recNotifPath = path.join(ROOT, 'data/notifications.json');
+    var recNotifs = readJSON(recNotifPath) || [];
+    recNotifs.unshift({
+      id: 'notif-' + genId(),
+      type: 'scheduled_fired',
+      taskId: entry.id,
+      title: (recAgentName || 'Agent') + ' scheduled task "' + task.title + '" has fired (run #' + task.runCount + ')',
+      timestamp: now.toISOString(),
+      read: false
+    });
+    if (recNotifs.length > 100) recNotifs = recNotifs.slice(0, 100);
+    writeJSON(recNotifPath, recNotifs);
   });
 
   // Process one-time scheduled tasks
@@ -3687,6 +3735,30 @@ function runScheduler() {
     changed = true;
 
     sendTaskToTerminal(task, taskPath, entry);
+
+    // Notify dashboard about one-time scheduled task firing
+    var otAgentName = entry.assignedTo || '';
+    try {
+      var otReg = readJSON(path.join(ROOT, 'agents/_registry.json'));
+      if (otReg && otReg.agents) {
+        var otAg = otReg.agents.find(function(a) { return a.id === entry.assignedTo; });
+        if (otAg) otAgentName = otAg.name;
+      }
+    } catch(e) {}
+    broadcastEvent('task.scheduled_fired', { taskId: entry.id, title: task.title, agentName: otAgentName });
+
+    var otNotifPath = path.join(ROOT, 'data/notifications.json');
+    var otNotifs = readJSON(otNotifPath) || [];
+    otNotifs.unshift({
+      id: 'notif-' + genId(),
+      type: 'scheduled_fired',
+      taskId: entry.id,
+      title: (otAgentName || 'Agent') + ' scheduled task "' + task.title + '" has fired',
+      timestamp: now.toISOString(),
+      read: false
+    });
+    if (otNotifs.length > 100) otNotifs = otNotifs.slice(0, 100);
+    writeJSON(otNotifPath, otNotifs);
   });
 
   // Stale planning detection: mark planning tasks with no progress after 60s

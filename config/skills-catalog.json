@@ -90,5 +90,18 @@
       { "key": "VERCEL_PROJECT_ID", "label": "Vercel Project ID", "type": "text", "required": false, "help": "Optional. Found in .vercel/project.json after running vercel link." }
     ],
     "contextSnippet": "## Vercel CLI\n\nThe Vercel skill is enabled. Use `vercel` CLI for all Vercel operations.\n\n### Deploying\n- `vercel` or `vercel deploy` - deploy to preview\n- `vercel deploy --prod` - deploy to production\n- `vercel redeploy [deployment-url]` - rebuild and redeploy\n\n### Project Management\n- `vercel link` - link local directory to a Vercel project\n- `vercel pull` - pull remote env vars and project settings\n- `vercel build` - build project locally\n- `vercel dev` - run development server locally\n- `vercel project ls/add/rm` - manage projects\n\n### Deployments\n- `vercel list` - list recent deployments\n- `vercel inspect [deployment-url]` - get deployment details\n- `vercel logs [deployment-url]` - view runtime logs (add --follow for streaming)\n- `vercel promote [deployment-url]` - promote a deployment to production\n- `vercel rollback [deployment-url]` - roll back production to a previous deployment\n- `vercel remove [deployment-url]` - remove a deployment\n\n### Environment Variables\n- `vercel env ls` - list env vars\n- `vercel env add [name] [environment]` - add env var (production/preview/development)\n- `vercel env rm [name] [environment]` - remove env var\n- `vercel env pull [file]` - pull env vars to local .env file\n\n### Domains & DNS\n- `vercel domains ls/add/rm/buy` - manage domains\n- `vercel dns ls/add/rm` - manage DNS records\n- `vercel certs ls/issue/rm` - manage SSL certificates\n- `vercel alias set [deployment] [domain]` - set custom domain alias\n\n### Teams & Auth\n- `vercel login` - authenticate with Vercel\n- `vercel whoami` - show current user\n- `vercel switch [team]` - switch team scope\n- `vercel teams list/add/invite` - manage teams\n\n### Rules\n- Use `--token $VERCEL_TOKEN` for non-interactive/CI usage\n- Use `--yes` flag to skip confirmation prompts in automation\n- Use `--prod` flag to target production environment\n- Use `vercel whoami` to verify authentication\n"
+  },
+  {
+    "id": "figma",
+    "name": "Figma Design",
+    "description": "Access Figma designs, components, and design tokens. Read design files, inspect properties, extract assets, and get design specifications.",
+    "icon": "\ud83c\udfa8",
+    "type": "mcp",
+    "packages": [],
+    "mcpConfig": {
+      "url": "https://mcp.figma.com/mcp",
+      "type": "http"
+    },
+    "contextSnippet": "## Figma Design (MCP)\n\nThe Figma skill is enabled via remote MCP server. Authentication is handled via OAuth browser flow.\n\n### Available Operations\n- Read Figma design files and inspect layer hierarchy\n- Get component properties, styles, and design tokens\n- Extract text content, colors, spacing, and typography\n- Inspect auto-layout and constraint settings\n- Get export/asset URLs for design elements\n\n### Usage Notes\n- First use will prompt OAuth authentication in the browser\n- No API key needed - auth is handled automatically\n- Use Figma file URLs or node IDs to reference specific designs\n- Design data is read-only - modifications must be made in Figma directly\n"
   }
 ]

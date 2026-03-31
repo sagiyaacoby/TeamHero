@@ -320,12 +320,13 @@
   var NOTIF_SOUND_DEBOUNCE = 5000;
 
   function addNotification(type, data) {
-    var priorityMap = { 'task.pending_approval': 'high', 'task.blocker': 'high', 'task.interrupted': 'high', 'task.done': 'medium', 'task.closed': 'low' };
-    var iconMap = { 'task.pending_approval': '\u2610', 'task.blocker': '\u26A0', 'task.done': '\u2714', 'task.closed': '\u2500', 'task.interrupted': '\u26A0' };
+    var priorityMap = { 'task.pending_approval': 'high', 'task.blocker': 'high', 'task.interrupted': 'high', 'task.scheduled_fired': 'high', 'task.done': 'medium', 'task.closed': 'low' };
+    var iconMap = { 'task.pending_approval': '\u2610', 'task.blocker': '\u26A0', 'task.done': '\u2714', 'task.closed': '\u2500', 'task.interrupted': '\u26A0', 'task.scheduled_fired': '\u23F0' };
     var textMap = {
       'task.pending_approval': (data.agentName || 'Agent') + ' submitted "' + (data.title || 'task') + '" for review',
       'task.blocker': (data.agentName || 'Agent') + ' hit a blocker on "' + (data.title || 'task') + '"',
       'task.interrupted': 'Agent ' + (data.agentName || 'unknown') + ' appears disconnected. Task "' + (data.title || 'task') + '" is stalled.',
+      'task.scheduled_fired': 'Scheduled task "' + (data.title || 'task') + '" has fired' + (data.failed ? ' (no terminal available)' : ' and needs agent execution'),
       'task.done': (data.agentName || 'Agent') + ' completed "' + (data.title || 'task') + '"',
       'task.closed': '"' + (data.title || 'Task') + '" has been closed'
     };
@@ -376,8 +377,8 @@
       list.innerHTML = '<div class="notif-empty">No notifications</div>';
       return;
     }
-    var iconMap = { 'task.pending_approval': '\u2610', 'task.blocker': '\u26A0', 'task.done': '\u2714', 'task.closed': '\u2500', 'task.interrupted': '\u26A0' };
-    var statusColorMap = { 'task.blocker': 'notif-status-blocker', 'task.done': 'notif-status-done', 'task.pending_approval': 'notif-status-pending', 'task.closed': 'notif-status-closed', 'task.interrupted': 'notif-status-interrupted' };
+    var iconMap = { 'task.pending_approval': '\u2610', 'task.blocker': '\u26A0', 'task.done': '\u2714', 'task.closed': '\u2500', 'task.interrupted': '\u26A0', 'interrupted': '\u26A0', 'task.scheduled_fired': '\u23F0', 'scheduled_fired': '\u23F0' };
+    var statusColorMap = { 'task.blocker': 'notif-status-blocker', 'task.done': 'notif-status-done', 'task.pending_approval': 'notif-status-pending', 'task.closed': 'notif-status-closed', 'task.interrupted': 'notif-status-interrupted', 'interrupted': 'notif-status-interrupted', 'task.scheduled_fired': 'notif-status-scheduled', 'scheduled_fired': 'notif-status-scheduled' };
     var html = '';
     for (var i = 0; i < notifications.length; i++) {
       var n = notifications[i];
@@ -7035,7 +7036,7 @@
 
       // Filter recurring autopilot tasks (have interval)
       var recurring = (tasksData.tasks || []).filter(function(t) {
-        return t.autopilot && t.interval && t.intervalUnit && t.status !== 'cancelled';
+        return t.autopilot && t.interval && t.intervalUnit && t.status !== 'cancelled' && t.status !== 'done' && t.status !== 'closed';
       });
 
       if (recurring.length === 0) {
@@ -7393,7 +7394,7 @@
       agentMap['orchestrator'] = agentMap['orchestrator'] || 'Orchestrator';
 
       var recurring = (tasksData.tasks || []).filter(function(t) {
-        return t.interval && t.intervalUnit && t.status !== 'cancelled';
+        return t.interval && t.intervalUnit && t.status !== 'cancelled' && t.status !== 'done' && t.status !== 'closed';
       });
 
       if (recurring.length === 0) {
@@ -7437,7 +7438,7 @@
 
       var now = new Date();
       var futureTasks = (tasksData.tasks || []).filter(function(t) {
-        if (t.status === 'closed' || t.status === 'cancelled') return false;
+        if (t.status === 'closed' || t.status === 'done' || t.status === 'cancelled') return false;
         if (t.interval) return false; // recurring tasks shown in the other section
         if (t.scheduledAt) return true;
         if (t.dueDate && new Date(t.dueDate) > now) return true;
@@ -7502,7 +7503,7 @@
       var tasksData = state.tasks && state.tasks.length > 0 ? { tasks: state.tasks } : await api.get('/api/tasks');
       var now = new Date();
       var count = (tasksData.tasks || []).filter(function(t) {
-        if (t.status === 'closed' || t.status === 'cancelled') return false;
+        if (t.status === 'closed' || t.status === 'done' || t.status === 'cancelled') return false;
         if (t.interval && t.intervalUnit) return true;
         if (t.scheduledAt) return true;
         if (t.dueDate && new Date(t.dueDate) > now) return true;

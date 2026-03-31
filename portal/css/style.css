@@ -1727,6 +1727,7 @@ body {
 .task-item.task-interrupted:hover { box-shadow: 0 0 14px 3px rgba(232,168,56,0.4); }
 .interrupted-badge { color: #e8a838; font-size: 11px; margin-left: 4px; vertical-align: middle; }
 .notif-item.notif-status-interrupted { border-left-color: #e8a838; }
+.notif-item.notif-status-scheduled { border-left-color: #4fc3f7; }
 
 /* ── Knowledge Base ────────────────────────────── */
 /* Knowledge layout with folder sidebar */

@@ -1,5 +1,497 @@
 [
   {
+    "id": "n-1774941228276-ldk7",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"Debug: kapow.exe not opening - check logs and diagnose\"",
+    "detail": "",
+    "taskId": "mne9w7u4wwz0n5",
+    "timestamp": "2026-03-31T07:13:48.276Z",
+    "read": false
+  },
+  {
+    "id": "n-1774940565194-cq80",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"Kill orphaned Kapow/node processes before testing\"",
+    "detail": "",
+    "taskId": "mne9qztiddnomj",
+    "timestamp": "2026-03-31T07:02:45.194Z",
+    "read": false
+  },
+  {
+    "id": "n-1774940440273-vjw5",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"Fix Kapow window popups - implement all 6 fixes from investigation\"",
+    "detail": "",
+    "taskId": "mne9ktnglh5tzm",
+    "timestamp": "2026-03-31T07:00:40.273Z",
+    "read": false
+  },
+  {
+    "id": "n-1774940407465-5yr6",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "Scout completed \"Security Audit: Scan TeamHero repo history for leaked secrets\"",
+    "detail": "",
+    "taskId": "mnds0p8emjei9a",
+    "timestamp": "2026-03-31T07:00:07.465Z",
+    "read": false
+  },
+  {
+    "id": "n-1774940034917-8j0t",
+    "type": "task.interrupted",
+    "priority": "high",
+    "title": "Agent Scout appears disconnected. Task \"Security Gate: Automated pre-commit/pre-release checks for TeamHero & Kapow\" is stalled.",
+    "detail": "",
+    "taskId": "mnds0vhtpk9gwy",
+    "timestamp": "2026-03-31T06:53:54.917Z",
+    "read": false
+  },
+  {
+    "id": "notif-mne9gw2suecezw",
+    "type": "interrupted",
+    "taskId": "mnds0vhtpk9gwy",
+    "title": "Agent Scout appears disconnected. Task \"Security Gate: Automated pre-commit/pre-release checks for TeamHero & Kapow\" is stalled.",
+    "timestamp": "2026-03-31T06:53:54.910Z",
+    "read": false
+  },
+  {
+    "id": "n-1774912461167-3dgb",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"Fix Kapow blinking bug - app won't open in test folder\"",
+    "detail": "",
+    "taskId": "mnds7ct2xdncwi",
+    "timestamp": "2026-03-30T23:14:21.167Z",
+    "read": false
+  },
+  {
+    "id": "n-1774911660661-9in1",
+    "type": "task.interrupted",
+    "priority": "high",
+    "title": "Agent Scout appears disconnected. Task \"Security Audit: Scan TeamHero repo history for leaked secrets\" is stalled.",
+    "detail": "",
+    "taskId": "mnds0p8emjei9a",
+    "timestamp": "2026-03-30T23:01:00.661Z",
+    "read": false
+  },
+  {
+    "id": "notif-mndskqd031fq93",
+    "type": "interrupted",
+    "taskId": "mnds0p8emjei9a",
+    "title": "Agent Scout appears disconnected. Task \"Security Audit: Scan TeamHero repo history for leaked secrets\" is stalled.",
+    "timestamp": "2026-03-30T23:01:00.654Z",
+    "read": false
+  },
+  {
+    "id": "n-1774910698834-sstx",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"Kapow Global Top Bar - Navigation wrapper with Next/Back buttons\"",
+    "detail": "",
+    "taskId": "mndrg8gt4064jt",
+    "timestamp": "2026-03-30T22:44:58.834Z",
+    "read": false
+  },
+  {
+    "id": "n-1774910447012-joeh",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "Dev completed \"Add Figma MCP to Skills Library\"",
+    "detail": "",
+    "taskId": "mndrsipcmqcaj9",
+    "timestamp": "2026-03-30T22:40:47.012Z",
+    "read": false
+  },
+  {
+    "id": "n-1774910296928-b1ze",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "K-Dev submitted \"Kapow Global Top Bar - Navigation wrapper with Next/Back buttons\" for review",
+    "detail": "",
+    "taskId": "mndrg8gt4064jt",
+    "timestamp": "2026-03-30T22:38:16.928Z",
+    "read": false
+  },
+  {
+    "id": "n-1774910112520-hf91",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"Kapow Auth Detection - Detect successful Google/OAuth sign-in inside app\"",
+    "detail": "",
+    "taskId": "mndrgkws17tabx",
+    "timestamp": "2026-03-30T22:35:12.520Z",
+    "read": false
+  },
+  {
+    "id": "n-1774910003672-k9pl",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "K-Dev submitted \"Kapow Auth Detection - Detect successful Google/OAuth sign-in inside app\" for review",
+    "detail": "",
+    "taskId": "mndrgkws17tabx",
+    "timestamp": "2026-03-30T22:33:23.673Z",
+    "read": false
+  },
+  {
+    "id": "n-1774909226304-ybxf",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"Copy latest fixes to kapow-win-test and verify app launches\"",
+    "detail": "",
+    "taskId": "mndr2uwcxou1ob",
+    "timestamp": "2026-03-30T22:20:26.304Z",
+    "read": false
+  },
+  {
+    "id": "n-1774907601153-6m9y",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "Scout completed \"Investigate mystery popup windows from Kapow\"",
+    "detail": "",
+    "taskId": "mndo70y9cftt4i",
+    "timestamp": "2026-03-30T21:53:21.153Z",
+    "read": false
+  },
+  {
+    "id": "n-1774907390057-pdpz",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"Kapow App - 5 Bug Fixes & UX Improvements\"",
+    "detail": "",
+    "taskId": "mndoy5fhabg5cy",
+    "timestamp": "2026-03-30T21:49:50.057Z",
+    "read": false
+  },
+  {
+    "id": "n-1774907305893-zsro",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "Scout submitted \"Research: Top 3 Kapow Dashboards - Market Needs Analysis\" for review",
+    "detail": "",
+    "taskId": "mndpwvervr8r74",
+    "timestamp": "2026-03-30T21:48:25.893Z",
+    "read": false
+  },
+  {
+    "id": "n-1774906988624-ixso",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"File Security & Sandbox - on/off toggle, sandbox toggle, disclaimer\"",
+    "detail": "",
+    "taskId": "mndoyi1eu74s9f",
+    "timestamp": "2026-03-30T21:43:08.624Z",
+    "read": false
+  },
+  {
+    "id": "n-1774906548122-cbrn",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"Fix post-reset screen bug - API 404 error and unexpected screen\"",
+    "detail": "",
+    "taskId": "mndoyd8aq5pve5",
+    "timestamp": "2026-03-30T21:35:48.122Z",
+    "read": false
+  },
+  {
+    "id": "n-1774906360303-www2",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"Replace PowerShell folder picker with in-app file selector\"",
+    "detail": "",
+    "taskId": "mndoymc4cq53x6",
+    "timestamp": "2026-03-30T21:32:40.303Z",
+    "read": false
+  },
+  {
+    "id": "n-1774906034824-cudz",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "K-Dev submitted \"Settings page - add sandbox enable/disable toggle\" for review",
+    "detail": "",
+    "taskId": "mndoyoejpdm6pb",
+    "timestamp": "2026-03-30T21:27:14.824Z",
+    "read": false
+  },
+  {
+    "id": "n-1774906034336-z566",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "K-Dev submitted \"Replace PowerShell folder picker with in-app file selector\" for review",
+    "detail": "",
+    "taskId": "mndoymc4cq53x6",
+    "timestamp": "2026-03-30T21:27:14.336Z",
+    "read": false
+  },
+  {
+    "id": "n-1774906033910-g78j",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "K-Dev submitted \"File Security screen - add on/off toggle + AI bypass disclaimer\" for review",
+    "detail": "",
+    "taskId": "mndoyi1eu74s9f",
+    "timestamp": "2026-03-30T21:27:13.910Z",
+    "read": false
+  },
+  {
+    "id": "n-1774906033382-81hx",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "K-Dev submitted \"Fix post-reset screen bug - API 404 error and unexpected screen\" for review",
+    "detail": "",
+    "taskId": "mndoyd8aq5pve5",
+    "timestamp": "2026-03-30T21:27:13.382Z",
+    "read": false
+  },
+  {
+    "id": "n-1774906032474-dcqg",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "K-Dev submitted \"Rename System Reset to Full Reset + ensure full onboarding flow\" for review",
+    "detail": "",
+    "taskId": "mndoyap3qcz1sv",
+    "timestamp": "2026-03-30T21:27:12.474Z",
+    "read": false
+  },
+  {
+    "id": "n-1774905218928-52fb",
+    "type": "task.interrupted",
+    "priority": "high",
+    "title": "Agent Scout appears disconnected. Task \"Investigate mystery popup windows from Kapow\" is stalled.",
+    "detail": "",
+    "taskId": "mndo70y9cftt4i",
+    "timestamp": "2026-03-30T21:13:38.928Z",
+    "read": false
+  },
+  {
+    "id": "notif-mndoqnvyqtqznp",
+    "type": "interrupted",
+    "taskId": "mndo70y9cftt4i",
+    "title": "Agent Scout appears disconnected. Task \"Investigate mystery popup windows from Kapow\" is stalled.",
+    "timestamp": "2026-03-30T21:13:38.911Z",
+    "read": false
+  },
+  {
+    "id": "n-1774904209381-qdeq",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev2 completed \"Rebuild Kapow SEA binary with WebView2 fixes\"",
+    "detail": "",
+    "taskId": "mndnwl9lle380a",
+    "timestamp": "2026-03-30T20:56:49.381Z",
+    "read": false
+  },
+  {
+    "id": "n-1774903712435-swc3",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"Kill orphaned node PID 11988 and verify Kapow recovery\"",
+    "detail": "",
+    "taskId": "mndnoc0jcyov1t",
+    "timestamp": "2026-03-30T20:48:32.435Z",
+    "read": false
+  },
+  {
+    "id": "n-1774903431404-uteq",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"Fix WebView2 window not opening - check window.js and libwebview.node\"",
+    "detail": "",
+    "taskId": "mndmdmzx0my8vq",
+    "timestamp": "2026-03-30T20:43:51.404Z",
+    "read": false
+  },
+  {
+    "id": "n-1774903359450-lvaf",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "Scout completed \"Investigate running Kapow processes and diagnose exe issues\"",
+    "detail": "",
+    "taskId": "mndnknqrhvbmt4",
+    "timestamp": "2026-03-30T20:42:39.450Z",
+    "read": false
+  },
+  {
+    "id": "n-1774902496528-mdcm",
+    "type": "task.interrupted",
+    "priority": "high",
+    "title": "Agent K-Dev appears disconnected. Task \"Fix WebView2 window not opening - check window.js and libwebview.node\" is stalled.",
+    "detail": "",
+    "taskId": "mndmdmzx0my8vq",
+    "timestamp": "2026-03-30T20:28:16.528Z",
+    "read": false
+  },
+  {
+    "id": "notif-mndn4b9qz2fcok",
+    "type": "interrupted",
+    "taskId": "mndmdmzx0my8vq",
+    "title": "Agent K-Dev appears disconnected. Task \"Fix WebView2 window not opening - check window.js and libwebview.node\" is stalled.",
+    "timestamp": "2026-03-30T20:28:16.524Z",
+    "read": false
+  },
+  {
+    "id": "n-1774901641072-gmet",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "Dev completed \"Fix: Done/closed tasks should not appear in Planner or Autopilot views\"",
+    "detail": "",
+    "taskId": "mndmkuqt7tl28a",
+    "timestamp": "2026-03-30T20:14:01.072Z",
+    "read": false
+  },
+  {
+    "id": "n-1774900570058-145a",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"Debug: Kapow still opens in browser + team Error status - verify fixes and check logs\"",
+    "detail": "",
+    "taskId": "mndku4wv360i53",
+    "timestamp": "2026-03-30T19:56:10.058Z",
+    "read": false
+  },
+  {
+    "id": "n-1774898462063-n2r7",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"Kill orphaned Kapow process and copy updated files to win-test\"",
+    "detail": "",
+    "taskId": "mndko087rrekar",
+    "timestamp": "2026-03-30T19:21:02.063Z",
+    "read": false
+  },
+  {
+    "id": "n-1774898184374-74gx",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev completed \"CRITICAL: Fix Kapow WebView2 - app opens in system browser instead of embedded window\"",
+    "detail": "",
+    "taskId": "mndjc792hd4nbh",
+    "timestamp": "2026-03-30T19:16:24.374Z",
+    "read": false
+  },
+  {
+    "id": "n-1774896423324-q22a",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "K-Dev submitted \"CRITICAL: Fix Kapow WebView2 - app opens in system browser instead of embedded window\" for review",
+    "detail": "",
+    "taskId": "mndjc792hd4nbh",
+    "timestamp": "2026-03-30T18:47:03.324Z",
+    "read": false
+  },
+  {
+    "id": "n-1774893136869-mfog",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "Scout submitted \"Investigate: Kapow welcome screen bug after restart/team deletion\" for review",
+    "detail": "",
+    "taskId": "mndhfgodjgtofk",
+    "timestamp": "2026-03-30T17:52:16.869Z",
+    "read": false
+  },
+  {
+    "id": "n-1774891806790-0sf1",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "Pen submitted \"Write Hebrew Facebook post - Kapow/TeamHero community announcement\" for review",
+    "detail": "",
+    "taskId": "mndgokzqqssa70",
+    "timestamp": "2026-03-30T17:30:06.790Z",
+    "read": false
+  },
+  {
+    "id": "n-1774891420418-43k5",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev2 completed \"Rebuild Kapow with all updates + test\"",
+    "detail": "",
+    "taskId": "mnddz0mq1k6p9p",
+    "timestamp": "2026-03-30T17:23:40.418Z",
+    "read": false
+  },
+  {
+    "id": "n-1774891091931-ilf0",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev2 completed \"Bug: Kapow test shares data/port with TeamHero - must be isolated\"",
+    "detail": "",
+    "taskId": "mndfqe3l7jjeyg",
+    "timestamp": "2026-03-30T17:18:11.931Z",
+    "read": false
+  },
+  {
+    "id": "n-1774890945064-4fhc",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "Dev completed \"Fix: Scheduled tasks must auto-launch agent when time arrives\"",
+    "detail": "",
+    "taskId": "mndg07pf7vji9f",
+    "timestamp": "2026-03-30T17:15:45.064Z",
+    "read": false
+  },
+  {
+    "id": "n-1774890704696-bsj0",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "Dev submitted \"Fix: Scheduled tasks must auto-launch agent when time arrives\" for review",
+    "detail": "",
+    "taskId": "mndg07pf7vji9f",
+    "timestamp": "2026-03-30T17:11:44.696Z",
+    "read": false
+  },
+  {
+    "id": "n-1774890257086-kfbp",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "K-Dev2 submitted \"Bug: Kapow test shares data/port with TeamHero - must be isolated\" for review",
+    "detail": "",
+    "taskId": "mndfqe3l7jjeyg",
+    "timestamp": "2026-03-30T17:04:17.086Z",
+    "read": false
+  },
+  {
+    "id": "n-1774888509949-acbg",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev2 completed \"Rebuild Kapow with all updates + test\"",
+    "detail": "",
+    "taskId": "mnddz0mq1k6p9p",
+    "timestamp": "2026-03-30T16:35:09.949Z",
+    "read": false
+  },
+  {
+    "id": "n-1774888163756-zxs0",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "K-Dev2 completed \"CRITICAL: Fix Kapow update mechanism - disable TeamHero upgrade path\"",
+    "detail": "",
+    "taskId": "mndedgzh1u8ua6",
+    "timestamp": "2026-03-30T16:29:23.756Z",
+    "read": false
+  },
+  {
+    "id": "n-1774887908113-z5qc",
+    "type": "task.pending_approval",
+    "priority": "high",
+    "title": "K-Dev2 submitted \"CRITICAL: Fix Kapow update mechanism - disable TeamHero upgrade path\" for review",
+    "detail": "",
+    "taskId": "mndedgzh1u8ua6",
+    "timestamp": "2026-03-30T16:25:08.113Z",
+    "read": false
+  },
+  {
+    "id": "n-1774887765107-42a3",
+    "type": "task.done",
+    "priority": "medium",
+    "title": "Shipper completed \"Release TeamHero v3.1.0 - Schedule Button + System Rules\"",
+    "detail": "",
+    "taskId": "mnddyy9683paft",
+    "timestamp": "2026-03-30T16:22:45.107Z",
+    "read": false
+  },
+  {
     "id": "n-1774887232952-e1kr",
     "type": "task.pending_approval",
     "priority": "high",

@@ -1543,6 +1543,10 @@
           if (pre === '"' || pre === "'") return m;
           return pre + '<a href="/api/raw/' + path + '" target="_blank" style="display:inline-block;margin:4px 0"><img src="/api/raw/' + path + '" alt="' + escHtml(path) + '" style="max-width:320px;max-height:200px;border-radius:6px;border:1px solid var(--border)"></a>';
         });
+        // Sanitize rendered HTML to prevent XSS via malicious markdown
+        if (typeof DOMPurify !== 'undefined') {
+          html = DOMPurify.sanitize(html, { ADD_ATTR: ['target', 'rel', 'onclick'], ADD_TAGS: ['img'] });
+        }
         return html;
       }
       return escHtml(text).replace(/\n/g, '<br>');

@@ -120,8 +120,18 @@ trap "kill $SERVER_PID 2>/dev/null" EXIT
 
 sleep 3
 
-# Read port from config/system.json
-PORTAL_PORT=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('config/system.json','utf8')).port||3796)}catch(e){console.log(3796)}" 2>/dev/null)
+# Re-read port from config/system.json (server may have auto-selected a different port)
+PORTAL_PORT=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('config/system.json','utf8')).port||3797)}catch(e){console.log(3797)}" 2>/dev/null)
+
+# Verify identity - ensure TeamHero is actually responding on this port
+IDENTITY=$(node -e "var h=require('http');h.get('http://localhost:${PORTAL_PORT}/api/identity',{timeout:2000},function(r){var d='';r.on('data',function(c){d+=c});r.on('end',function(){try{var j=JSON.parse(d);console.log(j.product||'unknown')}catch(e){console.log('unknown')}})}).on('error',function(){console.log('unreachable')})" 2>/dev/null)
+
+if [ "$IDENTITY" != "teamhero" ]; then
+    echo ""
+    echo "  WARNING: Port ${PORTAL_PORT} is not responding as TeamHero."
+    echo "  Another service may be occupying this port."
+    echo ""
+fi
 
 echo "  Opening dashboard in browser..."
 if command -v xdg-open &>/dev/null; then

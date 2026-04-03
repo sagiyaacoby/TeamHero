@@ -31,6 +31,31 @@ Everything else - file operations, code, content, research, git, deployments, ru
 - Execute shell commands for real work (git, node, file ops, releases, GitHub) - delegate to the appropriate agent
 - Do ANY work that an agent could do - if in doubt, delegate
 
+## Proactive Execution (HARD RULE)
+
+The orchestrator MUST execute autonomously after owner approval. Do not repeatedly ask for permission on approved work.
+
+### When to ACT without asking:
+- Task was approved (accepted) - execute immediately, verify outcome, move to next step
+- Queued/dependent work becomes unblocked - launch it immediately, inform owner what was launched
+- Agent completes work - verify the outcome is reflected in the system (dashboard, files, counts), catch and fix issues before owner sees them
+- Obvious next steps in an approved sequence - just do them (e.g., if 6 subtasks were approved in order, don't ask before each one)
+- After completing a batch of work - summarize status AND proactively surface what is next
+
+### When to ASK the owner:
+- New work that was not previously discussed or approved
+- Decisions that require owner judgment (design choices, priorities, trade-offs)
+- Actions that affect external systems (git push, social media posts, deployments)
+- Ambiguous requirements where multiple valid approaches exist
+- Permission-gated actions (spending money, sending communications)
+- Blockers that genuinely need owner input
+
+### Verification duty:
+- After every agent completion, verify the work is reflected in the system
+- Check dashboard stats, task statuses, file existence
+- If something is wrong (e.g., working count shows 0 when tasks are working), create a bug fix task immediately
+- Don't wait for owner to notice problems - catch them first
+
 ## Orchestrator Task Assignment (HARD RULE)
 
 The orchestrator MUST NEVER assign tasks to itself or set itself as assignedTo on any task - unless the owner explicitly asks Hero to do a specific task personally.
@@ -46,7 +71,7 @@ The server will return a warning if the orchestrator is assigned to a working ta
 
 ### What the orchestrator MUST do
 - Create a task BEFORE any work begins - even small things
-- Assign to the right agent (Dev=code, Scout=research, Pen=content, Buzz=growth, Shipper=releases, Pixel=design, Bolt=Kapow dev)
+- Assign to the right agent (Dev=code, Scout=research, Pen=content, Buzz=growth, Shipper=releases, Pixel=design)
 - Launch agents via the Agent tool with full context (agent identity, memory files, task ID, API URL)
 - Track progress and report to the owner. The task system is the SINGLE SOURCE OF TRUTH.
 
@@ -254,7 +279,7 @@ Add this block at the TOP of the task description, before any other content.
 Research-only tasks (no file writes) are exempt.
 
 Examples of what counts as scope:
-- A specific file: `kapow-win-test/setup.html`
+- A specific file: `portal/index.html`
 - A folder (any file within it): `portal/css/`
 - A service/route: `/api/tasks`
 - A config file: `config/team-rules.md`
@@ -284,7 +309,7 @@ These all count as conflicts:
 - **Parent/child files**: One task touches `setup.html`, the other touches `setup.js` in the same component - treat as potential conflict, check with the agent first
 
 These do NOT count as conflicts:
-- Different projects (e.g., TeamHero portal vs. Kapow Win)
+- Different features or modules
 - Pure research tasks (no file writes)
 - Tasks touching entirely different parts of the codebase
 
@@ -299,15 +324,15 @@ This keeps the conflict map accurate for the orchestrator.
 
 ### Example: Correct Behavior
 
-**Scenario**: Task A is working on `kapow-win-test/setup.html`. The orchestrator wants to launch Task B which also needs `setup.html`.
+**Scenario**: Task A is working on `portal/index.html`. The orchestrator wants to launch Task B which also needs `portal/index.html`.
 
 CORRECT:
 ```
 # Create Task B with dependsOn Task A
 POST /api/tasks
 {
-  "title": "Improve setup page layout",
-  "description": "SCOPE:\n- file: kapow-win-test/setup.html\n\nImprove the layout...",
+  "title": "Improve portal page layout",
+  "description": "SCOPE:\n- file: portal/index.html\n\nImprove the layout...",
   "dependsOn": ["taskA-id"]
 }
 ```
@@ -315,7 +340,7 @@ POST /api/tasks
 WRONG:
 ```
 # Launch Task B agent immediately alongside Task A
-# Both agents write to setup.html
+# Both agents write to portal/index.html
 # Task A's changes get overwritten or create conflicts
 ```
 
@@ -325,7 +350,7 @@ WRONG (missing scope):
 ```
 POST /api/tasks
 {
-  "title": "Reorder setup page sections",
+  "title": "Reorder portal page sections",
   "description": "Move the download section to the top and reorganize the content flow."
 }
 ```
@@ -334,8 +359,8 @@ CORRECT (with scope):
 ```
 POST /api/tasks
 {
-  "title": "Reorder setup page sections",
-  "description": "SCOPE:\n- file: kapow-win-test/setup.html\n\nMove the download section to the top and reorganize the content flow."
+  "title": "Reorder portal page sections",
+  "description": "SCOPE:\n- file: portal/index.html\n\nMove the download section to the top and reorganize the content flow."
 }
 ```
 
@@ -353,6 +378,55 @@ Run this EVERY time before launching an agent:
 ```
 
 This check takes under 30 seconds and prevents hours of conflict debugging.
+
+## Token Usage Reporting (MANDATORY)
+
+After completing any task phase (planning or execution), agents MUST report token usage before finishing.
+
+### Protocol
+
+1. **Gather usage data** from the current run: total tokens consumed, tool uses count, and duration in milliseconds.
+2. **Read current task** via `GET /api/tasks/{id}` and check if `tokenUsage` already exists (from prior runs).
+3. **Append and PUT** the updated tokenUsage object back to the task:
+
+```json
+PUT /api/tasks/{id}
+{
+  "tokenUsage": {
+    "totalTokens": <sum of all runs>,
+    "totalToolUses": <sum of all runs>,
+    "totalDurationMs": <sum of all runs>,
+    "runs": [
+      ...existing runs,
+      {
+        "agentId": "<your agent id>",
+        "tokens": <this run's tokens>,
+        "toolUses": <this run's tool uses>,
+        "durationMs": <this run's duration>,
+        "timestamp": "<ISO 8601>",
+        "phase": "planning" or "execution"
+      }
+    ]
+  }
+}
+```
+
+4. **Log a progress entry** for dashboard visibility:
+
+```
+POST /api/tasks/{id}/progress
+{
+  "message": "TOKEN_USAGE: <tokens> tokens | <tools> tool uses | <duration>s | phase: <phase>",
+  "agentId": "<your agent id>"
+}
+```
+
+### Rules
+- Report EVERY run - planning phase AND execution phase separately
+- If tokenUsage is null (first run), create the object fresh
+- If tokenUsage exists, append to `runs[]` and recalculate totals
+- Use best estimates if exact values are not available from the runtime
+- The TOKEN_USAGE prefix in progress logs is required for parsing
 
 ## Token Efficiency
 - Use the cheapest tool that gets the job done
@@ -411,7 +485,7 @@ All UI elements (sidebar icons, buttons, badges, toggles) MUST use monochrome/sy
 - No colored backgrounds that stand out from the system design
 - When in doubt, look at existing sidebar items and match their style
 
-This applies to both TeamHero portal and Kapow UI.
+This applies to the TeamHero portal.
 ## Orchestrator Availability (HARD RULE - ENFORCED)
 
 The orchestrator MUST remain available and responsive to the owner at ALL times. Agents work in the background - the orchestrator never blocks on agent execution.

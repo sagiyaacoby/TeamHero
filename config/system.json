@@ -1,0 +1,187 @@
+{
+  "initialized": true,
+  "teamName": "TeamHero",
+  "teamDescription": "",
+  "version": "3.2.0",
+  "port": 3797,
+  "migrationDoneToClosedV3": true,
+  "migrationsRun": [
+    "add-blocker-field",
+    "add-autopilot-memory",
+    "add-tags-timestamps",
+    "structured-agent-memory",
+    "normalize-statuses",
+    "autopilot-tasks",
+    "backfill-subtask-links",
+    "agent-os-layer"
+  ],
+  "health": {
+    "status": "ok",
+    "issues": [],
+    "staleMemories": [
+      {
+        "agentId": "orchestrator",
+        "agentName": "Hero",
+        "memoryType": "long",
+        "lastUpdated": "2026-03-18T21:06:10.000Z",
+        "hoursStale": 380,
+        "threshold": 48
+      },
+      {
+        "agentId": "mmseaqj5hyzjmm",
+        "agentName": "Dev",
+        "memoryType": "long",
+        "lastUpdated": "2026-03-23T21:05:16.000Z",
+        "hoursStale": 260,
+        "threshold": 168
+      },
+      {
+        "agentId": "mmsgzss0845l7c",
+        "agentName": "Scout",
+        "memoryType": "short",
+        "lastUpdated": "2026-04-01T19:15:26.512Z",
+        "hoursStale": 45,
+        "threshold": 24
+      },
+      {
+        "agentId": "mmsgzss0845l7c",
+        "agentName": "Scout",
+        "memoryType": "long",
+        "lastUpdated": "2026-03-20T19:13:32.000Z",
+        "hoursStale": 333,
+        "threshold": 168
+      },
+      {
+        "agentId": "mmsihktfavfrjh",
+        "agentName": "Shipper",
+        "memoryType": "short",
+        "lastUpdated": "2026-03-31T12:49:34.387Z",
+        "hoursStale": 76,
+        "threshold": 24
+      },
+      {
+        "agentId": "mmsihktfavfrjh",
+        "agentName": "Shipper",
+        "memoryType": "long",
+        "lastUpdated": "2026-03-20T19:13:34.000Z",
+        "hoursStale": 333,
+        "threshold": 168
+      },
+      {
+        "agentId": "mmtq328qparoui",
+        "agentName": "Pen",
+        "memoryType": "short",
+        "lastUpdated": "2026-03-30T17:30:29.331Z",
+        "hoursStale": 95,
+        "threshold": 24
+      },
+      {
+        "agentId": "mmtq328qparoui",
+        "agentName": "Pen",
+        "memoryType": "long",
+        "lastUpdated": "2026-03-20T19:13:36.000Z",
+        "hoursStale": 333,
+        "threshold": 168
+      },
+      {
+        "agentId": "mmtq3e094tcbzk",
+        "agentName": "Buzz",
+        "memoryType": "short",
+        "lastUpdated": "2026-03-29T07:43:03.564Z",
+        "hoursStale": 129,
+        "threshold": 24
+      },
+      {
+        "agentId": "mmtq3e094tcbzk",
+        "agentName": "Buzz",
+        "memoryType": "long",
+        "lastUpdated": "2026-03-20T19:13:30.000Z",
+        "hoursStale": 333,
+        "threshold": 168
+      },
+      {
+        "agentId": "mn22zs8tpg5hsx",
+        "agentName": "K-Pixel",
+        "memoryType": "short",
+        "lastUpdated": "2026-03-27T08:08:06.000Z",
+        "hoursStale": 176,
+        "threshold": 24
+      },
+      {
+        "agentId": "mn22zs8tpg5hsx",
+        "agentName": "K-Pixel",
+        "memoryType": "long",
+        "lastUpdated": "2026-03-22T18:19:26.000Z",
+        "hoursStale": 286,
+        "threshold": 168
+      },
+      {
+        "agentId": "mn22zz9p6bjrqn",
+        "agentName": "K-Dev",
+        "memoryType": "short",
+        "lastUpdated": "2026-04-01T21:44:26.927Z",
+        "hoursStale": 43,
+        "threshold": 24
+      },
+      {
+        "agentId": "mn22zz9p6bjrqn",
+        "agentName": "K-Dev",
+        "memoryType": "long",
+        "lastUpdated": "2026-03-23T21:05:24.000Z",
+        "hoursStale": 260,
+        "threshold": 168
+      },
+      {
+        "agentId": "mn2twxv851kkgs",
+        "agentName": "K-Pen",
+        "memoryType": "short",
+        "lastUpdated": "2026-03-26T18:50:46.000Z",
+        "hoursStale": 190,
+        "threshold": 24
+      },
+      {
+        "agentId": "mn2twxv851kkgs",
+        "agentName": "K-Pen",
+        "memoryType": "long",
+        "lastUpdated": "2026-03-23T06:53:02.000Z",
+        "hoursStale": 274,
+        "threshold": 168
+      },
+      {
+        "agentId": "mn2vg1em4kilj1",
+        "agentName": "K-Dev2",
+        "memoryType": "short",
+        "lastUpdated": "2026-04-01T21:06:47.205Z",
+        "hoursStale": 43,
+        "threshold": 24
+      },
+      {
+        "agentId": "mn2vg1em4kilj1",
+        "agentName": "K-Dev2",
+        "memoryType": "long",
+        "lastUpdated": "2026-03-23T21:05:26.000Z",
+        "hoursStale": 260,
+        "threshold": 168
+      }
+    ],
+    "orphanedTasks": [],
+    "checkedAt": "2026-04-03T16:36:21.827Z",
+    "upgradePending": null
+  },
+  "localAccess": [
+    "C:/Users/sagiy/OneDrive/Documents/MyAgents/TeamHero"
+  ],
+  "globalAutopilot": false,
+  "modelRouting": {
+    "mode": "smart",
+    "agentModels": {},
+    "orchestratorModel": null,
+    "smartConfig": {
+      "agentOverrides": {},
+      "taskTypeOverrides": {},
+      "showRoutingDecision": true,
+      "minModel": "haiku",
+      "maxModel": "opus"
+    }
+  }
+}

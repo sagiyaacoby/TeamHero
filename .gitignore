@@ -46,6 +46,17 @@ node_modules/
 .env
 .env.*
 
+# Notifications (may contain user data)
+data/notifications.json
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+
 # OS
 .DS_Store
 Thumbs.db

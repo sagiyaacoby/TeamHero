@@ -220,7 +220,7 @@
     <div class="nav-sticky-top">
       <a href="#" data-view="chat" class="nav-link nav-chat active"><span class="icon">&#9654;</span> Command Center</a>
       <a href="#" data-view="dashboard" class="nav-link"><span class="icon">&#9632;</span> Dashboard</a>
-      <a href="#" data-view="planner" class="nav-link"><span class="icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="11" rx="1.5"/><line x1="2" y1="6.5" x2="14" y2="6.5"/><line x1="5.5" y1="1.5" x2="5.5" y2="4.5"/><line x1="10.5" y1="1.5" x2="10.5" y2="4.5"/></svg></span> Planner<span class="nav-badge hidden" id="nav-planner-badge">0</span></a>
+      <a href="#" data-view="planner" class="nav-link"><span class="icon"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="11" rx="1.5"/><line x1="2" y1="6.5" x2="14" y2="6.5"/><line x1="5.5" y1="1.5" x2="5.5" y2="4.5"/><line x1="10.5" y1="1.5" x2="10.5" y2="4.5"/></svg></span> Timers<span class="nav-badge hidden" id="nav-planner-badge">0</span></a>
       <a href="#" data-view="autopilot" class="nav-link"><span class="icon">&#9881;</span> Autopilot<span class="nav-badge hidden" id="nav-autopilot-badge">0</span></a>
     </div>
     <ul class="nav-list" id="nav-list">
@@ -229,6 +229,7 @@
       <li><a href="#" data-view="add-agent" class="nav-link nav-add"><span class="icon">+</span> Add Agent</a></li>
       <li class="nav-section">Knowledge</li>
       <li><a href="#" data-view="knowledge" class="nav-link"><span class="icon">&#9776;</span> Knowledge Base</a></li>
+      <li><a href="#" data-view="mind-map" class="nav-link"><span class="icon"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="3" r="2"/><circle cx="3" cy="11" r="2"/><circle cx="11" cy="11" r="2"/><line x1="7" y1="5" x2="3" y2="9"/><line x1="7" y1="5" x2="11" y2="9"/></svg></span> Mind Map</a></li>
       <li class="nav-section">Media</li>
       <li><a href="#" data-view="media" class="nav-link"><span class="icon">&#9634;</span> Media Library</a></li>
       <li class="nav-section">Skills</li>
@@ -292,10 +293,10 @@
       <div class="panel round-table-panel"><h3><span class="rt-icon"></span>Last Round Table</h3><div id="last-round-table" class="round-table-summary"><div class="empty-state">No round tables yet</div></div></div>
     </section>
 
-    <!-- Planner -->
+    <!-- Timers -->
     <section id="view-planner" class="view">
       <header class="view-header">
-        <h2>Planner</h2>
+        <h2>Timers</h2>
         <div class="header-actions">
           <button class="btn btn-primary" onclick="App.openAutopilotForm()">+ Add Timed Task</button>
         </div>
@@ -543,6 +544,7 @@
         <span id="task-detail-date"></span>
         <span id="task-detail-tags"></span>
       </div>
+      <div id="task-detail-lineage" style="display:none"></div>
       <div id="task-session" class="task-session"></div>
       <div id="task-promote-bar" class="promote-bar hidden">
         <button class="btn btn-secondary" onclick="App.promoteToKnowledge()">Promote to Knowledge Base</button>
@@ -1111,6 +1113,36 @@
       </div>
     </section>
 
+    <!-- Mind Map -->
+    <section id="view-mind-map" class="view">
+      <div class="view-header">
+        <div class="header-left"><h2>Mind Map</h2></div>
+        <div class="header-actions">
+          <div class="custom-select" id="pm-project-select">
+            <div class="custom-select-trigger">Select Project</div>
+            <div class="custom-select-dropdown" id="pm-project-dropdown"></div>
+          </div>
+        </div>
+      </div>
+      <div class="stats-row" id="pm-stats-row"></div>
+      <div class="pm-legend" id="pm-legend"></div>
+      <div class="pm-grid" id="pm-grid">
+        <div class="empty-state">
+          <div class="empty-state-text">No project specs yet</div>
+          <div class="empty-state-hint">Project specs are created by agents during task execution</div>
+        </div>
+      </div>
+      <div class="pm-detail-overlay hidden" id="pm-detail-overlay">
+        <div class="pm-detail-panel" id="pm-detail-panel">
+          <div class="pm-detail-header">
+            <div class="pm-detail-title"></div>
+            <button class="pm-detail-close" onclick="App.closePMDetail()">&times;</button>
+          </div>
+          <div class="pm-detail-content"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- Skills -->
     <section id="view-skills" class="view">
       <header class="view-header"><h2>Skills</h2></header>
@@ -1311,15 +1343,6 @@ SOFTWARE.</pre>
           <label>Due Date</label>
           <input type="date" id="add-task-duedate">
         </div>
-        <div class="form-group full-width">
-          <label>Tags</label>
-          <div class="tag-input-container" id="add-task-tag-container">
-            <div class="tag-input-wrap" id="add-task-tag-wrap" onclick="this.querySelector('.tag-input-field').focus()">
-              <input type="text" class="tag-input-field" id="add-task-tag-input" placeholder="Type a tag and press Enter..." autocomplete="off">
-            </div>
-            <div class="tag-autocomplete" id="add-task-tag-autocomplete"></div>
-          </div>
-        </div>
         <div class="form-group full-width add-task-advanced hidden" id="add-task-advanced">
           <div class="form-grid">
             <div class="form-group">
@@ -1338,6 +1361,16 @@ SOFTWARE.</pre>
                 <input type="text" class="tag-input-field" id="add-task-depends-input" placeholder="Search tasks..." autocomplete="off">
               </div>
               <div class="tag-autocomplete" id="add-task-depends-autocomplete"></div>
+            </div>
+            <div class="form-group" style="position:relative">
+              <label>Supersedes</label>
+              <div class="custom-select" id="add-task-supersedes-select" data-target="add-task-supersedes">
+                <div class="custom-select-trigger">None</div>
+                <div class="custom-select-dropdown" id="add-task-supersedes-options">
+                  <div class="custom-select-option selected" data-value="">None</div>
+                </div>
+              </div>
+              <input type="hidden" id="add-task-supersedes" value="">
             </div>
           </div>
         </div>

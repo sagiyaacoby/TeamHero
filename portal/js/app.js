@@ -53,6 +53,13 @@
     return months + 'mo ago';
   }
 
+  function formatTokenCount(n) {
+    if (!n || n <= 0) return '';
+    if (n < 1000) return n.toString();
+    if (n < 1000000) return Math.round(n / 1000) + 'K';
+    return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  }
+
   // ── API Client ─────────────────────────────────────
   const api = {
     async get(url) {
@@ -215,6 +222,7 @@
       if (viewId === 'media') loadMedia();
       if (viewId === 'skills') loadSkills();
       if (viewId === 'knowledge') loadKnowledge();
+      if (viewId === 'mind-map') loadMindMap();
       if (viewId === 'help') loadHelp(0);
       if (viewId === 'planner') loadPlannerPage();
       if (viewId === 'autopilot') loadAutopilotPage();
@@ -744,6 +752,7 @@
     if (scope === 'all' || scope === 'knowledge') {
       if (v === 'knowledge') loadKnowledge();
       if (v === 'knowledge-detail' && state._currentKnowledgeId) openKnowledgeDoc(state._currentKnowledgeId);
+      if (v === 'mind-map') loadMindMap();
     }
     if (scope === 'all' || scope === 'planner' || scope === 'tasks') {
       if (v === 'planner') loadPlannerPage();
@@ -944,11 +953,9 @@
       // Use merged (active + archive) data for closed/cancelled counts
       var allTasks = (archiveData && archiveData.tasks) || state.tasks;
       allTasks.forEach(function(t) {
-        // Pending counts ALL tasks (including subtasks) - owner must see everything needing review
-        if (t.status === 'planning' || t.status === 'pending_approval') { pendingCount++; return; }
-        // Other stats count top-level only
-        if (t.parentTaskId) return;
-        if (t.status === 'working') workingCount++;
+        // Count ALL tasks including subtasks - subtasks can have different status from parent
+        if (t.status === 'planning' || t.status === 'pending_approval') pendingCount++;
+        else if (t.status === 'working') workingCount++;
         else if (t.status === 'done') doneCount++;
         else if (t.status === 'hold') holdCount++;
         else if (t.status === 'cancelled') cancelledCount++;
@@ -1076,11 +1083,9 @@
 
     var pendingA = 0, workingA = 0, doneA = 0, holdA = 0, cancelledA = 0, closedA = 0;
     tasks.forEach(function(t) {
-      // Pending counts ALL tasks (including subtasks) - owner must see everything needing review
-      if (t.status === 'planning' || t.status === 'pending_approval') { pendingA++; return; }
-      // Other stats count top-level only (matches filter logic which shows root tasks with subtasks inline)
-      if (t.parentTaskId) return;
-      if (t.status === 'working') workingA++;
+      // Count ALL tasks including subtasks - subtasks can have different status from parent
+      if (t.status === 'planning' || t.status === 'pending_approval') pendingA++;
+      else if (t.status === 'working') workingA++;
       else if (t.status === 'done') doneA++;
       else if (t.status === 'hold') holdA++;
       else if (t.status === 'cancelled') cancelledA++;
@@ -1123,17 +1128,18 @@
       // Pending shows ALL tasks needing attention - including subtasks
       filtered = tasks.filter(function(t) { return t.status === 'planning' || t.status === 'pending_approval'; });
     } else if (filter === 'working') {
-      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === 'working'; });
+      // Show ALL working tasks including subtasks - subtasks can be working while parent is in different status
+      filtered = tasks.filter(function(t) { return t.status === 'working'; });
     } else if (filter === 'done') {
-      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === 'done'; });
+      filtered = tasks.filter(function(t) { return t.status === 'done'; });
     } else if (filter === 'hold') {
-      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === 'hold'; });
+      filtered = tasks.filter(function(t) { return t.status === 'hold'; });
     } else if (filter === 'cancelled') {
-      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === 'cancelled'; });
+      filtered = tasks.filter(function(t) { return t.status === 'cancelled'; });
     } else if (filter === 'closed') {
-      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === 'closed'; });
+      filtered = tasks.filter(function(t) { return t.status === 'closed'; });
     } else {
-      filtered = tasks.filter(function(t) { return !t.parentTaskId && t.status === filter; });
+      filtered = tasks.filter(function(t) { return t.status === filter; });
     }
 
     // Apply agent filter
@@ -1633,6 +1639,9 @@
     if (agentName) html += '<span style="font-size:11px;color:var(--text-muted)">' + escHtml(agentName) + '</span>';
     var hierTs = task.updatedAt || task.createdAt;
     if (hierTs) html += '<span class="task-time-ago" title="' + new Date(hierTs).toLocaleString() + '">' + timeAgo(hierTs) + '</span>';
+    if (task.tokenUsage && task.tokenUsage.totalTokens) {
+      html += '<span class="task-token-count" title="' + task.tokenUsage.totalTokens.toLocaleString() + ' tokens">' + formatTokenCount(task.tokenUsage.totalTokens) + '</span>';
+    }
     html += '</div></div>';
 
     if (hasChildren) {
@@ -1718,10 +1727,13 @@
     var stalePlanningBadge = isStalePlanning ? '<span class="stale-planning-badge" title="No agent active - task stuck in planning">&#9888; no agent</span>' : '';
     var isInterrupted = !!t.interrupted && (t.status === 'working' || t.status === 'planning');
     var interruptedBadge = isInterrupted ? '<span class="interrupted-badge" title="Agent session lost - task stalled">&#9888;</span>' : '';
+    var isSuperseded = !!t.supersededBy;
+    var supersededBadge = isSuperseded ? '<span class="superseded-badge">Superseded</span>' : '';
     var subtaskClass = isSubtask ? ' subtask-item' : '';
     var blockerClass = hasBlocker ? ' task-has-blocker' : '';
     var interruptedClass = isInterrupted ? ' task-interrupted' : '';
     var stalePlanningClass = isStalePlanning ? ' task-stale-planning' : '';
+    var supersededClass = isSuperseded ? ' task-superseded' : '';
     var depthStyle = isSubtask && depth ? ' style="padding-left:' + (16 + depth * 16) + 'px;margin-left:' + (depth * 12) + 'px"' : '';
     var statusLabel = STATUS_LABELS[t.status] || (t.status || 'planning').replace(/_/g, ' ');
 
@@ -1740,15 +1752,21 @@
     }
     var timeAgoTs = t.updatedAt || t.createdAt;
     var timeAgoHtml = timeAgoTs ? '<span class="task-time-ago" title="' + new Date(timeAgoTs).toLocaleString() + '">' + timeAgo(timeAgoTs) + '</span>' : '';
+    var tokenHtml = '';
+    if (t.tokenUsage && t.tokenUsage.totalTokens) {
+      tokenHtml = '<span class="task-token-count" title="' + t.tokenUsage.totalTokens.toLocaleString() + ' tokens">\u2B21 ' + formatTokenCount(t.tokenUsage.totalTokens) + '</span>';
+    } else {
+      tokenHtml = '<span class="task-token-count task-token-empty">\u2B21 -</span>';
+    }
 
-    return '<div class="task-item' + subtaskClass + blockerClass + interruptedClass + stalePlanningClass + '"' + depthStyle + ' onclick="App.openTask(' + q + t.id + q + ')">' +
+    return '<div class="task-item' + subtaskClass + blockerClass + interruptedClass + stalePlanningClass + supersededClass + '"' + depthStyle + ' onclick="App.openTask(' + q + t.id + q + ')">' +
       '<span class="task-title">' + outputIcon + autopilotIcon + escHtml(t.title) + scheduleInfo + tagPills + '</span>' +
       '<span class="task-meta">' +
         '<span class="badge ' + priorityClass + '">' + escHtml(t.priority || 'medium') + '</span>' +
         '<span class="badge ' + statusClass + '">' + escHtml(statusLabel) + workingDot + interruptedBadge + '</span>' +
-        blockedBadge + blockerBadge + stalePlanningBadge +
+        blockedBadge + blockerBadge + stalePlanningBadge + supersededBadge +
         (agentName ? '<span>' + escHtml(agentName) + '</span>' : '') +
-        dueDateHtml + timeAgoHtml +
+        dueDateHtml + timeAgoHtml + tokenHtml +
       '</span></div>';
   }
 
@@ -1892,6 +1910,18 @@
       parentOpts.innerHTML = parentHtml;
     }
     setCustomSelect('add-task-parent-select', '', 'None');
+    // Populate supersedes custom-select
+    var supersedesOpts = document.getElementById('add-task-supersedes-options');
+    if (supersedesOpts) {
+      var supersedesHtml = '<div class="custom-select-option selected" data-value="">None</div>';
+      (state.cachedDashboardTasks || state.tasks || []).forEach(function(t) {
+        if (t.supersededBy) return; // Already superseded
+        if (t.status === 'cancelled') return;
+        supersedesHtml += '<div class="custom-select-option" data-value="' + t.id + '">' + escHtml(t.title.substring(0, 40)) + '</div>';
+      });
+      supersedesOpts.innerHTML = supersedesHtml;
+    }
+    setCustomSelect('add-task-supersedes-select', '', 'None');
     // Initialize depends-on chip input
     state._addTaskDeps = [];
     state._addTaskDepsList = (state.cachedDashboardTasks || state.tasks || []).filter(function(t) {
@@ -1915,8 +1945,6 @@
       });
     }
     modal.classList.remove('hidden');
-    // Init tag input
-    initTagInput('add-task-tag-container', []);
     setTimeout(function() { document.getElementById('add-task-title').focus(); }, 100);
   }
 
@@ -1934,7 +1962,6 @@
 
     try {
       var autopilot = document.getElementById('add-task-autopilot').checked;
-      var tags = getTagInputTags('add-task-tag-container');
       var dueDate = (document.getElementById('add-task-duedate') || {}).value || '';
       var parentId = (document.getElementById('add-task-parent') || {}).value || '';
       var dependsOn = (state._addTaskDeps || []).slice();
@@ -1947,7 +1974,6 @@
         priority: priority,
         type: type,
         autopilot: autopilot,
-        tags: tags
       };
       // Add interval fields if autopilot is checked and interval is set
       if (autopilot) {
@@ -1960,6 +1986,8 @@
       }
       if (dueDate) taskBody.dueDate = dueDate;
       if (dependsOn.length > 0) taskBody.dependsOn = dependsOn;
+      var supersedes = (document.getElementById('add-task-supersedes') || {}).value || '';
+      if (supersedes) taskBody.supersedes = supersedes;
 
       if (parentId) {
         // Create as subtask
@@ -2240,6 +2268,9 @@
         var isOverdue = dueDate < today && task.status !== 'closed' && task.status !== 'done';
         dateHtml += ' | <span class="' + (isOverdue ? 'task-due-overdue' : 'task-due-detail') + '">Due: ' + dueDate.toLocaleDateString() + '</span>';
       }
+      if (task.tokenUsage && task.tokenUsage.totalTokens) {
+        dateHtml += ' | <span class="task-detail-token-usage" title="' + task.tokenUsage.totalTokens.toLocaleString() + ' tokens total">' + formatTokenCount(task.tokenUsage.totalTokens) + ' tokens</span>';
+      }
       document.getElementById('task-detail-date').innerHTML = dateHtml || '-';
 
       var tagsEl = document.getElementById('task-detail-tags');
@@ -2256,6 +2287,24 @@
         typeEl.style.display = '';
       } else {
         typeEl.style.display = 'none';
+      }
+
+      // Supersedes/supersededBy lineage
+      var lineageEl = document.getElementById('task-detail-lineage');
+      if (lineageEl) {
+        var lineageHtml = '';
+        if (task.supersededBy) {
+          var sbTask = (state.tasks || []).find(function(t) { return t.id === task.supersededBy; });
+          var sbTitle = sbTask ? sbTask.title : task.supersededBy;
+          lineageHtml += '<div class="task-lineage-notice superseded-notice">Superseded by <a onclick="App.openTask(\'' + escHtml(task.supersededBy) + '\')">' + escHtml(sbTitle) + '</a></div>';
+        }
+        if (task.supersedes) {
+          var sTask = (state.tasks || []).find(function(t) { return t.id === task.supersedes; });
+          var sTitle = sTask ? sTask.title : task.supersedes;
+          lineageHtml += '<div class="task-lineage-notice supersedes-notice">Supersedes <a onclick="App.openTask(\'' + escHtml(task.supersedes) + '\')">' + escHtml(sTitle) + '</a></div>';
+        }
+        lineageEl.innerHTML = lineageHtml;
+        lineageEl.style.display = lineageHtml ? '' : 'none';
       }
 
       // Promote to Knowledge bar
@@ -6334,6 +6383,7 @@
     var tasks = context === 'dashboard' ? state.cachedDashboardTasks : state.cachedAgentTasks;
     var tagCounts = {};
     (tasks || []).forEach(function(t) {
+      if (t.supersededBy) return; // Exclude superseded tasks from tag counts
       (t.tags || []).forEach(function(tag) {
         tagCounts[tag] = (tagCounts[tag] || 0) + 1;
       });
@@ -7379,7 +7429,7 @@
     } catch(e) { toast('Failed to update scheduled time', 'error'); }
   }
 
-  // ── Planner ─────────────────────────────────────────
+  // ── Timers (Planner) ────────────────────────────────
 
   async function loadPlannerPage() {
     loadPlannerRecurring();
@@ -7774,17 +7824,17 @@
         '<button class="help-go-link" onclick="App.navigate(\'add-agent\')">Add New Agent &#8594;</button>'
     },
     {
-      title: 'Planner',
+      title: 'Timers',
       icon: '&#128197;',
-      content: '<h2>Planner</h2>' +
-        '<p>The Planner is your <strong>scheduling hub</strong> for all timed tasks - both recurring and one-time scheduled.</p>' +
+      content: '<h2>Timers</h2>' +
+        '<p>Timers is your <strong>scheduling hub</strong> for all timed tasks - both recurring and one-time scheduled.</p>' +
         '<h3>Recurring Tasks</h3>' +
         '<p>Tasks that run on an interval (every X minutes, hours, or days). View their schedule, next run time, and status at a glance.</p>' +
         '<h3>Future Tasks</h3>' +
         '<p>Tasks with a scheduled date or future due date, grouped by month. Quickly see what is coming up and when.</p>' +
         '<h3>Creating Timed Tasks</h3>' +
-        '<p>Use the <strong>+ Add Timed Task</strong> button to create a new recurring or one-time scheduled task. Choose an agent, set the schedule, and it will appear in both the Planner and Autopilot pages.</p>' +
-        '<button class="help-go-link" onclick="App.navigate(\'planner\')">Go to Planner &#8594;</button>'
+        '<p>Use the <strong>+ Add Timed Task</strong> button to create a new recurring or one-time scheduled task. Choose an agent, set the schedule, and it will appear in both the Timers and Autopilot pages.</p>' +
+        '<button class="help-go-link" onclick="App.navigate(\'planner\')">Go to Timers &#8594;</button>'
     },
     {
       title: 'Autopilot',
@@ -7796,7 +7846,7 @@
         '<p><strong>2. Scheduled autopilot</strong> - Create recurring schedules that fire automatically on an interval. Assign a prompt to an agent, set how often it runs (minutes, hours, days), and let it go. Good for daily standups, periodic research, content generation, or system checks.</p>' +
         '<h3>Safety</h3>' +
         '<p>Autopilot tasks still appear in the dashboard with a gear icon so you can monitor them. Use <strong>Pause All</strong> to instantly stop all schedules if needed. You can toggle autopilot off on any task at any time to re-enable human review.</p>' +
-        '<p>To create new timed tasks, use the <strong>Planner</strong> page.</p>' +
+        '<p>To create new timed tasks, use the <strong>Timers</strong> page.</p>' +
         '<button class="help-go-link" onclick="App.navigate(\'autopilot\')">Go to Autopilot &#8594;</button>'
     },
     {
@@ -8489,6 +8539,280 @@
     }
   }
 
+  // ── Mind Map ──────────────────────────────────
+  var pmState = {
+    projects: [],
+    selectedProject: null,
+    mapData: null,
+    mapVersion: null,
+    expanded: {},
+    pollTimer: null
+  };
+
+  async function loadMindMap() {
+    try {
+      pmState.projects = await api.get('/api/project-specs');
+    } catch (e) { pmState.projects = []; }
+    renderPMProjectSelector();
+    if (pmState.projects.length > 0) {
+      var sel = pmState.selectedProject || pmState.projects[0].id;
+      selectPMProject(sel);
+    } else {
+      pmState.mapData = null;
+      renderPMStats(null);
+      renderPMLegend();
+      document.getElementById('pm-grid').innerHTML = '<div class="empty-state"><div class="empty-state-text">No project specs yet</div><div class="empty-state-hint">Project specs are created by agents during task execution</div></div>';
+    }
+    startPMPolling();
+  }
+
+  function renderPMProjectSelector() {
+    var dd = document.getElementById('pm-project-dropdown');
+    if (!dd) return;
+    var html = '';
+    pmState.projects.forEach(function(p) {
+      var cls = (p.id === pmState.selectedProject) ? ' selected' : '';
+      html += '<div class="custom-select-option' + cls + '" data-value="' + p.id + '" onclick="App.selectPMProject(\'' + p.id + '\')">' + escHtml(p.name) + '</div>';
+    });
+    dd.innerHTML = html;
+    var trigger = document.querySelector('#pm-project-select .custom-select-trigger');
+    if (trigger && pmState.selectedProject) {
+      var proj = pmState.projects.find(function(p) { return p.id === pmState.selectedProject; });
+      if (proj) trigger.textContent = proj.name;
+    }
+  }
+
+  async function selectPMProject(projectId) {
+    pmState.selectedProject = projectId;
+    renderPMProjectSelector();
+    var trigger = document.querySelector('#pm-project-select .custom-select-trigger');
+    var proj = pmState.projects.find(function(p) { return p.id === projectId; });
+    if (trigger && proj) trigger.textContent = proj.name;
+    document.querySelector('#pm-project-select').classList.remove('open');
+    try {
+      pmState.mapData = await api.get('/api/project-specs/' + projectId + '/map');
+      pmState.mapVersion = pmState.mapData.version;
+    } catch (e) {
+      pmState.mapData = null;
+    }
+    renderPMStats(pmState.mapData);
+    renderPMLegend();
+    renderPMGrid(pmState.mapData);
+  }
+
+  function startPMPolling() {
+    stopPMPolling();
+    pmState.pollTimer = setInterval(async function() {
+      if (state.currentView !== 'mind-map' || !pmState.selectedProject) return;
+      try {
+        var data = await api.get('/api/project-specs/' + pmState.selectedProject + '/map');
+        if (data.version !== pmState.mapVersion) {
+          pmState.mapData = data;
+          pmState.mapVersion = data.version;
+          renderPMStats(data);
+          renderPMGrid(data);
+        }
+      } catch (e) { /* silent */ }
+    }, 10000);
+  }
+
+  function stopPMPolling() {
+    if (pmState.pollTimer) { clearInterval(pmState.pollTimer); pmState.pollTimer = null; }
+  }
+
+  function renderPMStats(data) {
+    var el = document.getElementById('pm-stats-row');
+    if (!el) return;
+    if (!data || !data.chapters) { el.innerHTML = ''; return; }
+    var chapters = data.chapters;
+    var total = chapters.length;
+    var stable = 0, inProgress = 0, broken = 0, planned = 0;
+    chapters.forEach(function(ch) {
+      if (ch.status === 'stable') stable++;
+      else if (ch.status === 'in-progress') inProgress++;
+      else if (ch.status === 'broken') broken++;
+      else planned++;
+    });
+    el.innerHTML =
+      '<div class="pm-stat-card"><div class="pm-stat-value">' + total + '</div><div class="pm-stat-label">Chapters</div></div>' +
+      '<div class="pm-stat-card"><div class="pm-stat-value pm-color-green">' + stable + '</div><div class="pm-stat-label">Stable</div></div>' +
+      '<div class="pm-stat-card"><div class="pm-stat-value pm-color-yellow">' + inProgress + '</div><div class="pm-stat-label">In Progress</div></div>' +
+      '<div class="pm-stat-card"><div class="pm-stat-value pm-color-red">' + broken + '</div><div class="pm-stat-label">Broken</div></div>' +
+      '<div class="pm-stat-card"><div class="pm-stat-value">' + planned + '</div><div class="pm-stat-label">Planned</div></div>';
+  }
+
+  function renderPMLegend() {
+    var el = document.getElementById('pm-legend');
+    if (!el) return;
+    el.innerHTML =
+      '<div class="pm-legend-item"><div class="pm-legend-dot pm-dot-stable"></div>Stable</div>' +
+      '<div class="pm-legend-item"><div class="pm-legend-dot pm-dot-in-progress"></div>In Progress</div>' +
+      '<div class="pm-legend-item"><div class="pm-legend-dot pm-dot-broken"></div>Broken</div>' +
+      '<div class="pm-legend-item"><div class="pm-legend-dot pm-dot-planned"></div>Planned</div>';
+  }
+
+  function pmStatusClass(status) {
+    if (status === 'stable') return 'pm-status-stable';
+    if (status === 'in-progress') return 'pm-status-in-progress';
+    if (status === 'broken') return 'pm-status-broken';
+    return 'pm-status-planned';
+  }
+
+  function pmFeatureDotClass(status) {
+    if (status === 'done') return 'pm-fdot-done';
+    if (status === 'in-progress') return 'pm-fdot-in-progress';
+    if (status === 'broken') return 'pm-fdot-broken';
+    return 'pm-fdot-planned';
+  }
+
+  function renderPMGrid(data) {
+    var grid = document.getElementById('pm-grid');
+    if (!grid) return;
+    if (!data || !data.chapters || data.chapters.length === 0) {
+      grid.innerHTML = '<div class="empty-state"><div class="empty-state-text">No chapters in this project</div></div>';
+      return;
+    }
+    var html = '';
+    data.chapters.forEach(function(ch) {
+      var isExpanded = pmState.expanded[ch.id];
+      var expandedClass = isExpanded ? ' expanded' : '';
+      var features = ch.features || [];
+      var doneCount = features.filter(function(f) { return f.status === 'done'; }).length;
+      var totalFeatures = features.length;
+      var pct = totalFeatures > 0 ? Math.round((doneCount / totalFeatures) * 100) : 0;
+      html += '<div class="pm-chapter-card ' + pmStatusClass(ch.status) + expandedClass + '" data-chapter-id="' + ch.id + '">';
+      html += '<div class="pm-chapter-header" onclick="App.togglePMChapter(\'' + ch.id + '\')">';
+      html += '<span class="pm-chapter-name" title="' + escHtml(ch.name) + '">' + escHtml(ch.name) + '</span>';
+      html += '<span class="pm-chapter-badge">' + doneCount + '/' + totalFeatures + '</span>';
+      html += '<span class="pm-chapter-info" onclick="event.stopPropagation(); App.openPMChapterDetail(\'' + ch.id + '\')" title="View chapter details">&#9432;</span>';
+      html += '<span class="pm-chapter-chevron">&#9654;</span>';
+      html += '</div>';
+      html += '<div class="pm-chapter-progress"><div class="pm-chapter-progress-fill" style="width:' + pct + '%"></div></div>';
+      html += '<div class="pm-features">';
+      if (features.length > 0) {
+        html += '<div class="pm-feature-list">';
+        features.forEach(function(f) {
+          html += '<div class="pm-feature-item" onclick="event.stopPropagation(); App.openPMFeatureDetail(\'' + ch.id + '\',\'' + f.id + '\')">';
+          html += '<span class="pm-feature-dot ' + pmFeatureDotClass(f.status) + '"></span>';
+          html += '<span class="pm-feature-name">' + escHtml(f.name) + '</span>';
+          html += '</div>';
+        });
+        html += '</div>';
+      } else {
+        html += '<div class="pm-empty-section">No features defined</div>';
+      }
+      html += '</div>';
+      html += '</div>';
+    });
+    grid.innerHTML = html;
+  }
+
+  function togglePMChapter(chapterId) {
+    pmState.expanded[chapterId] = !pmState.expanded[chapterId];
+    var card = document.querySelector('.pm-chapter-card[data-chapter-id="' + chapterId + '"]');
+    if (card) card.classList.toggle('expanded');
+  }
+
+  async function openPMChapterDetail(chapterId) {
+    if (!pmState.mapData) return;
+    var chapter = pmState.mapData.chapters.find(function(ch) { return ch.id === chapterId; });
+    if (!chapter) return;
+    var overlay = document.getElementById('pm-detail-overlay');
+    var panel = document.getElementById('pm-detail-panel');
+    var titleEl = panel.querySelector('.pm-detail-title');
+    var contentEl = panel.querySelector('.pm-detail-content');
+    var badgeClass = 'pm-badge-' + (chapter.status === 'in-progress' ? 'in-progress' : chapter.status);
+    titleEl.innerHTML = escHtml(chapter.name) + ' <span class="pm-detail-status-badge ' + badgeClass + '">' + escHtml(chapter.status) + '</span>';
+    contentEl.innerHTML = '<div style="color:var(--text-dim);font-size:12px;">Loading chapter content...</div>';
+    overlay.classList.remove('hidden');
+    requestAnimationFrame(function() { overlay.classList.add('visible'); });
+    // Load chapter markdown
+    try {
+      var resp = await fetch('/api/project-specs/' + pmState.selectedProject + '/chapters/' + chapterId);
+      if (resp.ok) {
+        var text = await resp.text();
+        try { var json = JSON.parse(text); text = json.content || text; } catch(e) {}
+        if (typeof marked !== 'undefined' && marked.parse) {
+          contentEl.innerHTML = '<div class="pm-detail-md">' + marked.parse(text) + '</div>';
+        } else {
+          contentEl.innerHTML = '<pre style="white-space:pre-wrap;font-size:13px;color:var(--text-muted);">' + escHtml(text) + '</pre>';
+        }
+      } else {
+        contentEl.innerHTML = '<div class="pm-empty-section">No chapter content available</div>';
+      }
+    } catch(e) {
+      contentEl.innerHTML = '<div class="pm-empty-section">Failed to load chapter content</div>';
+    }
+  }
+
+  function openPMFeatureDetail(chapterId, featureId) {
+    if (!pmState.mapData) return;
+    var chapter = pmState.mapData.chapters.find(function(ch) { return ch.id === chapterId; });
+    if (!chapter) return;
+    var feature = (chapter.features || []).find(function(f) { return f.id === featureId; });
+    if (!feature) return;
+    var overlay = document.getElementById('pm-detail-overlay');
+    var panel = document.getElementById('pm-detail-panel');
+    var titleEl = panel.querySelector('.pm-detail-title');
+    var contentEl = panel.querySelector('.pm-detail-content');
+    var badgeClass = 'pm-badge-' + (feature.status === 'in-progress' ? 'in-progress' : feature.status);
+    titleEl.innerHTML = escHtml(feature.name) + ' <span class="pm-detail-status-badge ' + badgeClass + '">' + escHtml(feature.status) + '</span>';
+    var html = '';
+    html += '<div class="pm-feature-status-row"><span class="pm-feature-dot ' + pmFeatureDotClass(feature.status) + '"></span><span style="font-size:13px;color:var(--text-muted);">' + escHtml(feature.status) + '</span></div>';
+    html += '<h3>Chapter</h3>';
+    html += '<div style="font-size:13px;color:var(--text-muted);cursor:pointer;" onclick="App.openPMChapterDetail(\'' + chapterId + '\')">' + escHtml(chapter.name) + ' &#8594;</div>';
+    // Key files
+    html += '<h3>Key Files</h3>';
+    if (feature.keyFiles && feature.keyFiles.length > 0) {
+      html += '<div class="pm-key-files">';
+      feature.keyFiles.forEach(function(f) {
+        html += '<div class="pm-key-file">' + escHtml(f) + '</div>';
+      });
+      html += '</div>';
+    } else {
+      html += '<div class="pm-empty-section">No key files listed</div>';
+    }
+    // Linked tasks
+    html += '<h3>Linked Tasks</h3>';
+    if (feature.linkedTasks && feature.linkedTasks.length > 0) {
+      html += '<div class="pm-linked-tasks">';
+      feature.linkedTasks.forEach(function(t) {
+        html += '<div class="pm-linked-task" onclick="App.closePMDetail(); App.openTask(\'' + escHtml(t) + '\')">' + escHtml(t) + '</div>';
+      });
+      html += '</div>';
+    } else {
+      html += '<div class="pm-empty-section">No linked tasks</div>';
+    }
+    contentEl.innerHTML = html;
+    overlay.classList.remove('hidden');
+    requestAnimationFrame(function() { overlay.classList.add('visible'); });
+  }
+
+  function closePMDetail() {
+    var overlay = document.getElementById('pm-detail-overlay');
+    if (!overlay) return;
+    overlay.classList.remove('visible');
+    setTimeout(function() { overlay.classList.add('hidden'); }, 300);
+  }
+
+  // Close detail panel on Escape
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && state.currentView === 'mind-map') {
+      var overlay = document.getElementById('pm-detail-overlay');
+      if (overlay && !overlay.classList.contains('hidden')) {
+        closePMDetail();
+        e.stopPropagation();
+      }
+    }
+  });
+
+  // Close detail panel on backdrop click
+  document.addEventListener('click', function(e) {
+    if (e.target.id === 'pm-detail-overlay') {
+      closePMDetail();
+    }
+  });
+
   window.App = {
     navigate: navigate,
     wizardNext: wizardNext,
@@ -8678,6 +9002,12 @@
     resetSmartConfig: resetSmartConfig,
     saveAgentModel: saveAgentModel,
     loadAgentDetail: loadAgentDetail,
+    loadMindMap: loadMindMap,
+    selectPMProject: selectPMProject,
+    togglePMChapter: togglePMChapter,
+    openPMChapterDetail: openPMChapterDetail,
+    openPMFeatureDetail: openPMFeatureDetail,
+    closePMDetail: closePMDetail,
     showBugReportModal: showBugReportModal,
     closeBugReportModal: closeBugReportModal,
     toggleBugDiagnostics: toggleBugDiagnostics,

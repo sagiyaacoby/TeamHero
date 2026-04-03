@@ -117,9 +117,22 @@ echo  Starting portal server...
 start "%SERVER_TITLE%" /min node server.js
 timeout /t 3 /nobreak >NUL 2>&1
 
-:: Read port from config/system.json
-set "PORTAL_PORT=3796"
+:: Re-read port from config/system.json (server may have auto-selected a different port)
+set "PORTAL_PORT=3797"
 for /f "tokens=2 delims=:, " %%a in ('findstr /c:"\"port\"" config\system.json 2^>NUL') do set "PORTAL_PORT=%%a"
+
+:: Verify identity - ensure TeamHero is actually responding on this port
+set "IDENTITY_OK=0"
+for /f "tokens=*" %%i in ('node -e "var h=require(\"http\");h.get(\"http://localhost:%PORTAL_PORT%/api/identity\",{timeout:2000},function(r){var d=\"\";r.on(\"data\",function(c){d+=c});r.on(\"end\",function(){try{var j=JSON.parse(d);console.log(j.product||\"unknown\")}catch(e){console.log(\"unknown\")}})}).on(\"error\",function(){console.log(\"unreachable\")})" 2^>NUL') do (
+    if "%%i"=="teamhero" set "IDENTITY_OK=1"
+)
+
+if "%IDENTITY_OK%"=="0" (
+    echo.
+    echo  WARNING: Port %PORTAL_PORT% is not responding as TeamHero.
+    echo  Another service may be occupying this port.
+    echo.
+)
 
 echo  Opening portal in browser...
 start "" http://localhost:%PORTAL_PORT%

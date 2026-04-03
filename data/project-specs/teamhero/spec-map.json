@@ -1,0 +1,43 @@
+{
+  "id": "teamhero",
+  "name": "TeamHero",
+  "version": 1,
+  "updatedAt": "2026-04-01T20:15:00.000Z",
+  "chapters": [
+    {
+      "id": "server-api",
+      "name": "Server & API",
+      "status": "stable",
+      "tag": "spec:server-api",
+      "chapterFile": "server-api.md",
+      "features": [
+        { "id": "task-system", "name": "Task Management API", "status": "done", "keyFiles": ["server.js"], "linkedTasks": [] },
+        { "id": "agent-system", "name": "Agent Management API", "status": "done", "keyFiles": ["server.js"], "linkedTasks": ["mnghhtgzifowge"] },
+        { "id": "knowledge-base", "name": "Knowledge Base API", "status": "done", "keyFiles": ["server.js"], "linkedTasks": [] }
+      ]
+    },
+    {
+      "id": "dashboard",
+      "name": "Dashboard Portal",
+      "status": "stable",
+      "tag": "spec:dashboard",
+      "chapterFile": "dashboard.md",
+      "features": [
+        { "id": "task-views", "name": "Task Views (List, Flow, Tree)", "status": "done", "keyFiles": ["portal/js/app.js", "portal/index.html"], "linkedTasks": ["mnghe76jqjusaf"] },
+        { "id": "agent-detail", "name": "Agent Detail Panel", "status": "done", "keyFiles": ["portal/js/app.js"], "linkedTasks": [] },
+        { "id": "command-center", "name": "Command Center", "status": "done", "keyFiles": ["portal/js/app.js"], "linkedTasks": [] }
+      ]
+    },
+    {
+      "id": "project-specs",
+      "name": "Project Spec System",
+      "status": "in-progress",
+      "tag": "spec:project-specs",
+      "chapterFile": "project-specs.md",
+      "features": [
+        { "id": "spec-api", "name": "Spec Management API", "status": "in-progress", "keyFiles": ["server.js"], "linkedTasks": ["mnf4kkmilplrwz"] },
+        { "id": "spec-dashboard", "name": "Mind Map Dashboard View", "status": "planned", "keyFiles": [], "linkedTasks": [] }
+      ]
+    }
+  ]
+}
